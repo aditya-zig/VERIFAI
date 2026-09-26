@@ -1,0 +1,32 @@
+[
+  {
+    "id": "owasp-juice-shop",
+    "fullName": "juice-shop/juice-shop",
+    "branch": "master",
+    "dockerfile": "Dockerfile",
+    "containerPort": 3000,
+    "healthPath": "/rest/admin/application-version",
+    "preferredFinal": true,
+    "objective": "Audit a recognizable interactive web application. Treat documented intentionally vulnerable training behaviors as product context rather than automatically calling every designed challenge a regression. Focus on executed user journeys, runtime/API evidence, security boundaries, and clearly scoped behavior or improvement observations."
+  },
+  {
+    "id": "docker-welcome",
+    "fullName": "docker/welcome-to-docker",
+    "branch": "main",
+    "dockerfile": "Dockerfile",
+    "containerPort": 3000,
+    "healthPath": "/",
+    "preferredFinal": false,
+    "objective": "Audit a small recognizable Docker web application as a low-complexity backup. Exercise the actual UI, repository structure, startup behavior and bounded performance checks. Report uncertainty when richer API behavior is not present."
+  },
+  {
+    "id": "traefik-whoami",
+    "fullName": "traefik/whoami",
+    "branch": "master",
+    "dockerfile": "Dockerfile",
+    "containerPort": 80,
+    "healthPath": "/",
+    "preferredFinal": false,
+    "objective": "Audit a recognizable minimal HTTP service as an infrastructure-oriented backup. Exercise real HTTP behavior, repository/security inspection and bounded performance checks. Do not invent browser journeys that the product does not expose."
+  }
+]

@@ -1,0 +1,57 @@
+name: AgentCore live acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  live-agentcore-smoke:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+      VERIFIAI_AGENTCORE_RUNTIME_ARN: ${{ secrets.VERIFIAI_AGENTCORE_RUNTIME_ARN }}
+      VERIFIAI_AGENTCORE_MODEL_PROFILE: ${{ secrets.VERIFIAI_AGENTCORE_MODEL_PROFILE }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: config
+        name: Check live AgentCore configuration
+        shell: bash
+        run: |
+          missing=()
+          [[ -z "$AWS_ROLE_ARN" ]] && missing+=("AWS_ROLE_ARN")
+          [[ -z "$VERIFIAI_AGENTCORE_RUNTIME_ARN" ]] && missing+=("VERIFIAI_AGENTCORE_RUNTIME_ARN")
+          [[ -z "$VERIFIAI_AGENTCORE_MODEL_PROFILE" ]] && missing+=("VERIFIAI_AGENTCORE_MODEL_PROFILE")
+          if (( ${#missing[@]} )); then
+            echo "::error::A04 live acceptance blocked; missing repository configuration: ${missing[*]}"
+            exit 1
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS via OIDC
+        if: steps.config.outputs.ready == 'true'
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: actions/setup-node@v4
+        if: steps.config.outputs.ready == 'true'
+        with:
+          node-version: 22
+
+      - name: Install
+        if: steps.config.outputs.ready == 'true'
+        run: npm install --no-audit --no-fund
+
+      - name: Run live AgentCore lifecycle proof
+        if: steps.config.outputs.ready == 'true'
+        run: npm run verify:agentcore
+
+      - name: Acceptance status
+        run: |
+          echo "A04 LIVE ACCEPTANCE: real AgentCore lifecycle completed."

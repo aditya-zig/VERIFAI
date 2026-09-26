@@ -1,0 +1,60 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+
+const html = await readFile(new URL('../apps/web/index.html', import.meta.url), 'utf8').catch(() => '');
+const css = await readFile(new URL('../apps/web/styles.css', import.meta.url), 'utf8').catch(() => '');
+const js = await readFile(new URL('../apps/web/app.js', import.meta.url), 'utf8').catch(() => '');
+
+test('public site contains the complete VERIFAI marketing story', () => {
+  // The 18 Sep frontend consolidated the old deep-audit/report/fix anchors into
+  // the product demo + workflow application shell. Keep this assertion tied to
+  // the published DOM rather than obsolete prototype section IDs.
+  for (const id of ['product','demo','how','workflow','security','developers']) {
+    assert.match(html, new RegExp(`id=["']${id}["']`), `missing #${id}`);
+  }
+  assert.match(html, /Start Verification/);
+  assert.match(html, /Evidence-backed/);
+  assert.match(html, /Know if your software actually works\./);
+  assert.match(html, /Your users should not be your first real-world test\./);
+});
+
+test('frontend is wired to the real Deep Audit endpoint and live run state', () => {
+  assert.match(js, /\/api\/audits/);
+  assert.match(js, /fetchSwarm/);
+  assert.match(js, /applySwarm/);
+  assert.match(js, /\/swarm/);
+  assert.match(js, /\/steer/);
+  assert.match(js, /runFlagshipAudit/);
+  assert.match(js, /runResult/);
+  assert.match(js, /REAL SWARM/);
+});
+
+test('motion system includes scroll, connector, counter, typing, sticky and reduced-motion behavior', () => {
+  assert.match(js, /IntersectionObserver/);
+  assert.match(js, /requestAnimationFrame/);
+  assert.match(js, /data-counter/);
+  assert.match(js, /typeStatus/);
+  assert.match(css, /stroke-dasharray/);
+  assert.match(css, /position:\s*sticky/);
+  assert.match(css, /prefers-reduced-motion/);
+  assert.match(css, /@keyframes\s+cursorMove/);
+});
+
+test('responsive rules explicitly redesign mobile workflow layouts', () => {
+  assert.match(css, /@media\s*\(max-width:\s*760px\)/);
+  assert.match(css, /\.hero-graph/);
+  assert.match(css, /grid-template-columns:\s*1fr/);
+  assert.match(css, /overflow-x:\s*hidden/);
+});
+
+
+test('live audit UI never turns worker completion or prototype controls into fake verification', () => {
+  assert.doesNotMatch(js, /task\.state==='completed'\?'Verified'/);
+  assert.doesNotMatch(js, /Payment-timeout experiment replayed\./);
+  assert.match(js, /report\?\.findingState\|\|'Completed'/);
+  assert.match(js, /Preview only — run Deep Audit for executed payment-timeout evidence\./);
+  assert.doesNotMatch(html, /Pull request #82 created from verifiai\/fix-payment-timeout/);
+  assert.match(html, /Prototype control only — a real PR unlocks only after independent verification\./);
+  assert.match(html, /Illustrative product preview — run Deep Audit for executed evidence\./);
+});

@@ -1,0 +1,374 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: VERIFAI CodeBuild -> ECR -> private Fargate target lifecycle
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+  TargetSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  BootstrapImageUri:
+    Type: String
+    Default: public.ecr.aws/nginx/nginx:stable-alpine
+  EnablePublicHttpsEgress:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Explicit escape hatch for public HTTPS egress. Keep false unless the selected VPC lacks required private endpoints.
+
+Conditions:
+  PublicHttpsEgressEnabled: !Equals [!Ref EnablePublicHttpsEgress, 'true']
+
+Resources:
+  TargetRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"Expire old VERIFAI target images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":3},"action":{"type":"expire"}}]}
+
+  VerificationCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub verifiai-targets-${AWS::StackName}
+
+  TargetLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 7
+
+  AuditorSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: VERIFAI AgentCore workers and private health probes
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - !If
+          - PublicHttpsEgressEnabled
+          - IpProtocol: tcp
+            FromPort: 443
+            ToPort: 443
+            CidrIp: 0.0.0.0/0
+            Description: Explicitly enabled public HTTPS escape hatch; worker URL policy still applies
+          - !Ref AWS::NoValue
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: !Ref VpcCidr
+          Description: VPC DNS
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: !Ref VpcCidr
+          Description: VPC DNS fallback
+
+  TargetSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Private VERIFAI audit targets
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - !If
+          - PublicHttpsEgressEnabled
+          - IpProtocol: tcp
+            FromPort: 443
+            ToPort: 443
+            CidrIp: 0.0.0.0/0
+            Description: Explicitly enabled target HTTPS escape hatch for image/runtime dependencies
+          - !Ref AWS::NoValue
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: !Ref VpcCidr
+          Description: VPC DNS
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: !Ref VpcCidr
+          Description: VPC DNS fallback
+
+  TargetIngressFromAuditor:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref TargetSecurityGroup
+      IpProtocol: tcp
+      FromPort: 1
+      ToPort: 65535
+      SourceSecurityGroupId: !Ref AuditorSecurityGroup
+
+  AuditorEgressToTarget:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref AuditorSecurityGroup
+      IpProtocol: tcp
+      FromPort: 1
+      ToPort: 65535
+      DestinationSecurityGroupId: !Ref TargetSecurityGroup
+
+  ProofRecordingBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-browser-recordings
+            Status: Enabled
+            ExpirationInDays: 7
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 3
+
+  ProofBrowserRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AgentCoreBrowserAssumeRole
+            Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*
+      Policies:
+        - PolicyName: browser-recording
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: RecordingBucket
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:ListMultipartUploadParts
+                  - s3:AbortMultipartUpload
+                Resource:
+                  - !GetAtt ProofRecordingBucket.Arn
+                  - !Sub ${ProofRecordingBucket.Arn}/browser-recordings/*
+              - Sid: BrowserLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: '*'
+
+  ProofBrowser:
+    Type: AWS::BedrockAgentCore::BrowserCustom
+    Properties:
+      Name: !Sub verifiaiProof${AWS::AccountId}
+      Description: VERIFAI private browser with real S3 session recording for proof-of-fix
+      ExecutionRoleArn: !GetAtt ProofBrowserRole.Arn
+      NetworkConfiguration:
+        NetworkMode: VPC
+        VpcConfig:
+          SecurityGroups:
+            - !Ref AuditorSecurityGroup
+          Subnets: !Ref TargetSubnetIds
+      RecordingConfig:
+        Enabled: true
+        S3Location:
+          Bucket: !Ref ProofRecordingBucket
+          Prefix: browser-recordings
+      Tags:
+        verifiai:managed: 'true'
+        verifiai:component: proof-browser
+
+  TargetExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  TargetTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+
+  BaseTargetTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub verifiai-target-base-${AWS::StackName}
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !GetAtt TargetExecutionRole.Arn
+      TaskRoleArn: !GetAtt TargetTaskRole.Arn
+      ContainerDefinitions:
+        - Name: target
+          Image: !Ref BootstrapImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+              HostPort: 8080
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref TargetLogs
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: target
+
+  CodeBuildLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 7
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: verifiai-target-build
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub ${CodeBuildLogs.Arn}:*
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:CompleteLayerUpload
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                  - ecr:BatchGetImage
+                Resource: !GetAtt TargetRepository.Arn
+
+  TargetBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      TimeoutInMinutes: 15
+      QueuedTimeoutInMinutes: 5
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Source:
+        Type: NO_SOURCE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+
+  HealthProbeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+
+  PrivateHealthProbe:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: nodejs22.x
+      Handler: index.handler
+      Role: !GetAtt HealthProbeRole.Arn
+      Timeout: 10
+      MemorySize: 128
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref AuditorSecurityGroup
+        SubnetIds: !Ref TargetSubnetIds
+      Code:
+        ZipFile: |
+          const http = require('node:http');
+          const https = require('node:https');
+          exports.handler = async ({ url }) => {
+            if (typeof url !== 'string') throw new Error('url is required');
+            const parsed = new URL(url);
+            if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('unsupported protocol');
+            const transport = parsed.protocol === 'https:' ? https : http;
+            return await new Promise((resolve, reject) => {
+              const req = transport.get(parsed, { timeout: 5000 }, (res) => {
+                res.resume();
+                res.on('end', () => resolve({
+                  ok: res.statusCode >= 200 && res.statusCode < 400,
+                  statusCode: res.statusCode
+                }));
+              });
+              req.on('timeout', () => req.destroy(new Error('health probe timeout')));
+              req.on('error', reject);
+            });
+          };
+
+Outputs:
+  CodeBuildProjectName:
+    Value: !Ref TargetBuildProject
+  EcrRepositoryName:
+    Value: !Ref TargetRepository
+  EcrRegistry:
+    Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+  EcsClusterName:
+    Value: !Ref VerificationCluster
+  BaseTaskDefinitionArn:
+    Value: !Ref BaseTargetTask
+  TargetContainerName:
+    Value: target
+  AuditorSecurityGroupId:
+    Value: !Ref AuditorSecurityGroup
+  TargetSecurityGroupId:
+    Value: !Ref TargetSecurityGroup
+  HealthProbeFunctionName:
+    Value: !Ref PrivateHealthProbe
+  ProofBrowserId:
+    Value: !GetAtt ProofBrowser.BrowserId
+  ProofBrowserArn:
+    Value: !GetAtt ProofBrowser.BrowserArn
+  ProofRecordingBucket:
+    Value: !Ref ProofRecordingBucket
+  ProofRecordingPrefix:
+    Value: browser-recordings

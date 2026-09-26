@@ -1,0 +1,40 @@
+{
+  "name": "verifiai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "test:p0": "node --test tests-p0/*.test.mjs",
+    "test:p1": "node --test tests-p1/*.test.mjs",
+    "demo:e2e": "node scripts/demo-e2e.mjs",
+    "check": "npm run external:policy && npm run typecheck && npm test && npm run test:p0 && npm run test:p1 && npm run demo:e2e",
+    "external:clone": "node scripts/clone-external-engines.mjs",
+    "external:policy": "node scripts/verify-external-engine-policy.mjs",
+    "start:api": "node dist/apps/api/index.js",
+    "start:sandbox": "node services/sandbox/server.mjs",
+    "start:web": "node scripts/serve-web.mjs",
+    "agentcore:worker": "node dist/services/agent-runtime/worker-server.js",
+    "verify:agentcore": "npm run build && node scripts/verify-agentcore-worker.mjs",
+    "verify:local-worker": "npm run build && node scripts/verify-local-worker.mjs",
+    "external:up": "docker compose -f docker-compose.external.yml up --build",
+    "external:down": "docker compose -f docker-compose.external.yml down --remove-orphans",
+    "start:external-engines": "node services/external-engines/server.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.0.0",
+    "@strands-agents/sdk": "1.18.0",
+    "openai": "^6.45.0",
+    "@aws-sdk/client-bedrock-agentcore": "^3.0.0",
+    "@aws-sdk/client-codebuild": "^3.0.0",
+    "@aws-sdk/client-ecr": "^3.0.0",
+    "@aws-sdk/client-ecs": "^3.0.0",
+    "zod": "^4.1.12",
+    "@aws-sdk/client-lambda": "^3.0.0"
+  }
+}

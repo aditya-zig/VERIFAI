@@ -18,7 +18,7 @@ export interface AuditToolsMcpServerOptions {
 }
 
 async function readJson(request: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
+  const chunks: any[] = [];
   for await (const chunk of request) chunks.push(Buffer.from(chunk));
   if (!chunks.length) return undefined;
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -191,7 +191,7 @@ export function createAuditToolsMcpHttpServer(
   // Fail startup instead of exposing a bridge whose scopes cannot be verified.
   resolveAuditScopeSecret(env);
 
-  return createServer(async (request, response) => {
+  return createServer(async (request: IncomingMessage, response: ServerResponse) => {
     try {
       const url = new URL(request.url ?? '/', 'http://localhost');
       if (request.method === 'GET' && url.pathname === '/healthz') {

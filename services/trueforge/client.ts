@@ -26,6 +26,7 @@ export interface TrueForgeTurnResult {
   turnId?: string;
   status: string;
   answer: string;
+  error?: string;
   metrics?: JsonRecord;
   events: JsonRecord[];
 }
@@ -115,7 +116,7 @@ export class TrueForgeHarnessClient {
     sessionId: string,
     signal: AbortSignal,
     timeoutMs: number,
-  ): Promise<{ turnId?: string; status: string; answer: string; metrics?: JsonRecord }> {
+  ): Promise<{ turnId?: string; status: string; answer: string; error?: string; metrics?: JsonRecord }> {
     const deadline = Date.now() + timeoutMs;
     let turnId: string | undefined;
 
@@ -149,6 +150,7 @@ export class TrueForgeHarnessClient {
             turnId,
             status,
             answer: textFromContent(output?.content ?? output),
+            error: status === 'error' && typeof state?.message === 'string' ? state.message : undefined,
             metrics: state?.metrics,
           };
         }
@@ -221,6 +223,7 @@ export class TrueForgeHarnessClient {
           turnId: typeof event?.turn_id === 'string' ? event.turn_id : observedTurnId,
           status: typeof state?.status === 'string' ? state.status : 'done',
           answer: textFromContent(state?.output?.content ?? state?.output) || lastMessage,
+          error: state?.status === 'error' && typeof state?.message === 'string' ? state.message : undefined,
           metrics: state?.metrics,
           events,
         };
@@ -262,6 +265,7 @@ export class TrueForgeHarnessClient {
       turnId: polled.turnId ?? observedTurnId,
       status: polled.status,
       answer: polled.answer || lastMessage,
+      error: polled.error,
       metrics: polled.metrics,
       events,
     };

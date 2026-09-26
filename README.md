@@ -33,6 +33,12 @@ Demo API:
 - POST /api/demo/deep-audit/:runId/steer
 - POST /api/demo/deep-audit/:runId/pr
 
+## TrueForge harness migration
+
+The active migration path uses **TrueForge** as VERIFAI's agent runtime layer. TrueForge owns model sessions, agent turns, MCP connectors and optional Daytona sandboxing; VERIFAI keeps repository/target lifecycle, specialist policy, audit state, guardrails, evidence normalization, authorization and reporting.
+
+Use `VERIFIAI_AGENT_HARNESS=trueforge` with a model already configured in TrueForge. Strands/AgentCore remains temporary rollback only until the scoped `verifiai-audit-tools` MCP bridge and two complete local UI audits pass. See `docs/TRUEFORGE-HARNESS.md`.
+
 ## Run locally
 
 Requires Node.js 22+ and TypeScript 5.8+.

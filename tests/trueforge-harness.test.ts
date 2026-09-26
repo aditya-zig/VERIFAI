@@ -179,8 +179,10 @@ test('TrueForge planner retries one transient provider failure and surfaces term
 });
 
 test('TrueForge worker only keeps Confirmed when executed failing evidence exists', async () => {
-  const fake = await startFakeTrueForge((req) => {
+  let workerSessionBody: any;
+  const fake = await startFakeTrueForge((req, body) => {
     if (req.method === 'POST' && req.url === '/api/v1/sessions') {
+      workerSessionBody = JSON.parse(body);
       return { body: JSON.stringify({ data: { id: 'worker-session' } }) };
     }
     if (req.method === 'POST' && req.url === '/api/v1/sessions/worker-session/turns') {
@@ -251,10 +253,18 @@ test('TrueForge worker only keeps Confirmed when executed failing evidence exist
   };
 
   const events: any[] = [];
-  const launcher = new TrueForgeWorkerLauncher({ baseUrl: fake.baseUrl, timeoutMs: 5_000 });
+  const launcher = new TrueForgeWorkerLauncher({
+    baseUrl: fake.baseUrl,
+    timeoutMs: 5_000,
+    reasoningEffort: 'none',
+  });
   const session = await launcher.launch(brief, (event) => { events.push(event); });
   const report = await session.result;
 
+  assert.deepEqual(workerSessionBody?.agent?.spec?.model, {
+    name: 'test/model',
+    params: { reasoning_effort: 'none' },
+  });
   assert.equal(report.outcome, 'completed');
   assert.equal(report.findingState, 'Confirmed');
   assert.equal(report.evidence.length, 1);

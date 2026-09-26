@@ -32,6 +32,7 @@ export interface CreateTrueForgePlanningAgentOptions {
   baseUrl?: string;
   token?: string;
   model: string;
+  reasoningEffort?: string;
   timeoutMs?: number;
 }
 
@@ -40,13 +41,17 @@ export class TrueForgeAuditPlanningAgent implements AuditPlanningAgent {
     private readonly client: TrueForgeHarnessClient,
     private readonly model: string,
     private readonly timeoutMs: number,
+    private readonly reasoningEffort?: string,
   ) {}
 
   async propose(context: AuditPlannerContext): Promise<PlannedWorker[]> {
     let result;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       const sessionId = await this.client.createSession({
-        model: { name: this.model },
+        model: {
+          name: this.model,
+          ...(this.reasoningEffort ? { params: { reasoning_effort: this.reasoningEffort } } : {}),
+        },
         instructions: [
           'You are the VERIFAI Deep Audit planner running inside the TrueForge harness.',
           'Plan isolated specialist work only. Do not perform verification yourself.',
@@ -116,7 +121,12 @@ export async function createTrueForgePlanningAgent(
   });
   await client.health();
   return {
-    planner: new TrueForgeAuditPlanningAgent(client, model, options.timeoutMs ?? 180_000),
+    planner: new TrueForgeAuditPlanningAgent(
+      client,
+      model,
+      options.timeoutMs ?? 180_000,
+      options.reasoningEffort?.trim() || undefined,
+    ),
     modelProfileId: `trueforge:${model}`,
   };
 }

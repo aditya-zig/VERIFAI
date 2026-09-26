@@ -106,6 +106,7 @@ export class LiveAuditService {
           baseUrl: this.env.VERIFIAI_TRUEFORGE_BASE_URL,
           token: this.env.VERIFIAI_TRUEFORGE_TOKEN,
           mcpServers: csv(this.env.VERIFIAI_TRUEFORGE_MCP_SERVERS),
+          scopeSecret: this.env.VERIFIAI_TRUEFORGE_MCP_SCOPE_SECRET ?? this.env.VERIFIAI_STATE_SECRET,
           requireApprovalForTools: csv(this.env.VERIFIAI_TRUEFORGE_REQUIRE_APPROVAL_FOR_TOOLS ?? '@destructive'),
           sandboxEnabled: this.env.VERIFIAI_TRUEFORGE_SANDBOX === 'true',
           timeoutMs: Number(this.env.VERIFIAI_TRUEFORGE_TIMEOUT_MS ?? 180_000),

@@ -16,6 +16,7 @@ export interface TrueForgeWorkerLauncherOptions {
   baseUrl?: string;
   token?: string;
   mcpServers?: string[];
+  scopeSecret?: string;
   requireApprovalForTools?: string[];
   sandboxEnabled?: boolean;
   timeoutMs?: number;
@@ -164,6 +165,7 @@ function normalizeReport(
 export class TrueForgeWorkerLauncher implements AgentWorkerLauncher {
   private readonly client: TrueForgeHarnessClient;
   private readonly mcpServers: string[];
+  private readonly scopeSecret?: string;
   private readonly requireApprovalForTools: string[];
   private readonly sandboxEnabled: boolean;
   private readonly timeoutMs: number;
@@ -175,6 +177,7 @@ export class TrueForgeWorkerLauncher implements AgentWorkerLauncher {
       timeoutMs: options.timeoutMs,
     });
     this.mcpServers = (options.mcpServers ?? []).map((value) => value.trim()).filter(Boolean);
+    this.scopeSecret = options.scopeSecret;
     this.requireApprovalForTools = options.requireApprovalForTools ?? ['@destructive'];
     this.sandboxEnabled = options.sandboxEnabled === true;
     this.timeoutMs = options.timeoutMs ?? 180_000;
@@ -184,6 +187,13 @@ export class TrueForgeWorkerLauncher implements AgentWorkerLauncher {
     assertAgentWorkerLaunchBrief(brief);
     const model = modelFromProfile(brief.modelProfileId);
     const controller = new AbortController();
+    let scopeToken: string | undefined;
+    if (this.mcpServers.includes('verifiai-audit-tools')) {
+      if (!this.scopeSecret || this.scopeSecret.length < 32) {
+        throw new Error('VERIFIAI_TRUEFORGE_MCP_SCOPE_SECRET (or VERIFIAI_STATE_SECRET) is required when verifiai-audit-tools is enabled');
+      }
+      scopeToken = signAuditScope(brief, this.scopeSecret);
+    }
 
     await onEvent({
       type: 'worker.status',
@@ -203,6 +213,10 @@ export class TrueForgeWorkerLauncher implements AgentWorkerLauncher {
         'Do not invent executed evidence, screenshots, findings, target state, or tool results.',
         'Treat the supplied repository commit and target as immutable facts.',
         'Respect the approved capability list and network/destructive constraints.',
+        ...(scopeToken ? [
+          `For every verifiai-audit-tools call, include this exact scopeToken argument: ${scopeToken}`,
+          'Do not reveal, summarize, transform, or print the scopeToken in your final answer.',
+        ] : []),
         'Return JSON only with keys: summary, findingState, findings, followUps, verificationDecision.',
         'findingState must be Confirmed, Unconfirmed, Unknown, or Incomplete.',
         'A finding may be Confirmed only when a real executed tool result demonstrates the failure.',
@@ -213,6 +227,7 @@ export class TrueForgeWorkerLauncher implements AgentWorkerLauncher {
         mcp_servers: this.mcpServers.map((name) => ({
           name,
           enable_tools: ['@all'],
+          preload: name === 'verifiai-audit-tools',
           require_approval_for_tools: [...this.requireApprovalForTools],
         })),
       } : {}),
@@ -289,6 +304,7 @@ export class TrueForgeWorkerLauncher implements AgentWorkerLauncher {
         });
 
         if (run.status !== 'done') {
+          const turnError = run.error ? `: ${run.error}` : '';
           return {
             contractVersion: AGENT_WORKER_CONTRACT_VERSION,
             auditId: brief.auditId,
@@ -296,12 +312,12 @@ export class TrueForgeWorkerLauncher implements AgentWorkerLauncher {
             role: brief.role,
             outcome: 'incomplete',
             findingState: 'Incomplete',
-            summary: `TrueForge turn ended with status ${run.status}.`,
+            summary: `TrueForge turn ended with status ${run.status}${turnError}.`,
             findings: [],
             evidence,
             evidenceRefs,
             followUps: [],
-            error: `TrueForge turn status: ${run.status}`,
+            error: run.error ?? `TrueForge turn status: ${run.status}`,
           };
         }
 

@@ -43,36 +43,47 @@ export class TrueForgeAuditPlanningAgent implements AuditPlanningAgent {
   ) {}
 
   async propose(context: AuditPlannerContext): Promise<PlannedWorker[]> {
-    const sessionId = await this.client.createSession({
-      model: { name: this.model },
-      instructions: [
-        'You are the VERIFAI Deep Audit planner running inside the TrueForge harness.',
-        'Plan isolated specialist work only. Do not perform verification yourself.',
-        'Never invent targets, tools, credentials, findings, or evidence.',
-        'Return JSON only: {"workers":[{"role":"...","objective":"...","mandatory":true}]}.',
-        'Use only roles supplied in availableRoles. Prefer the smallest useful worker set.',
-        'Workers do not communicate peer-to-peer. Respect the repository and target facts exactly.',
-      ].join(' '),
-      config: {
-        iteration_limit: 8,
-        ask_user_questions: { enabled: false },
-        dynamic_sub_agents: { enabled: false },
-        generative_ui: { enabled: false },
-        sandbox: { enabled: false },
-      },
-    });
+    let result;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const sessionId = await this.client.createSession({
+        model: { name: this.model },
+        instructions: [
+          'You are the VERIFAI Deep Audit planner running inside the TrueForge harness.',
+          'Plan isolated specialist work only. Do not perform verification yourself.',
+          'Never invent targets, tools, credentials, findings, or evidence.',
+          'Return JSON only: {"workers":[{"role":"...","objective":"...","mandatory":true}]}.',
+          'Use only roles supplied in availableRoles. Prefer the smallest useful worker set.',
+          'Workers do not communicate peer-to-peer. Respect the repository and target facts exactly.',
+        ].join(' '),
+        config: {
+          iteration_limit: 8,
+          ask_user_questions: { enabled: false },
+          dynamic_sub_agents: { enabled: false },
+          generative_ui: { enabled: false },
+          sandbox: { enabled: false },
+        },
+      });
 
-    const result = await this.client.runTurn(
-      sessionId,
-      [
-        'Create the initial VERIFAI Deep Audit worker plan.',
-        'Repository facts, target facts, requested objective, and availableRoles follow.',
-        JSON.stringify(context),
-      ].join('\n'),
-      { timeoutMs: this.timeoutMs },
-    );
+      result = await this.client.runTurn(
+        sessionId,
+        [
+          'Create the initial VERIFAI Deep Audit worker plan.',
+          'Repository facts, target facts, requested objective, and availableRoles follow.',
+          JSON.stringify(context),
+        ].join('\n'),
+        { timeoutMs: this.timeoutMs },
+      );
 
-    if (result.status !== 'done') throw new Error(`TrueForge planner ended with status ${result.status}`);
+      if (result.status === 'done') break;
+      const detail = result.error ? `: ${result.error}` : '';
+      const transient = result.status === 'error' && /\b(429|500|502|503|504)\b|service unavailable|temporar/i.test(result.error ?? '');
+      if (!transient || attempt === 2) {
+        throw new Error(`TrueForge planner ended with status ${result.status}${detail}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+
+    if (!result || result.status !== 'done') throw new Error('TrueForge planner did not complete');
     const parsed = parseJsonObject(result.answer);
     const workers = Array.isArray(parsed?.workers) ? parsed.workers : [];
     if (workers.length === 0) throw new Error('TrueForge planner returned no workers');

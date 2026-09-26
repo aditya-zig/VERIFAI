@@ -120,6 +120,64 @@ test('TrueForge planner returns only validated VERIFAI worker roles', async () =
   await new Promise<void>((resolve) => fake.server.close(() => resolve()));
 });
 
+
+test('TrueForge planner retries one transient provider failure and surfaces terminal error details', async () => {
+  let sessionCount = 0;
+  let turnCount = 0;
+  const fake = await startFakeTrueForge((req) => {
+    if (req.method === 'GET' && req.url === '/healthz') return { body: JSON.stringify({ ok: true }) };
+    if (req.method === 'POST' && req.url === '/api/v1/sessions') {
+      sessionCount += 1;
+      return { body: JSON.stringify({ data: { id: `planner-session-${sessionCount}` } }) };
+    }
+    if (req.method === 'POST' && req.url?.endsWith('/turns')) {
+      turnCount += 1;
+      if (turnCount === 1) {
+        return {
+          headers: { 'content-type': 'text/event-stream' },
+          body: sse([{ type: 'turn.done', state: { status: 'error', message: 'Request failed (503): Service Unavailable' } }]),
+        };
+      }
+      return {
+        headers: { 'content-type': 'text/event-stream' },
+        body: sse([{
+          type: 'turn.done',
+          state: {
+            status: 'done',
+            output: {
+              content: [{ text: JSON.stringify({ workers: [{ role: 'investigator', objective: 'Inspect the repository', mandatory: true }] }) }],
+            },
+          },
+        }]),
+      };
+    }
+    return { status: 404, body: JSON.stringify({ error: 'not found' }) };
+  });
+
+  const { planner } = await createTrueForgePlanningAgent({
+    baseUrl: fake.baseUrl,
+    model: 'test/model',
+    timeoutMs: 5_000,
+  });
+  const workers = await planner.propose({
+    auditId: 'AUD-retry',
+    repository: {
+      provider: 'github',
+      fullName: 'owner/repo',
+      url: 'https://github.com/owner/repo',
+      branch: 'main',
+      commitSha: 'abc123',
+    },
+    target: null,
+    objective: 'Inspect the repository',
+    availableRoles: ['investigator'],
+  });
+  assert.equal(sessionCount, 2);
+  assert.equal(turnCount, 2);
+  assert.deepEqual(workers, [{ role: 'investigator', objective: 'Inspect the repository', mandatory: true }]);
+  await new Promise<void>((resolve) => fake.server.close(() => resolve()));
+});
+
 test('TrueForge worker only keeps Confirmed when executed failing evidence exists', async () => {
   const fake = await startFakeTrueForge((req) => {
     if (req.method === 'POST' && req.url === '/api/v1/sessions') {

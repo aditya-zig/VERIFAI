@@ -9,7 +9,7 @@ import {
   type EvidenceFindingState,
   type EvidenceInput,
 } from '../../packages/contracts/src/index.js';
-import { TrueForgeHarnessClient, type TrueForgeInlineAgentSpec } from './client.js';
+import { TrueForgeHarnessClient, type TrueForgeInlineAgentSpec } from './client.js';\nimport { signAuditScope } from './audit-scope.js';
 
 export interface TrueForgeWorkerLauncherOptions {
   baseUrl?: string;
@@ -51,42 +51,54 @@ function safeJson(value: unknown, limit = 12_000): string {
   return text.length <= limit ? text : `${text.slice(0, limit)}...[truncated]`;
 }
 
+function parseEvidenceCandidate(candidate: unknown): EvidenceInput | undefined {
+  if (typeof candidate === 'string') {
+    try { return parseEvidenceCandidate(JSON.parse(candidate)); } catch { return undefined; }
+  }
+  if (Array.isArray(candidate)) {
+    for (const item of candidate) {
+      const parsed = parseEvidenceCandidate(
+        typeof item === 'object' && item !== null && 'text' in item ? (item as any).text : item,
+      );
+      if (parsed) return parsed;
+    }
+    return undefined;
+  }
+  if (!candidate || typeof candidate !== 'object') return undefined;
+  const value: any = candidate;
+  if (
+    typeof value.kind === 'string' &&
+    typeof value.source === 'string' &&
+    typeof value.executed === 'boolean' &&
+    value.payload &&
+    typeof value.payload === 'object'
+  ) {
+    return value as EvidenceInput;
+  }
+  if ('content' in value) return parseEvidenceCandidate(value.content);
+  if ('structuredContent' in value) return parseEvidenceCandidate(value.structuredContent);
+  return undefined;
+}
+
 function evidenceFromToolResponse(event: any): EvidenceInput | undefined {
   if (event?.type !== 'tool.response') return undefined;
-  const candidates = [
-    event?.content,
-    event?.output,
-    event?.response,
-    event?.result,
-  ];
+  const candidates = [event?.content, event?.output, event?.response, event?.result];
   for (const candidate of candidates) {
-    if (typeof candidate !== 'string') continue;
-    try {
-      const parsed = JSON.parse(candidate);
-      if (
-        parsed &&
-        typeof parsed === 'object' &&
-        typeof parsed.kind === 'string' &&
-        typeof parsed.source === 'string' &&
-        parsed.executed === true &&
-        parsed.payload &&
-        typeof parsed.payload === 'object'
-      ) {
-        return parsed as EvidenceInput;
-      }
-    } catch {}
+    const parsed = parseEvidenceCandidate(candidate);
+    if (parsed) return parsed;
   }
 
   const toolName = event?.tool_name ?? event?.toolName ?? event?.name ?? event?.tool?.name ?? 'unknown';
   return {
     kind: 'runtime',
     source: 'trueforge-tool',
-    executed: true,
+    executed: false,
     payload: {
       outcome: 'unknown',
       toolName,
       response: safeJson(event?.content ?? event?.output ?? event?.response ?? event?.result ?? null),
       harnessEventType: 'tool.response',
+      incomplete: true,
     },
   };
 }

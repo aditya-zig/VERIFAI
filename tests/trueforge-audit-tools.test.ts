@@ -90,7 +90,7 @@ test('specialist policy accepts TrueForge model profiles without a direct model-
 });
 
 test('streamable HTTP MCP bridge exposes scoped VERIFAI tools and returns real target evidence', async () => {
-  const target = http.createServer((_req, res) => {
+  const target = http.createServer((_req: http.IncomingMessage, res: http.ServerResponse) => {
     res.statusCode = 200;
     res.setHeader('content-type', 'text/plain');
     res.end('target-ok');

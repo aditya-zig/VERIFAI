@@ -1,6 +1,6 @@
 # VERIFAI coding-agent rules
 
-The current AWS Hackathon, **VERIFAI — Grill with Docs**, **VERIFAI — Master Execution & E2E Status**, and **TrueForge Harness Migration** Notion pages are the product/architecture source of truth. On branch `trueforge-harness-migration`, TrueForge is the target agent harness. Strands + AgentCore remain only as a temporary rollback path until TrueForge reaches tool/evidence parity and passes the local E2E gate.
+The current AWS Hackathon, **VERIFAI — Grill with Docs**, **VERIFAI — Master Execution & E2E Status**, and **TrueForge Harness Migration** Notion pages are the product/architecture source of truth. On branch `aditya/trueforge-harness-migration`, TrueForge is the target agent harness. Strands + AgentCore remain only as a temporary rollback path until TrueForge reaches tool/evidence parity and passes the local E2E gate.
 
 ## External engines: upstream-first, no substitutes
 

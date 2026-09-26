@@ -9,7 +9,8 @@ import {
   type EvidenceFindingState,
   type EvidenceInput,
 } from '../../packages/contracts/src/index.js';
-import { TrueForgeHarnessClient, type TrueForgeInlineAgentSpec } from './client.js';\nimport { signAuditScope } from './audit-scope.js';
+import { TrueForgeHarnessClient, type TrueForgeInlineAgentSpec } from './client.js';
+import { signAuditScope } from './audit-scope.js';
 
 export interface TrueForgeWorkerLauncherOptions {
   baseUrl?: string;

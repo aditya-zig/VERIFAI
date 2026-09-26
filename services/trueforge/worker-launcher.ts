@@ -17,6 +17,7 @@ export interface TrueForgeWorkerLauncherOptions {
   token?: string;
   mcpServers?: string[];
   scopeSecret?: string;
+  reasoningEffort?: string;
   requireApprovalForTools?: string[];
   sandboxEnabled?: boolean;
   timeoutMs?: number;
@@ -166,6 +167,7 @@ export class TrueForgeWorkerLauncher implements AgentWorkerLauncher {
   private readonly client: TrueForgeHarnessClient;
   private readonly mcpServers: string[];
   private readonly scopeSecret?: string;
+  private readonly reasoningEffort?: string;
   private readonly requireApprovalForTools: string[];
   private readonly sandboxEnabled: boolean;
   private readonly timeoutMs: number;
@@ -178,6 +180,7 @@ export class TrueForgeWorkerLauncher implements AgentWorkerLauncher {
     });
     this.mcpServers = (options.mcpServers ?? []).map((value) => value.trim()).filter(Boolean);
     this.scopeSecret = options.scopeSecret;
+    this.reasoningEffort = options.reasoningEffort?.trim() || undefined;
     this.requireApprovalForTools = options.requireApprovalForTools ?? ['@destructive'];
     this.sandboxEnabled = options.sandboxEnabled === true;
     this.timeoutMs = options.timeoutMs ?? 180_000;
@@ -206,7 +209,10 @@ export class TrueForgeWorkerLauncher implements AgentWorkerLauncher {
     });
 
     const spec: TrueForgeInlineAgentSpec = {
-      model: { name: model },
+      model: {
+        name: model,
+        ...(this.reasoningEffort ? { params: { reasoning_effort: this.reasoningEffort } } : {}),
+      },
       instructions: [
         `You are the VERIFAI ${brief.role} specialist running inside TrueForge.`,
         'Use only real tools available through the configured TrueForge MCP connectors or sandbox.',

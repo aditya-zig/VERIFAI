@@ -37,7 +37,7 @@ Demo API:
 
 The active migration path uses **TrueForge** as VERIFAI's agent runtime layer. TrueForge owns model sessions, agent turns, MCP connectors and optional Daytona sandboxing; VERIFAI keeps repository/target lifecycle, specialist policy, audit state, guardrails, evidence normalization, authorization and reporting.
 
-Use `VERIFIAI_AGENT_HARNESS=trueforge` with a model already configured in TrueForge. Strands/AgentCore remains temporary rollback only until the scoped `verifiai-audit-tools` MCP bridge and two complete local UI audits pass. See `docs/TRUEFORGE-HARNESS.md`.
+Use `VERIFIAI_AGENT_HARNESS=trueforge` with a model already configured in TrueForge. The migration branch now includes the scoped Streamable HTTP `verifiai-audit-tools` MCP bridge plus setup/verification scripts; it still needs live local registration and real tool-backed audit proof. Strands/AgentCore remains temporary rollback until two complete local UI audits pass. See `docs/TRUEFORGE-HARNESS.md`.
 
 ## Run locally
 

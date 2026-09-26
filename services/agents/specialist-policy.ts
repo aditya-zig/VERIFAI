@@ -23,15 +23,19 @@ export function buildSpecialistPolicy(input: {
   cuaUrl?: string;
   externalEngineUrl?: string;
 }): SpecialistPolicy {
-  const provider = input.modelProfileId.split(':', 1)[0] as ModelProviderName;
-  const profile = MODEL_PROVIDER_PROFILES[provider];
-  if (!profile) throw new Error(`Unsupported model provider profile: ${provider}`);
+  const provider = input.modelProfileId.split(':', 1)[0];
+  const profile = provider === 'trueforge'
+    ? undefined
+    : MODEL_PROVIDER_PROFILES[provider as ModelProviderName];
+  if (!profile && provider !== 'trueforge') {
+    throw new Error(`Unsupported model provider profile: ${provider}`);
+  }
 
   const networkAllowlist = new Set<string>([
-    host(profile.baseUrl),
     'api.github.com',
     'raw.githubusercontent.com',
   ]);
+  if (profile) networkAllowlist.add(host(profile.baseUrl));
   if (input.target?.url) networkAllowlist.add(host(input.target.url));
   if (input.computerUseUrl) networkAllowlist.add(host(input.computerUseUrl));
   if (input.browserUseUrl) networkAllowlist.add(host(input.browserUseUrl));

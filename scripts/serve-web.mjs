@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DeepAuditService } from '../services/deep-audit/index.mjs';
+import { LocalRepositoryService } from '../services/local-repository.mjs';
 
 const root = fileURLToPath(new URL('../apps/web/', import.meta.url));
 const types = {
@@ -28,14 +28,45 @@ async function readJson(req) {
   return raw ? JSON.parse(raw) : {};
 }
 
-export function createDemoServer({ deepAudit = new DeepAuditService() } = {}) {
-  return createServer(async (req, res) => {
+export function createDemoServer({ deepAudit, repositories = new LocalRepositoryService() } = {}) {
+  const getDeepAudit = async () => {
+    if (deepAudit) return deepAudit;
+    const { DeepAuditService } = await import('../services/deep-audit/index.mjs');
+    deepAudit = new DeepAuditService();
+    return deepAudit;
+  };
+
+  const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
+
+    if (req.method === 'GET' && url.pathname === '/health') {
+      return sendJson(res, 200, { ok: true, service: 'verifai-local' });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/local/repositories') {
+      try {
+        const body = await readJson(req);
+        const result = await repositories.clone(body.url);
+        return sendJson(res, 201, result);
+      } catch (error) {
+        return sendJson(res, 400, { error: String(error?.message ?? error) });
+      }
+    }
+
+    const cleanupRoute = url.pathname.match(/^\/api\/local\/repositories\/([^/]+)\/cleanup$/);
+    if (req.method === 'POST' && cleanupRoute) {
+      try {
+        const cleaned = await repositories.cleanup(decodeURIComponent(cleanupRoute[1]));
+        return cleaned ? sendJson(res, 200, { cleaned: true }) : sendJson(res, 404, { error: 'temporary repository not found' });
+      } catch (error) {
+        return sendJson(res, 500, { error: String(error?.message ?? error) });
+      }
+    }
 
     if (req.method === 'POST' && url.pathname === '/api/demo/deep-audit') {
       try {
         const body = await readJson(req);
-        const run = await deepAudit.run(body);
+        const run = await (await getDeepAudit()).run(body);
         return sendJson(res, 200, { run });
       } catch (error) {
         return sendJson(res, 500, { error: String(error?.message ?? error) });
@@ -44,7 +75,7 @@ export function createDemoServer({ deepAudit = new DeepAuditService() } = {}) {
 
     const runRoute = url.pathname.match(/^\/api\/demo\/deep-audit\/([^/]+)$/);
     if (req.method === 'GET' && runRoute) {
-      const run = deepAudit.get(decodeURIComponent(runRoute[1]));
+      const run = (await getDeepAudit()).get(decodeURIComponent(runRoute[1]));
       return run ? sendJson(res, 200, { run }) : sendJson(res, 404, { error: 'run not found' });
     }
 
@@ -52,7 +83,7 @@ export function createDemoServer({ deepAudit = new DeepAuditService() } = {}) {
     if (req.method === 'POST' && steerRoute) {
       try {
         const body = await readJson(req);
-        const event = await deepAudit.steer(decodeURIComponent(steerRoute[1]), body.instruction);
+        const event = await (await getDeepAudit()).steer(decodeURIComponent(steerRoute[1]), body.instruction);
         return sendJson(res, 200, { event });
       } catch (error) {
         return sendJson(res, /not found/i.test(String(error)) ? 404 : 400, { error: String(error?.message ?? error) });
@@ -62,7 +93,7 @@ export function createDemoServer({ deepAudit = new DeepAuditService() } = {}) {
     const prRoute = url.pathname.match(/^\/api\/demo\/deep-audit\/([^/]+)\/pr$/);
     if (req.method === 'POST' && prRoute) {
       try {
-        const pr = deepAudit.createPrPackage(decodeURIComponent(prRoute[1]));
+        const pr = (await getDeepAudit()).createPrPackage(decodeURIComponent(prRoute[1]));
         return sendJson(res, 200, { pr });
       } catch (error) {
         return sendJson(res, /not found/i.test(String(error)) ? 404 : 409, { error: String(error?.message ?? error) });
@@ -93,11 +124,14 @@ export function createDemoServer({ deepAudit = new DeepAuditService() } = {}) {
       return res.end('not found');
     }
   });
+
+  server.on('close', () => { void repositories.cleanupAll(); });
+  return server;
 }
 
 const entry = process.argv[1] ? resolve(process.argv[1]) : '';
 if (entry === fileURLToPath(import.meta.url)) {
-  createDemoServer().listen(Number(process.env.WEB_PORT ?? 4173), () => {
+  createDemoServer().listen(Number(process.env.WEB_PORT ?? 4173), process.env.WEB_HOST ?? '127.0.0.1', () => {
     console.log('VERIFAI demo web: http://localhost:4173');
   });
 }

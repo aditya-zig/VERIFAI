@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta name="color-scheme" content="light" />
-  <meta name="description" content="VERIFAI — Autonomous Software Verification Lab clickable prototype" />
+  <meta name="description" content="Clone and inspect a public GitHub repository locally with VERIFAI." />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2379AF96'/%3E%3C/svg%3E" />
-  <title>VERIFAI — Autonomous Software Verification Lab</title>
+  <title>VERIFAI — Local repository check</title>
   <style>
 :root {
   --bg: #fffaf5;
@@ -581,7 +581,7 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
   ];
 
   const SCREEN_META = {
-    landing: { title: 'VERIFAI', section: 'Marketing' },
+    landing: { title: 'Local repository check', section: 'Local' },
     login: { title: 'Sign in', section: 'Authentication' },
     dashboard: { title: 'Projects', section: 'Dashboard' },
     repository: { title: 'Select repository', section: 'New Project' },
@@ -724,14 +724,12 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     if (marketing) {
       return `<header class="app-header"><div class="header-inner">
         ${brand()}
-        <nav class="header-nav" aria-label="Primary"><button type="button" data-scroll-target="product">Product</button><button type="button" data-scroll-target="demo">Deep Audit</button><button type="button" data-scroll-target="how">Capabilities</button><button type="button" data-scroll-target="workflow">How It Works</button><button type="button" data-scroll-target="security">Security</button><button type="button" data-scroll-target="developers">Developers</button></nav>
-        <div class="header-actions"><button class="btn ghost" data-nav="login">Sign In</button>${button('Start Verification','login','primary')}</div>
+        <div class="header-actions" style="margin-left:auto"><span class="muted small">Local only</span></div>
       </div></header>`;
     }
     return `<header class="app-header"><div class="header-inner">
       ${brand()}
-      <div class="muted small mono">${C.DEMO_DATA.project.repo}</div>
-      <div class="header-actions" style="margin-left:auto"><button class="btn sm" data-action="toast" data-message="Notifications are clear — no action needed.">Notifications</button><button class="btn sm ghost" data-action="toast" data-message="Prototype account menu opened.">AD</button></div>
+      <div class="muted small mono">Local repository check</div>
     </div></header>`;
   }
 
@@ -766,6 +764,100 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     </div>`;
   }
 
+  function localRepositoryFormMarkup() {
+    return `<form id="localRepositoryForm" class="card pad-lg" aria-describedby="localRepositoryHelp">
+      <label class="label" for="localRepoUrl">Public GitHub repository URL</label>
+      <input id="localRepoUrl" name="url" class="input" type="url" required autocomplete="url" placeholder="https://github.com/owner/repository" />
+      <p id="localRepositoryHelp" class="help">VERIFAI clones the public repository into a temporary local directory and reads its tracked files. This step does not run AI analysis.</p>
+      <div class="actions"><button id="startLocalAudit" class="btn primary" type="submit">Start local check</button></div>
+      <div id="localRepoResult" role="status" aria-live="polite"></div>
+    </form>`;
+  }
+
+  function renderLocalLanding() {
+    return `${appHeader(true)}
+      <div class="page narrow compact">
+        <section class="card pad-lg" style="margin-top:8vh">
+          <div class="eyebrow">Local repository check</div>
+          <h1>Inspect a public GitHub repository.</h1>
+          <p class="lede">Paste a URL. VERIFAI clones it to a temporary directory, reads its tracked files, and shows what it found.</p>
+          ${localRepositoryFormMarkup()}
+          <p class="tiny muted" style="margin:16px 0 0">This local MVP clones and reads files only. It does not run AI analysis.</p>
+        </section>
+      </div>`;
+  }
+
+  async function startLocalRepositoryCheck(form) {
+    const buttonEl = form.querySelector('#startLocalAudit');
+    const input = form.querySelector('#localRepoUrl');
+    const resultEl = form.querySelector('#localRepoResult');
+    buttonEl.disabled = true;
+    buttonEl.textContent = 'Cloning and reading…';
+    resultEl.innerHTML = '<p class="muted small">Cloning the repository and reading its tracked file list…</p>';
+
+    try {
+      const response = await fetch('/api/local/repositories', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: input.value.trim() }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+
+      const languageText = payload.files.languages.length ? payload.files.languages.map(escapeHtml).join(', ') : 'Not detected';
+      const manifestText = payload.info.manifests.length ? payload.info.manifests.map(escapeHtml).join(', ') : 'None detected';
+      const visibleFiles = payload.files.items.slice(0, 20);
+      const fileMarkup = visibleFiles.map((path) => `<li><code>${escapeHtml(path)}</code></li>`).join('');
+      const packageMarkup = payload.info.package?.name
+        ? `<p><strong>Package name</strong> ${escapeHtml(payload.info.package.name)}</p>`
+        : '';
+      resultEl.innerHTML = `<section class="card pad section" data-repository-id="${escapeHtml(payload.id)}">
+        <div class="actions" style="justify-content:space-between;align-items:center">
+          <h3>${escapeHtml(payload.repository.fullName)}</h3>
+          <span id="localCloneStatus" class="status verified">Clone succeeded</span>
+        </div>
+        <p>${payload.files.count} tracked files read${payload.files.truncated ? ', showing the first 20 below' : ''}.</p>
+        <p><strong>Languages detected</strong> ${languageText}</p>
+        <p><strong>Root manifests</strong> ${manifestText}</p>
+        ${payload.info.package?.description ? `<p>${escapeHtml(payload.info.package.description)}</p>` : ''}
+        ${packageMarkup}
+        <ul>${fileMarkup}</ul>
+        <p id="localWorkspacePath"><strong>Temporary directory</strong> <code>${escapeHtml(payload.clone.workspacePath)}</code></p>
+        <button class="btn sm" type="button" data-action="cleanup-local-repository" data-repository-id="${escapeHtml(payload.id)}">Clean up temporary repository</button>
+      </section>`;
+      form.dataset.repositoryId = payload.id;
+      buttonEl.textContent = 'Clean up clone to run again';
+    } catch (error) {
+      resultEl.innerHTML = `<p class="status failed">Repository check failed: ${escapeHtml(error?.message || error)}</p>`;
+      buttonEl.disabled = false;
+      buttonEl.textContent = 'Start local check';
+    }
+  }
+
+  async function cleanupLocalRepository(id, buttonEl) {
+    buttonEl.disabled = true;
+    try {
+      const response = await fetch(`/api/local/repositories/${encodeURIComponent(id)}/cleanup`, { method: 'POST' });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      const resultEl = document.getElementById('localRepoResult');
+      resultEl.querySelector('#localCloneStatus').textContent = 'Temporary clone cleaned up';
+      resultEl.querySelector('#localCloneStatus').className = 'status unknown';
+      resultEl.querySelector('#localWorkspacePath')?.remove();
+      buttonEl.remove();
+      const form = document.getElementById('localRepositoryForm');
+      if (form) {
+        delete form.dataset.repositoryId;
+        const startButton = form.querySelector('#startLocalAudit');
+        startButton.disabled = false;
+        startButton.textContent = 'Start local check';
+      }
+    } catch (error) {
+      buttonEl.disabled = false;
+      showToast(`Cleanup failed: ${String(error?.message || error)}`);
+    }
+  }
+
   function landingFlowMarkup() {
     return `<div class="flow-shell" aria-label="Animated verification workflow">
       <div class="flow-topbar"><div class="flow-title"><span class="brand-mark" style="width:24px;height:24px;border-radius:7px;font-size:10px">V</span> Verification flow</div><div class="flow-live"><span class="flow-live-dot"></span> LIVE LAB</div></div>
@@ -792,9 +884,10 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
       <div class="page marketing-page">
         <section class="marketing-hero" id="product">
           <div class="eyebrow">Autonomous Software Verification Lab</div>
-          <h1>Know if your software actually works.</h1>
-          <p class="lede">Connect a repository. VERIFAI runs the real product, simulates users, breaks dependencies safely, investigates failures, and proves whether the fix survives the same experiment.</p>
-          <div class="hero-actions">${button('Start Verification','login','primary')}<button class="btn" data-action="scroll-demo">Watch Deep Audit</button></div>
+          <h1>Inspect a public GitHub repository locally.</h1>
+          <p class="lede">Paste a repository URL. VERIFAI clones it to a temporary directory, reads the tracked file list, and shows the repository information it found.</p>
+          <div class="hero-actions"><button class="btn primary" type="button" data-scroll-target="local-repository-check">Start local check</button></div>
+          <div id="local-repository-check" class="section" style="max-width:760px;margin-inline:auto;text-align:left">${localRepositoryFormMarkup()}</div>
           <div class="hero-proof"><span><i></i>Evidence-backed findings</span><span><i></i>Isolated verification</span><span><i></i>No silent merges</span></div>
           <div class="particle-band"><div id="particleText" class="particle-text" aria-label="VERIFAI"><canvas class="particle-text__canvas" aria-hidden="true"></canvas><span class="particle-text__sr">VERIFAI</span></div></div>
         </section>
@@ -847,7 +940,7 @@ reverify: 10 / 10 PASS
 regressions: 0</code></pre>
         </section>
 
-        <section class="landing-cta"><h2>Your users should not be your first real-world test.</h2><p>Connect your repo and find out what happens before you ship.</p><div class="hero-actions">${button('Audit your repo','login','primary')}<button class="btn" data-nav="live">Open Live Lab</button></div></section>
+        <section class="landing-cta"><h2>Check another repository.</h2><p>Clone a public GitHub repository and inspect its tracked files on this machine.</p><div class="hero-actions"><button class="btn primary" type="button" data-scroll-target="local-repository-check">Start local check</button></div></section>
         <div class="landing-footer"><strong>VERIFAI — Real-world verification for AI-built software.</strong><span>Evidence over AI opinion · You keep control.</span></div>
       </div>
       <div class="kicker-strip"><div class="kicker-inner"><strong>90-second product flow</strong><div class="demo-steps"><span class="demo-step">Connect repo</span><span class="demo-step">Define requirements</span><span class="demo-step">Run experiments</span><span class="demo-step">Find failure</span><span class="demo-step">Repair</span><span class="demo-step">Prove fix</span></div><button class="btn sm" data-action="scroll-demo">Play demo</button></div></div>`;
@@ -872,10 +965,7 @@ regressions: 0</code></pre>
   }
 
   function renderRepository() {
-    const content = `<div class="card flat" style="overflow:hidden"><div style="padding:16px"><input id="repositorySearch" class="search" aria-label="Search repositories" placeholder="Search repositories" /></div>
-      <div id="repositoryList"><div class="repo-row"><div><div class="repo-name">Loading GitHub repositories…</div><div class="repo-meta"><span>Your OAuth session stays server-side.</span></div></div></div></div>
-    </div><div class="section card pad"><h3>GitHub permissions</h3><p class="muted small">VERIFAI needs repository contents, branches and commits, plus permission to create branches or pull requests only after you approve a repair.</p><div class="tags"><span class="tag">Read contents</span><span class="tag">Read branches</span><span class="tag">Create repair branches</span><span class="tag">Optional PRs</span></div></div>`;
-    return setupPage('Select a repository','Import the application you want VERIFAI to run and verify.',1,content,`<button class="btn ghost" data-nav="dashboard">Back</button>`);
+    return setupPage('Check a public repository','Paste its GitHub URL. The local backend clones the repository and reads its tracked files. No sign-in is required.',1,localRepositoryFormMarkup());
   }
 
   function renderAnalysis() {
@@ -1026,7 +1116,7 @@ regressions: 0</code></pre>
   }
 
   const renderers = {
-    landing: renderLanding,
+    landing: renderLocalLanding,
     login: renderLogin,
     dashboard: renderDashboard,
     repository: renderRepository,
@@ -1294,7 +1384,20 @@ regressions: 0</code></pre>
     if (state.screen === 'repository') requestAnimationFrame(hydrateRepositoryScreen);
   }
 
+  document.addEventListener('submit', (event) => {
+    const repositoryForm = event.target.closest('#localRepositoryForm');
+    if (repositoryForm) {
+      event.preventDefault();
+      startLocalRepositoryCheck(repositoryForm);
+    }
+  });
+
   document.addEventListener('click', (event) => {
+    const cleanupRepository = event.target.closest('[data-action="cleanup-local-repository"]');
+    if (cleanupRepository) {
+      cleanupLocalRepository(cleanupRepository.dataset.repositoryId, cleanupRepository);
+      return;
+    }
     const importRepo = event.target.closest('[data-import-repo]');
     if (importRepo) {
       event.preventDefault();
@@ -1372,20 +1475,5 @@ regressions: 0</code></pre>
 })();
 </script>
 
-<div hidden aria-hidden="true" id="deepAuditCompatibility">
-  <button data-audit-trigger type="button">Audit your repo</button>
-  <div id="drawer">
-    <button id="closeDrawer" type="button">Close</button>
-    <button id="backdrop" type="button">Backdrop</button>
-    <input id="repoInput" value="github.com/aditya-zig/AWS-wemakedevs">
-    <input id="deployedUrlInput">
-    <input id="installableAppInput">
-    <input id="tempTokenInput">
-    <button id="drawerRun" type="button">Run Deep Audit</button>
-    <div id="progress"><div></div><div></div><div></div><div></div></div>
-    <div id="drawerResult"></div>
-  </div>
-</div>
-<script type="module" src="./app.js"></script>
 </body>
 </html>

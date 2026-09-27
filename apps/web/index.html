@@ -768,7 +768,7 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     return `<form id="localRepositoryForm" class="card pad-lg" aria-describedby="localRepositoryHelp">
       <label class="label" for="localRepoUrl">Public GitHub repository URL</label>
       <input id="localRepoUrl" name="url" class="input" type="url" required autocomplete="url" placeholder="https://github.com/owner/repository" />
-      <p id="localRepositoryHelp" class="help">VERIFAI clones the public repository into a temporary local directory and reads its tracked files. This step does not run AI analysis.</p>
+      <p id="localRepositoryHelp" class="help">VERIFAI clones the public repository into a temporary local directory, reads its tracked files, then one AI agent returns a single finding.</p>
       <div class="actions"><button id="startLocalAudit" class="btn primary" type="submit">Start local check</button></div>
       <div id="localRepoResult" role="status" aria-live="polite"></div>
     </form>`;
@@ -782,7 +782,7 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
           <h1>Inspect a public GitHub repository.</h1>
           <p class="lede">Paste a URL. VERIFAI clones it to a temporary directory, reads its tracked files, and shows what it found.</p>
           ${localRepositoryFormMarkup()}
-          <p class="tiny muted" style="margin:16px 0 0">This local MVP clones and reads files only. It does not run AI analysis.</p>
+          <p class="tiny muted" style="margin:16px 0 0">This local step clones, reads, and runs one AI analysis. No repair or pull requests.</p>
         </section>
       </div>`;
   }
@@ -823,14 +823,38 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
         ${packageMarkup}
         <ul>${fileMarkup}</ul>
         <p id="localWorkspacePath"><strong>Temporary directory</strong> <code>${escapeHtml(payload.clone.workspacePath)}</code></p>
+        <div id="localFinding" role="status" aria-live="polite"><p class="muted small">Running one AI analysis…</p></div>
         <button class="btn sm" type="button" data-action="cleanup-local-repository" data-repository-id="${escapeHtml(payload.id)}">Clean up temporary repository</button>
       </section>`;
       form.dataset.repositoryId = payload.id;
       buttonEl.textContent = 'Clean up clone to run again';
+      await renderLocalFinding(payload.id);
     } catch (error) {
       resultEl.innerHTML = `<p class="status failed">Repository check failed: ${escapeHtml(error?.message || error)}</p>`;
       buttonEl.disabled = false;
       buttonEl.textContent = 'Start local check';
+    }
+  }
+
+  async function renderLocalFinding(id) {
+    const host = document.getElementById('localFinding');
+    if (!host) return;
+    try {
+      const response = await fetch(`/api/local/repositories/${encodeURIComponent(id)}/analyze`, { method: 'POST' });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      const finding = payload.finding;
+      host.innerHTML = `<section class="card pad section">
+        <div class="actions" style="justify-content:space-between;align-items:center">
+          <h3 id="localFindingTitle">${escapeHtml(finding.title)}</h3>
+          <span id="localFindingSeverity" class="status warning">${escapeHtml(finding.severity)}</span>
+        </div>
+        <p id="localFindingDescription">${escapeHtml(finding.description)}</p>
+        <p id="localFindingEvidence"><strong>Evidence</strong> <code>${escapeHtml(finding.evidence.file)}</code></p>
+        <p class="tiny muted">One agent · ${escapeHtml(payload.model.provider)} · ${escapeHtml(payload.model.model)}</p>
+      </section>`;
+    } catch (error) {
+      host.innerHTML = `<p class="status failed">AI analysis failed: ${escapeHtml(error?.message || error)}</p>`;
     }
   }
 

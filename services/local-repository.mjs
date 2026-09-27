@@ -191,24 +191,29 @@ export class LocalRepositoryService {
         languages: listing.languages,
       };
       const id = randomUUID();
-      this.#repositories.set(id, workspacePath);
-      return {
+      const record = {
         id,
         repository,
         clone: { success: true, workspacePath },
         files,
         info,
       };
+      this.#repositories.set(id, record);
+      return record;
     } catch (error) {
       await rm(workspacePath, { recursive: true, force: true });
       throw error;
     }
   }
 
+  get(id) {
+    return this.#repositories.get(id);
+  }
+
   async cleanup(id) {
-    const workspacePath = this.#repositories.get(id);
-    if (!workspacePath) return false;
-    await rm(workspacePath, { recursive: true, force: true });
+    const record = this.#repositories.get(id);
+    if (!record) return false;
+    await rm(record.clone.workspacePath, { recursive: true, force: true });
     this.#repositories.delete(id);
     return true;
   }

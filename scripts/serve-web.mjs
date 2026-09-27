@@ -63,6 +63,27 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
       }
     }
 
+    const analyzeRoute = url.pathname.match(/^\/api\/local\/repositories\/([^/]+)\/analyze$/);
+    if (req.method === 'POST' && analyzeRoute) {
+      try {
+        const record = repositories.get(decodeURIComponent(analyzeRoute[1]));
+        if (!record) return sendJson(res, 404, { error: 'temporary repository not found' });
+        const { analyzeRepository } = await import('../services/local-analysis.mjs');
+        const analysis = await analyzeRepository(record, { env: process.env });
+        return sendJson(res, 200, {
+          id: record.id,
+          repository: record.repository,
+          finding: analysis.finding,
+          model: analysis.model,
+          files: { count: record.files.count },
+        });
+      } catch (error) {
+        const message = String(error?.message ?? error);
+        const status = /not configured/i.test(message) ? 503 : 502;
+        return sendJson(res, status, { error: message });
+      }
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/demo/deep-audit') {
       try {
         const body = await readJson(req);

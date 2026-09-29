@@ -83,7 +83,7 @@ fi
 # --- 2) kit safety tests -----------------------------------------------------
 if want opstest; then
   if has_npm_script "ops:test"; then
-    if (cd "${repo_root}" && npm run ops:test 2>&1 | tail -8); then
+    if (set -o pipefail; cd "${repo_root}" && npm run ops:test 2>&1 | tail -8); then
       report_pass "ops:test"
     else
       report_fail "ops:test" "npm run ops:test exited non-zero"
@@ -96,7 +96,7 @@ fi
 # --- 3) typecheck ------------------------------------------------------------
 if want typecheck; then
   if has_npm_script "typecheck"; then
-    if (cd "${repo_root}" && npm run typecheck 2>&1 | tail -5); then
+    if (set -o pipefail; cd "${repo_root}" && npm run typecheck 2>&1 | tail -5); then
       report_pass "typecheck"
     else
       report_fail "typecheck" "npm run typecheck exited non-zero"
@@ -109,7 +109,7 @@ fi
 # --- 4) local end-to-end -----------------------------------------------------
 if want e2e; then
   if has_npm_script "test:local-e2e"; then
-    if (cd "${repo_root}" && npm run test:local-e2e 2>&1 | tail -8); then
+    if (set -o pipefail; cd "${repo_root}" && npm run test:local-e2e 2>&1 | tail -8); then
       report_pass "test:local-e2e"
     else
       report_fail "test:local-e2e" "npm run test:local-e2e exited non-zero"

@@ -635,3 +635,45 @@ test('la4: cleanup is safe with no state and never prints the sentinel', () => {
   }
 });
 
+// ===========================================================================
+// LA5 — verify runner reports honest per-check status
+// ===========================================================================
+
+const VERIFY = path.join(scriptsDir, 'verify-local.sh');
+
+test('la5: verify passes bash -n and declares set -u', () => {
+  const r = runBash(['-n', VERIFY]);
+  assert.equal(r.status, 0, `bash -n failed:\n${r.stderr}`);
+  assert.match(readFileSync(VERIFY, 'utf8'), /^\s*set -[a-zA-Z]*u[a-zA-Z]*\s*$/m);
+});
+
+test('la5: verify inspects package.json at runtime and reports SKIPPED WITH REASON', () => {
+  const src = readFileSync(VERIFY, 'utf8');
+  assert.ok(src.includes('package.json'), 'verify must inspect package.json at runtime');
+  assert.match(src, /SKIPPED WITH REASON/, 'verify must report SKIPPED WITH REASON, never fake PASS');
+});
+
+test('la5: verify syntax check passes on the kit', () => {
+  const r = runBash([VERIFY], { env: { VERIFY_ONLY: 'syntax' } });
+  assert.equal(r.status, 0, `verify syntax failed:\n${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /syntax.*PASS/i, 'syntax check should report PASS');
+});
+
+test('la5: verify reports SKIPPED WITH REASON for absent test:local-e2e', () => {
+  const r = runBash([VERIFY], { env: { VERIFY_ONLY: 'e2e' } });
+  assert.equal(r.status, 0, `absent e2e script must not fail verification:\n${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /SKIPPED WITH REASON/, 'absent script must be SKIPPED WITH REASON');
+  assert.doesNotMatch(r.stdout, /test:local-e2e.*PASS/i, 'absent script must never report PASS');
+});
+
+test('la5: verify rejects unknown check names without fake PASS', () => {
+  const r = runBash([VERIFY], { env: { VERIFY_ONLY: 'bogus-check-name' } });
+  assert.notEqual(r.status, 0, 'unknown check name must exit non-zero');
+  assert.doesNotMatch(`${r.stdout}\n${r.stderr}`, /\bPASS\b/, 'failed run must not claim PASS');
+});
+
+test('la5: verify never prints the sentinel secret', () => {
+  const r = runBash([VERIFY], { env: { VERIFY_ONLY: 'syntax', XKIRO_API_KEY: SENTINEL } });
+  assert.ok(!`${r.stdout}\n${r.stderr}`.includes(SENTINEL), 'verify leaked sentinel');
+});
+

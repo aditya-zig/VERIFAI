@@ -224,3 +224,115 @@ test('behavior: preflight result lines use declared values only', () => {
 
 
 
+// ===========================================================================
+// LA2 — environment docs + staged doctor
+// ===========================================================================
+
+const DOCTOR = path.join(scriptsDir, 'doctor.sh');
+const ENV_DOC = path.join(repoRoot, 'ops', 'local-agent', 'ENVIRONMENT.md');
+const ENV_EXAMPLE = path.join(repoRoot, 'ops', 'local-agent', 'env', 'local.env.example');
+
+test('la2: doctor passes bash -n', () => {
+  const r = runBash(['-n', DOCTOR]);
+  assert.equal(r.status, 0, `bash -n failed:\n${r.stderr}`);
+});
+
+test('la2: doctor --stage M1 works without model keys', () => {
+  const r = runBash([DOCTOR, '--stage', 'M1'], { env: {} });
+  assert.equal(r.status, 0, `M1 doctor failed:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /stage: M1/);
+  assert.doesNotMatch(`${r.stdout}\n${r.stderr}`, /parameter not set|unbound variable/i);
+});
+
+test('la2: doctor --stage M2 detects missing provider key by name', () => {
+  const r = runBash([DOCTOR, '--stage', 'M2'], { env: {} });
+  assert.equal(r.status, 1, `M2 without key should fail clearly:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /stage: M2/);
+  assert.match(`${r.stdout}\n${r.stderr}`, /XKIRO_API_KEY/);
+  assert.match(`${r.stdout}\n${r.stderr}`, /missing|absent/i);
+});
+
+test('la2: doctor --stage M2 reports configured provider without revealing key', () => {
+  const r = runBash([DOCTOR, '--stage', 'M2'], {
+    env: { XKIRO_API_KEY: SENTINEL, VERIFIAI_MODEL_PROVIDER: 'xkiro' },
+  });
+  assert.equal(r.status, 0, `M2 with key should pass:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /stage: M2/);
+  assert.match(r.stdout, /xkiro/);
+  assert.doesNotMatch(`${r.stdout}\n${r.stderr}`, new RegExp(SENTINEL));
+});
+
+test('la2: doctor never prints the sentinel on any stage', () => {
+  const runs = [
+    runBash([DOCTOR, '--stage', 'M1'], { env: { XKIRO_API_KEY: SENTINEL, OPENROUTER_API_KEY: SENTINEL } }),
+    runBash([DOCTOR, '--stage', 'M2'], { env: { XKIRO_API_KEY: SENTINEL, OPENROUTER_API_KEY: SENTINEL } }),
+    runBash([DOCTOR, '--stage', 'M2'], { env: { OPENROUTER_API_KEY: SENTINEL, VERIFIAI_MODEL_PROVIDER: 'openrouter' } }),
+  ];
+  for (const r of runs) {
+    assert.ok(!`${r.stdout}\n${r.stderr}`.includes(SENTINEL), 'doctor leaked the sentinel');
+  }
+});
+
+test('la2: doctor rejects invalid --stage clearly', () => {
+  const invalid = runBash([DOCTOR, '--stage', 'M9']);
+  assert.equal(invalid.status, 1, 'invalid stage must exit non-zero');
+  assert.match(`${invalid.stdout}\n${invalid.stderr}`, /usage|--stage M1\|M2/i);
+  const missing = runBash([DOCTOR]);
+  assert.equal(missing.status, 1, 'missing --stage must exit non-zero');
+  assert.match(`${missing.stdout}\n${missing.stderr}`, /usage|--stage M1\|M2/i);
+});
+
+test('la2: doctor is read-only in a controlled temp setup', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'verifai-la2-'));
+  try {
+    const before = readdirSync(dir);
+    for (const stage of ['M1', 'M2']) {
+      const r = runBash([DOCTOR, '--stage', stage], { cwd: dir, env: { HOME: dir, TMPDIR: dir } });
+      assert.ok(r.status === 0 || r.status === 1, `doctor ${stage} unclear status ${r.status}`);
+    }
+    const after = readdirSync(dir);
+    assert.deepEqual(after, before, `doctor created files: ${after}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('la2: doctor fails clearly outside a git repository', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'verifai-la2-nogit-'));
+  try {
+    const r = runBash([DOCTOR, '--stage', 'M1'], { cwd: dir, env: { HOME: dir, TMPDIR: dir } });
+    assert.equal(r.status, 1);
+    assert.match(`${r.stdout}\n${r.stderr}`, /not inside a Git repository/i);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('la2: doctor declares set -u', () => {
+  const src = readFileSync(DOCTOR, 'utf8');
+  assert.match(src, /^\s*set -[a-zA-Z]*u[a-zA-Z]*\s*$/m);
+});
+
+test('la2: environment docs exist and categorize', () => {
+  const envDoc = readFileSync(ENV_DOC, 'utf8');
+  for (const section of ['REQUIRED NOW', 'OPTIONAL LOCAL', 'REQUIRED LATER', 'LEGACY']) {
+    assert.ok(envDoc.includes(section), `ENVIRONMENT.md missing section: ${section}`);
+  }
+  assert.match(envDoc, /XKIRO_API_KEY/);
+  assert.match(envDoc, /M1/i);
+  assert.match(envDoc, /no Ollama|without.*Ollama|Ollama/i);
+  const example = readFileSync(ENV_EXAMPLE, 'utf8');
+  assert.ok(!example.includes(SENTINEL));
+  // No secret may be committed: key/secret/token variables must be empty or placeholder.
+  const secretVar = /(KEY|SECRET|TOKEN|PASSWORD)$/;
+  for (const line of example.split('\n')) {
+    const m = line.match(/^([A-Z_0-9]+)=(.*)$/);
+    if (!m || !secretVar.test(m[1])) continue;
+    assert.ok(
+      m[2] === '' || /^<(.+)>$/.test(m[2]) || /^placeholder$/i.test(m[2]),
+      `env example commits a value for secret-like variable ${m[1]}`,
+    );
+  }
+});
+
+

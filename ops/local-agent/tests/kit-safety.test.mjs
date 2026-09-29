@@ -659,11 +659,19 @@ test('la5: verify syntax check passes on the kit', () => {
   assert.match(r.stdout, /syntax.*PASS/i, 'syntax check should report PASS');
 });
 
-test('la5: verify reports SKIPPED WITH REASON for absent test:local-e2e', () => {
+test('la5: verify runs present scripts and skips absent ones with reason', () => {
+  const pkg = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+  const hasE2e = Boolean(pkg.scripts && pkg.scripts['test:local-e2e']);
   const r = runBash([VERIFY], { env: { VERIFY_ONLY: 'e2e' } });
-  assert.equal(r.status, 0, `absent e2e script must not fail verification:\n${r.stdout}\n${r.stderr}`);
-  assert.match(r.stdout, /SKIPPED WITH REASON/, 'absent script must be SKIPPED WITH REASON');
-  assert.doesNotMatch(r.stdout, /test:local-e2e.*PASS/i, 'absent script must never report PASS');
+  if (hasE2e) {
+    // Script exists so verify must RUN it: a PASS or FAIL line, never SKIPPED.
+    assert.match(r.stdout, /test:local-e2e: (PASS|FAIL)/, 'present script must be executed, not skipped');
+    assert.doesNotMatch(r.stdout, /test:local-e2e: SKIPPED/, 'present script must not be skipped');
+  } else {
+    assert.equal(r.status, 0, `absent e2e script must not fail verification:\n${r.stdout}\n${r.stderr}`);
+    assert.match(r.stdout, /SKIPPED WITH REASON/, 'absent script must be SKIPPED WITH REASON');
+    assert.doesNotMatch(r.stdout, /test:local-e2e.*PASS/i, 'absent script must never report PASS');
+  }
 });
 
 test('la5: verify rejects unknown check names without fake PASS', () => {

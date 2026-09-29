@@ -12,7 +12,7 @@ The local-agent kit is being built **incrementally**. If a referenced script doe
 2. Check GitHub live state (commands are in `CURRENT-STATE.md`).
 3. Read your assigned GitHub issue in full.
 4. Check branch and `git status` in the checkout; create the issue branch if needed.
-5. Run the appropriate preflight when available (later LA slices; manual checks meanwhile).
+5. Run the read-only preflight: `./ops/local-agent/scripts/preflight.sh` (LA1; run `npm run ops:test` after any kit change). If another referenced script does not exist yet, do the step manually and note the gap.
 6. Confirm the baseline test for your area passes before changing anything.
 7. Implement **only** the assigned issue.
 8. Verify automated behavior (tests/typecheck relevant to the change).

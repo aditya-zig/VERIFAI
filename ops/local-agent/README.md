@@ -11,6 +11,9 @@ Start with [`START-HERE.md`](START-HERE.md).
 | [`START-HERE.md`](START-HERE.md) | shortest operating sequence for a new agent |
 | [`CURRENT-STATE.md`](CURRENT-STATE.md) | snapshot-labeled stable context + live-check commands |
 | [`AGENT-RULES.md`](AGENT-RULES.md) | non-negotiable operational rules |
+| [`scripts/preflight.sh`](scripts/preflight.sh) | read-only machine/repo report (LA1) |
+| [`scripts/check-docker.sh`](scripts/check-docker.sh) | read-only, label-scoped Docker inspection (LA1) |
+| [`tests/kit-safety.test.mjs`](tests/kit-safety.test.mjs) | safety harness; run with `npm run ops:test` (LA1) |
 
 ## Planned (NOT IMPLEMENTED YET)
 
@@ -18,7 +21,6 @@ The following parts are planned for later LA slices. **None of them exist yet �
 
 - setup — machine/repo bootstrap
 - environment — current vs deferred env vars
-- preflight — safe pre-task checks
 - doctor — bounded diagnostics
 - start/stop — process lifecycle
 - verification — evidence collection

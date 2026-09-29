@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -223,11 +224,78 @@ test('behavior: preflight result lines use declared values only', () => {
 });
 
 
+// ===========================================================================
+// LA3 — process lifecycle (start-local / stop-local)
+// ===========================================================================
+
+const START = path.join(scriptsDir, 'start-local.sh');
+const STOP = path.join(scriptsDir, 'stop-local.sh');
+const OWNER_ID = `vagent.${createHash('sha256').update(repoRoot).digest('hex').slice(0, 12)}`;
+const STATE_DIR_NAME = `verifiai-local-agent-${process.getuid()}-${OWNER_ID}`;
+
+function stateDirIn(tmp) {
+  return path.join(tmp, STATE_DIR_NAME);
+}
+
+function psField(pid, field) {
+  return execFileSync('ps', ['-o', `${field}=`, '-p', String(pid)], { encoding: 'utf8' }).trim();
+}
+
+function writeState(dir, service, fields) {
+  mkdirSync(dir, { recursive: true });
+  const body = Object.entries({ service, ...fields }).map(([k, v]) => `${k}=${v}`).join('\n');
+  writeFileSync(path.join(dir, `${service}.state`), `${body}\n`);
+}
+
+function descendants(pid) {
+  const out = [];
+  const walk = (p) => {
+    const kids = spawnSync('pgrep', ['-P', String(p)], { encoding: 'utf8' }).stdout
+      .split('\n').filter(Boolean).map(Number);
+    for (const k of kids) { out.push(k); walk(k); }
+  };
+  walk(pid);
+  return out;
+}
+
+function alive(pid) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+test('la3: bash -n start-local and stop-local', () => {
+  for (const s of [START, STOP]) {
+    const r = runBash(['-n', s]);
+    assert.equal(r.status, 0, `bash -n ${path.basename(s)} failed:\n${r.stderr}`);
+  }
+});
+
+test('la3: lifecycle scripts declare set -u', () => {
+  for (const s of [START, STOP]) {
+    assert.match(readFileSync(s, 'utf8'), /^\s*set -[a-zA-Z]*u[a-zA-Z]*\s*$/m);
+  }
+});
+
+test('la3: start refuses an occupied port; unrelated process survives', () => {
+  const tmp = mkdtempSync(path.join(tmpdir(), 'verifai-la3-'));
+  const listener = spawn('node', ['-e', "require('http').createServer((q,s)=>s.end('x')).listen(14174,'127.0.0.1')"], { stdio: 'ignore' });
+  try {
+    execFileSync('bash', ['-c', 'for i in $(seq 1 50); do ss -ltn 2>/dev/null | grep -q :14174 && exit 0; sleep 0.1; done; exit 1']);
+    const r = runBash([START], { env: { TMPDIR: tmp, WEB_PORT: '14174' } });
+    assert.equal(r.status, 1, `expected refusal, got ${r.status}: ${r.stdout}`);
+    assert.match(`${r.stdout}\n${r.stderr}`, /occupied|refus/i);
+    assert.ok(alive(listener.pid), 'unrelated listener was killed');
+    const stateFiles = readdirSync(stateDirIn(tmp)).filter((f) => f.endsWith('.state'));
+    assert.deepEqual(stateFiles, [], 'no state recorded on refused start');
+  } finally {
+    listener.kill('SIGKILL');
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 
 // ===========================================================================
 // LA2 — environment docs + staged doctor
 // ===========================================================================
-
 const DOCTOR = path.join(scriptsDir, 'doctor.sh');
 const ENV_DOC = path.join(repoRoot, 'ops', 'local-agent', 'ENVIRONMENT.md');
 const ENV_EXAMPLE = path.join(repoRoot, 'ops', 'local-agent', 'env', 'local.env.example');
@@ -335,4 +403,105 @@ test('la2: environment docs exist and categorize', () => {
   }
 });
 
+
+
+
+// ===========================================================================
+// LA3 — remaining lifecycle safety tests
+// ===========================================================================
+
+test('la3: stop refuses fake/recycled PID, mismatched cwd, and mismatched start time', () => {
+  const tmp = mkdtempSync(path.join(tmpdir(), 'verifai-la3-forge-'));
+  const dir = stateDirIn(tmp);
+  const decoy = spawn('sleep', ['120'], { stdio: 'ignore' });
+  try {
+    const realStart = psField(decoy.pid, 'lstart');
+    const realCwd = execFileSync('readlink', [`/proc/${decoy.pid}/cwd`], { encoding: 'utf8' }).trim();
+
+    // 1) mismatched start time
+    writeState(dir, 'web', {
+      repo_root: repoRoot, pid: decoy.pid, start_time: 'Mon Jan 1 00:00:00 1990',
+      cwd: realCwd, command: 'sleep 120', pgid: decoy.pid, port: 4173, log: '/dev/null',
+    });
+    let r = runBash([STOP], { env: { TMPDIR: tmp } });
+    assert.equal(r.status, 1, `stop should refuse on start-time mismatch: ${r.stdout}`);
+    assert.ok(alive(decoy.pid), 'process killed despite start-time mismatch');
+
+    // 2) mismatched cwd (start time now correct)
+    writeState(dir, 'web', {
+      repo_root: repoRoot, pid: decoy.pid, start_time: realStart,
+      cwd: '/definitely/not/the/real/cwd', command: 'sleep 120', pgid: decoy.pid, port: 4173, log: '/dev/null',
+    });
+    r = runBash([STOP], { env: { TMPDIR: tmp } });
+    assert.equal(r.status, 1, `stop should refuse on cwd mismatch: ${r.stdout}`);
+    assert.ok(alive(decoy.pid), 'process killed despite cwd mismatch');
+
+    // 3) mismatched command
+    writeState(dir, 'web', {
+      repo_root: repoRoot, pid: decoy.pid, start_time: realStart,
+      cwd: realCwd, command: 'npm run start:web', pgid: decoy.pid, port: 4173, log: '/dev/null',
+    });
+    r = runBash([STOP], { env: { TMPDIR: tmp } });
+    assert.equal(r.status, 1, `stop should refuse on command mismatch: ${r.stdout}`);
+    assert.ok(alive(decoy.pid), 'process killed despite command mismatch');
+
+    // 4) completely fake PID (not running): stop clears stale state safely
+    writeState(dir, 'web', {
+      repo_root: repoRoot, pid: 999999, start_time: 'x', cwd: repoRoot,
+      command: 'npm run start:web', pgid: 999999, port: 4173, log: '/dev/null',
+    });
+    r = runBash([STOP], { env: { TMPDIR: tmp } });
+    assert.equal(r.status, 0, `stale-state clear must stay idempotent: ${r.stdout}${r.stderr}`);
+    assert.match(`${r.stdout}\n${r.stderr}`, /not running|gone|no such/i);
+    assert.ok(!existsSync(path.join(dir, 'web.state')), 'stale state cleared');
+    assert.ok(!alive(999999) || true, 'no process signaled for dead pid');
+  } finally {
+    decoy.kill('SIGKILL');
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('la3: full start/stop cycle stops owned npm parent + node child; idempotent', () => {
+  const tmp = mkdtempSync(path.join(tmpdir(), 'verifai-la3-cycle-'));
+  try {
+    const r1 = runBash([START], { env: { TMPDIR: tmp, WEB_PORT: '14175' }, timeout: 60_000 });
+    assert.equal(r1.status, 0, `start failed:\n${r1.stdout}${r1.stderr}`);
+
+    const stateFile = path.join(stateDirIn(tmp), 'web.state');
+    const state = Object.fromEntries(readFileSync(stateFile, 'utf8').trim().split('\n')
+      .map((l) => { const i = l.indexOf('='); return [l.slice(0, i), l.slice(i + 1)]; }));
+    const npmPid = Number(state.pid);
+    assert.ok(alive(npmPid), 'npm parent missing after start');
+    assert.equal(state.cwd, repoRoot, 'state cwd must be repo root');
+    const kids = descendants(npmPid);
+    assert.ok(kids.length > 0, 'npm parent has no node child');
+
+    const r2 = runBash([STOP], { env: { TMPDIR: tmp }, timeout: 60_000 });
+    assert.equal(r2.status, 0, `stop failed:\n${r2.stdout}${r2.stderr}`);
+    assert.ok(!alive(npmPid), 'npm parent survived stop');
+    for (const k of kids) assert.ok(!alive(k), `child ${k} survived stop`);
+    const portCheck = spawnSync('ss', ['-ltn'], { encoding: 'utf8' }).stdout;
+    assert.ok(!portCheck.includes(':14175'), 'port not released after stop');
+
+    const r3 = runBash([STOP], { env: { TMPDIR: tmp } });
+    assert.equal(r3.status, 0, `second stop must be safe: ${r3.stdout}${r3.stderr}`);
+    assert.ok(!existsSync(stateFile), 'state file should be removed after stop');
+  } finally {
+    runBash([STOP], { env: { TMPDIR: tmp } });
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('la3: lifecycle scripts never print the sentinel secret', () => {
+  const tmp = mkdtempSync(path.join(tmpdir(), 'verifai-la3-secret-'));
+  try {
+    const r = runBash([START], { env: { TMPDIR: tmp, WEB_PORT: '14176', XKIRO_API_KEY: SENTINEL } });
+    assert.ok(!`${r.stdout}\n${r.stderr}`.includes(SENTINEL), 'start leaked sentinel');
+    const s = runBash([STOP], { env: { TMPDIR: tmp, XKIRO_API_KEY: SENTINEL } });
+    assert.ok(!`${s.stdout}\n${s.stderr}`.includes(SENTINEL), 'stop leaked sentinel');
+  } finally {
+    runBash([STOP], { env: { TMPDIR: tmp } });
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
 

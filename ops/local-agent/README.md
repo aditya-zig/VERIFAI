@@ -14,18 +14,20 @@ Start with [`START-HERE.md`](START-HERE.md).
 | [`scripts/preflight.sh`](scripts/preflight.sh) | read-only machine/repo report (LA1) |
 | [`scripts/check-docker.sh`](scripts/check-docker.sh) | read-only, label-scoped Docker inspection (LA1) |
 | [`tests/kit-safety.test.mjs`](tests/kit-safety.test.mjs) | safety harness; run with `npm run ops:test` (LA1) |
+| [`ENVIRONMENT.md`](ENVIRONMENT.md) | variable categories + provider/key rules (LA2) |
+| [`env/local.env.example`](env/local.env.example) | placeholders only (LA2) |
+| [`scripts/doctor.sh`](scripts/doctor.sh) | staged readiness: `--stage M1\|M2` (LA2) |
+| [`scripts/start-local.sh`](scripts/start-local.sh) | starts owned services via repo npm scripts (LA3) |
+| [`scripts/stop-local.sh`](scripts/stop-local.sh) | identity-verified stop of owned processes (LA3) |
+| [`scripts/cleanup-local.sh`](scripts/cleanup-local.sh) | bounded cleanup of kit-owned resources (LA4) |
 
 ## Planned (NOT IMPLEMENTED YET)
 
 The following parts are planned for later LA slices. **None of them exist yet — do not invent them and do not create placeholder files:**
 
 - setup — machine/repo bootstrap
-- environment — current vs deferred env vars
-- doctor — bounded diagnostics
-- start/stop — process lifecycle
 - verification — evidence collection
 - Docker guidance (M4+)
-- cleanup — kit-owned resource cleanup
 - handoff — reproducible handoff template
 
 Core rule: GitHub + the current checkout outrank memory and old chats. See [`START-HERE.md`](START-HERE.md).

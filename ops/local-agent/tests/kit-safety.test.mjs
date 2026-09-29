@@ -505,3 +505,133 @@ test('la3: lifecycle scripts never print the sentinel secret', () => {
   }
 });
 
+
+// ===========================================================================
+// LA4 — safe cleanup of kit-owned resources
+// ===========================================================================
+
+const CLEANUP = path.join(scriptsDir, 'cleanup-local.sh');
+
+test('la4: cleanup passes bash -n and declares set -u', () => {
+  const r = runBash(['-n', CLEANUP]);
+  assert.equal(r.status, 0, `bash -n failed:\n${r.stderr}`);
+  assert.match(readFileSync(CLEANUP, 'utf8'), /^\s*set -[a-zA-Z]*u[a-zA-Z]*\s*$/m);
+});
+
+test('la4: cleanup selects docker resources only by ownership label', () => {
+  const src = readFileSync(CLEANUP, 'utf8');
+  assert.ok(src.includes('dev.verifiai.local-agent.owner='), 'ownership label missing');
+  // Selection must be label-based; no broad name-based selection.
+  assert.match(src, /--filter[^\n]*label=/, 'cleanup must filter docker by label');
+  const prohibited = [
+    [/\bprune\b/i, 'prune'],
+    [/docker\s+rm\b/i, 'docker rm'],
+    [/docker\s+stop\b/i, 'docker stop'],
+    [/docker\s+kill\b/i, 'docker kill'],
+    [/docker\s+system\b/i, 'docker system'],
+    [/docker\s+volume\b/i, 'docker volume'],
+    [/docker\s+network\b/i, 'docker network'],
+    [/docker\s+ps\b(?![^\n]*label=)/i, 'docker ps without label filter'],
+    [/docker\s+volume\s+ls\b/i, 'volume listing'],
+    [/sudo\b/i, 'sudo'],
+    [/rm\s+-rf?\s+\/(?!\/)/, 'root rm -rf'],
+  ];
+  for (const [pattern, label] of prohibited) {
+    assert.ok(!pattern.test(src), `cleanup contains prohibited pattern: ${label}`);
+  }
+});
+
+test('la4: cleanup removes kit state dir but preserves unrelated files and dirs', () => {
+  const tmp = mkdtempSync(path.join(tmpdir(), 'verifai-la4-'));
+  const dir = stateDirIn(tmp);
+  try {
+    // unrelated neighbours in the same temp root
+    const keepFile = path.join(tmp, 'unrelated-file.txt');
+    const keepDir = path.join(tmp, 'unrelated-dir');
+    writeFileSync(keepFile, 'keep me');
+    mkdirSync(keepDir, { recursive: true });
+    writeFileSync(path.join(keepDir, 'inner.txt'), 'keep me too');
+
+    // kit state with a dead pid (stop clears it, cleanup removes the dir)
+    writeState(dir, 'web', {
+      repo_root: repoRoot, pid: 999999, start_time: 'x', cwd: repoRoot,
+      command: 'npm run start:web', pgid: 999999, port: 4173, log: '/dev/null',
+    });
+
+    const r = runBash([CLEANUP], { env: { TMPDIR: tmp } });
+    assert.equal(r.status, 0, `cleanup failed:\n${r.stdout}${r.stderr}`);
+    assert.ok(!existsSync(dir), 'kit state dir should be removed');
+    assert.ok(existsSync(keepFile), 'unrelated file was deleted');
+    assert.equal(readFileSync(keepFile, 'utf8'), 'keep me');
+    assert.ok(existsSync(path.join(keepDir, 'inner.txt')), 'unrelated dir contents deleted');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('la4: cleanup deletes only recorded paths inside kit temp roots', () => {
+  const tmp = mkdtempSync(path.join(tmpdir(), 'verifai-la4-paths-'));
+  const dir = stateDirIn(tmp);
+  try {
+    const owned = path.join(tmp, 'verifai-repository-owned');
+    const recorded = path.join(tmp, 'recorded-external');
+    const outside = mkdtempSync(path.join(tmpdir(), 'verifai-la4-outside-'));
+    mkdirSync(owned, { recursive: true });
+    writeFileSync(path.join(owned, 'data.txt'), 'owned');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(path.join(outside, 'data.txt'), 'outside');
+
+    // recorded: kit-prefixed paths inside the temp root + one outside it
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, 'owned-paths.list'), `${owned}\n${recorded}\n${outside}\n`);
+
+    const r = runBash([CLEANUP], { env: { TMPDIR: tmp } });
+    assert.equal(r.status, 0, `cleanup failed:\n${r.stdout}${r.stderr}`);
+    assert.ok(!existsSync(owned), 'recorded kit-owned temp path should be removed');
+    assert.ok(!existsSync(recorded), 'recorded path inside the kit temp root should be removed');
+    // outside the kit temp root → must survive and be reported
+    assert.ok(existsSync(outside), 'path outside kit temp root must NOT be deleted');
+    assert.equal(readFileSync(path.join(outside, 'data.txt'), 'utf8'), 'outside');
+    assert.match(r.stdout, /refus|skip|outside|bounded/i, 'out-of-bounds path should be reported');
+  } finally {
+
+test('la4: cleanup aborts when stop refuses identity verification', () => {
+  const tmp = mkdtempSync(path.join(tmpdir(), 'verifai-la4-refuse-'));
+  const dir = stateDirIn(tmp);
+  const decoy = spawn('sleep', ['120'], { stdio: 'ignore' });
+  try {
+    const realStart = psField(decoy.pid, 'lstart');
+    const realCwd = execFileSync('readlink', [`/proc/${decoy.pid}/cwd`], { encoding: 'utf8' }).trim();
+    writeState(dir, 'web', {
+      repo_root: repoRoot, pid: decoy.pid, start_time: 'Mon Jan 1 00:00:00 1990',
+      cwd: realCwd, command: 'sleep 120', pgid: decoy.pid, port: 4173, log: '/dev/null',
+    });
+    writeFileSync(path.join(tmp, 'must-survive.txt'), 'untouched');
+
+    const r = runBash([CLEANUP], { env: { TMPDIR: tmp } });
+    assert.equal(r.status, 1, `cleanup must abort after stop refusal: ${r.stdout}`);
+    assert.ok(alive(decoy.pid), 'unrelated process must survive cleanup');
+    assert.ok(existsSync(dir), 'kit state must remain when stop refused');
+    assert.ok(existsSync(path.join(tmp, 'must-survive.txt')), 'files must remain when stop refused');
+  } finally {
+    decoy.kill('SIGKILL');
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('la4: cleanup is safe with no state and never prints the sentinel', () => {
+  const tmp = mkdtempSync(path.join(tmpdir(), 'verifai-la4-empty-'));
+  try {
+    const r = runBash([CLEANUP], { env: { TMPDIR: tmp, XKIRO_API_KEY: SENTINEL } });
+    assert.equal(r.status, 0, `cleanup with no state should be safe: ${r.stdout}${r.stderr}`);
+    assert.ok(!`${r.stdout}\n${r.stderr}`.includes(SENTINEL), 'cleanup leaked sentinel');
+    assert.match(`${r.stdout}\n${r.stderr}`, /docker/i, 'cleanup should report docker status informationally');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+

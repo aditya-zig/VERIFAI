@@ -32,7 +32,7 @@ Run from the checkout. With >=20 GiB free and Docker ready:
 ```
 
 Start launches only the existing lightweight web/API roles, using ports **4173**
-and **8787**, each with a 256 MiB Node heap cap. The local API replaces the old
+and **8787**, each with a 256 MiB Node old-space heap cap. The local API replaces the old
 OAuth/cloud API role; it does not start additional workers/engines. Existing port
 occupants are never killed. No model runs locally. The web proxies local routes
 to the API. Docker starts only for a selected command, not at idle.

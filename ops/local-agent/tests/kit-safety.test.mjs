@@ -464,7 +464,7 @@ test('la3: stop refuses fake/recycled PID, mismatched cwd, and mismatched start 
 test('la3: full start/stop cycle stops owned npm parent + node child; idempotent', () => {
   const tmp = mkdtempSync(path.join(tmpdir(), 'verifai-la3-cycle-'));
   try {
-    const r1 = runBash([START], { env: { TMPDIR: tmp, WEB_PORT: '14175' }, timeout: 60_000 });
+    const r1 = runBash([START], { env: { TMPDIR: tmp, WEB_PORT: '14175', PORT: '14177' }, timeout: 60_000 });
     assert.equal(r1.status, 0, `start failed:\n${r1.stdout}${r1.stderr}`);
 
     const stateFile = path.join(stateDirIn(tmp), 'web.state');
@@ -495,7 +495,7 @@ test('la3: full start/stop cycle stops owned npm parent + node child; idempotent
 test('la3: lifecycle scripts never print the sentinel secret', () => {
   const tmp = mkdtempSync(path.join(tmpdir(), 'verifai-la3-secret-'));
   try {
-    const r = runBash([START], { env: { TMPDIR: tmp, WEB_PORT: '14176', XKIRO_API_KEY: SENTINEL } });
+    const r = runBash([START], { env: { TMPDIR: tmp, WEB_PORT: '14176', PORT: '14178', XKIRO_API_KEY: SENTINEL } });
     assert.ok(!`${r.stdout}\n${r.stderr}`.includes(SENTINEL), 'start leaked sentinel');
     const s = runBash([STOP], { env: { TMPDIR: tmp, XKIRO_API_KEY: SENTINEL } });
     assert.ok(!`${s.stdout}\n${s.stderr}`.includes(SENTINEL), 'stop leaked sentinel');

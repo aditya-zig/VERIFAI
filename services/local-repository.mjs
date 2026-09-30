@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
+import { registerWorkspace, removeWorkspace } from './repository-workspaces.mjs';
 import { spawn } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runOwnedProcess } from './local-command.mjs';
 
@@ -51,10 +51,11 @@ async function runGit(args, { cwd, timeoutMs = 119_000, signal } = {}) {
   return result;
 }
 
-function listTrackedFiles(repositoryPath) {
+function listTrackedFiles(repositoryPath, signal) {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', ['-C', repositoryPath, 'ls-files', '-z'], {
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    signal?.throwIfAborted();
+    const child = spawn('/usr/bin/git', ['-c', 'core.fsmonitor=false', '-C', repositoryPath, 'ls-files', '-z'], {
+      env: { PATH: '/usr/bin:/bin', HOME: '/nonexistent', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const files = [];
@@ -64,7 +65,9 @@ function listTrackedFiles(repositoryPath) {
     let pending = '';
     let stderr = '';
     let finished = false;
-    const timeout = setTimeout(() => child.kill('SIGTERM'), 15_000);
+    const abort = () => child.kill('SIGKILL');
+    signal?.addEventListener('abort', abort, { once: true });
+    const timeout = setTimeout(abort, 15_000);
 
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => {
@@ -79,12 +82,14 @@ function listTrackedFiles(repositoryPath) {
       if (finished) return;
       finished = true;
       clearTimeout(timeout);
+      signal?.removeEventListener('abort', abort);
       reject(new Error(`Could not read cloned repository: ${error.message}`));
     });
     child.on('close', (code, signal) => {
       if (finished) return;
       finished = true;
       clearTimeout(timeout);
+      signal?.removeEventListener('abort', abort);
       if (pending) recordPath(pending);
       if (code !== 0) return reject(new Error(stderr.trim() || `Could not read repository file list${signal ? ` (${signal})` : ''}`));
       const detectedLanguages = [...languages.entries()]
@@ -147,25 +152,28 @@ async function readRepository(repositoryPath, files) {
 export class LocalRepositoryService {
   #repositories = new Map();
   #clones = new Set();
+  #registries = new Map();
 
   async clone(url, { signal } = {}) {
     const repository = parseRepositoryUrl(url);
     const controller = new AbortController();
     this.#clones.add(controller);
     let workspacePath;
+    let registry;
+    const id = randomUUID();
     try {
-      workspacePath = await mkdtemp(join(tmpdir(), 'verifai-repository-'));
+      ({ workspacePath, registry } = await registerWorkspace(id));
       const cloneSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
       await runGit(['clone', '--depth', '1', '--single-branch', '--no-tags', '--quiet', '--', repository.url, workspacePath], { signal: cloneSignal });
-      const listing = await listTrackedFiles(workspacePath);
+      const listing = await listTrackedFiles(workspacePath, cloneSignal);
       const info = await readRepository(workspacePath, listing);
+      cloneSignal.throwIfAborted();
       const files = {
         count: listing.count,
         items: listing.items,
         truncated: listing.truncated,
         languages: listing.languages,
       };
-      const id = randomUUID();
       const record = {
         id,
         repository,
@@ -174,9 +182,10 @@ export class LocalRepositoryService {
         info,
       };
       this.#repositories.set(id, record);
+      this.#registries.set(id, registry);
       return record;
     } catch (error) {
-      if (workspacePath) await rm(workspacePath, { recursive: true, force: true });
+      if (workspacePath) await removeWorkspace(workspacePath, registry);
       throw error;
     } finally { this.#clones.delete(controller); }
   }
@@ -188,8 +197,9 @@ export class LocalRepositoryService {
   async cleanup(id) {
     const record = this.#repositories.get(id);
     if (!record) return false;
-    await rm(record.clone.workspacePath, { recursive: true, force: true });
+    await removeWorkspace(record.clone.workspacePath, this.#registries.get(id));
     this.#repositories.delete(id);
+    this.#registries.delete(id);
     return true;
   }
 

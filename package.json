@@ -16,6 +16,7 @@
     "external:clone": "node scripts/clone-external-engines.mjs",
     "external:policy": "node scripts/verify-external-engine-policy.mjs",
     "start:api": "node dist/apps/api/index.js",
+    "start:local-api": "node scripts/serve-local-api.mjs",
     "start:sandbox": "node services/sandbox/server.mjs",
     "start:web": "node scripts/serve-web.mjs",
     "agentcore:worker": "node dist/services/agent-runtime/worker-server.js",

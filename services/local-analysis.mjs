@@ -129,7 +129,7 @@ function normalizeFinding(value, trackedFiles) {
   return { title, severity, description, evidence: { file } };
 }
 
-export async function analyzeRepository(record, { env = process.env, fetchImpl = fetch, execution, signal } = {}) {
+export async function analyzeRepository(record, { env = process.env, fetchImpl = fetch, execution, signal, auditId } = {}) {
   const config = resolveModelConfig(env);
   const workspacePath = record.clone.workspacePath;
   const context = await buildAnalysisContext(workspacePath, record.files);
@@ -139,7 +139,7 @@ export async function analyzeRepository(record, { env = process.env, fetchImpl =
 
   const response = await fetchImpl(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}`, 'cache-control': 'no-cache', ...(auditId ? { 'x-request-id': auditId } : {}) },
     body: JSON.stringify({
       model: config.model,
       temperature: 0.2,
@@ -152,19 +152,22 @@ export async function analyzeRepository(record, { env = process.env, fetchImpl =
         },
         {
           role: 'user',
-          content: `Repository: ${record.repository.fullName}\nTracked files:\n${fileList}\n\nFile excerpts:\n${excerpts}\n${execution ? `\nActual execution evidence (server-owned):\n${JSON.stringify(execution)}\n` : ''}\nReturn the single most useful finding.`,
+          content: `${auditId ? `Current audit request identity: ${auditId} (trace identity, not repository content).\n` : ''}Repository: ${record.repository.fullName}\nTracked files:\n${fileList}\n\nFile excerpts:\n${excerpts}\n${execution ? `\nActual execution evidence (server-owned):\n${JSON.stringify(execution)}\n` : ''}\nReturn the single most useful finding.`,
         },
       ],
     }),
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
   });
   if (!response.ok) {
-    const detail = await response.text().catch(() => '');
-    throw new Error(`Model call failed: HTTP ${response.status}${detail ? ` ${detail.slice(0, 200)}` : ''}`);
+    await response.body?.cancel();
+    throw new Error(`Model call failed: HTTP ${response.status}`);
   }
   const payload = await response.json();
   const text = payload?.choices?.[0]?.message?.content;
   if (!text) throw new Error('Model returned no content');
   const finding = normalizeFinding(extractJson(text), record.files.items);
-  return { finding, model: { provider: config.provider, model: config.model } };
+  return { finding, model: { provider: config.provider, model: config.model,
+    ...(auditId ? { requestId: auditId, responseId: typeof payload.id === 'string' ? payload.id.slice(0,200) : null,
+      usage: payload.usage ? { promptTokens: payload.usage.prompt_tokens, completionTokens: payload.usage.completion_tokens } : null,
+      cacheHeader: response.headers?.get('x-cache') || response.headers?.get('cf-cache-status') || null } : {}) } };
 }

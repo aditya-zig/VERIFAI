@@ -9,7 +9,14 @@ const root = resolve(fileURLToPath(new URL('../', import.meta.url)));
 export const sandboxOwner = `vagent.${createHash('sha256').update(root).digest('hex').slice(0,12)}`;
 const label = `dev.verifiai.local-agent.owner=${sandboxOwner}`;
 const kind = 'dev.verifiai.local-agent.kind=audit-sandbox';
-const state = join(tmpdir(), `verifiai-local-agent-${process.getuid()}-${sandboxOwner}`);
+export const sandboxStateRoot = join(tmpdir(), `verifiai-local-agent-${process.getuid()}-${sandboxOwner}`);
+const state = sandboxStateRoot;
+const stateLabel = `dev.verifiai.local-agent.state=${createHash('sha256').update(state).digest('hex').slice(0,16)}`;
+export async function ensureOwnedDirectory(path) {
+  await mkdir(path,{recursive:true,mode:0o700});
+  const info=await lstat(path);
+  if(!info.isDirectory() || info.uid!==process.getuid()) throw new Error('Incomplete: local state directory ownership not verified');
+}
 const lock = join(state, 'sandbox.lock');
 let busy = false;
 
@@ -23,14 +30,15 @@ async function checked(args, options) {
   return result.stdout.trim();
 }
 function busyError() { const error=new Error('Busy: only one local Docker audit is allowed'); error.statusCode=429; return error; }
-async function processIdentity(pid) {
-  try { const stat=await readFile(`/proc/${pid}/stat`, 'utf8'); return stat.slice(stat.lastIndexOf(')')+2).split(' ')[19]; }
+export async function processIdentity(pid) {
+  try { const stat=await readFile(`/proc/${pid}/stat`, 'utf8'); const fields=stat.slice(stat.lastIndexOf(')')+2).split(' '); return fields[0]==='Z'?null:fields[19]; }
   catch { return null; }
 }
 
 // Recover only explicitly labelled containers of a dead owner. Never touch
 // another checkout, another kit resource kind, or a live server's sandbox.
 export async function recoverSandboxes() {
+  await ensureOwnedDirectory(state);
   let previous;
   try { previous=JSON.parse(await readFile(join(lock,'owner.json'),'utf8')); }
   catch(error) { if(error.code !== 'ENOENT') throw error; }
@@ -38,7 +46,7 @@ export async function recoverSandboxes() {
   if (!previous) {
     try { await lstat(lock); throw busyError(); } catch(error) { if(error.code!=='ENOENT') throw error; }
   }
-  const ids = (await checked(['ps','-aq','--filter',`label=${label}`,'--filter',`label=${kind}`])).split('\n').filter(Boolean);
+  const ids = (await checked(['ps','-aq','--filter',`label=${label}`,'--filter',`label=${kind}`,'--filter',`label=${stateLabel}`])).split('\n').filter(Boolean);
   for (const id of ids) await checked(['rm','-f',id]);
   if (previous) await rm(lock,{recursive:true,force:true});
 }
@@ -55,12 +63,12 @@ export async function runSandbox(cwd, executable, args, {timeoutMs=10_000, signa
   let primaryError;
   try {
     signal?.throwIfAborted();
-    await mkdir(state,{recursive:true,mode:0o700});
+    await ensureOwnedDirectory(state);
     await recoverSandboxes();
     try { await mkdir(lock,{mode:0o700}); acquired=true; }
     catch(error) { if(error.code==='EEXIST') throw busyError(); throw error; }
     await writeFile(join(lock,'owner.json'), JSON.stringify({pid:process.pid,start:await processIdentity(process.pid)}),{mode:0o600});
-    await checked(['create','--pull','never','--name',name,'--label',label,'--label',kind,
+    await checked(['create','--pull','never','--name',name,'--label',label,'--label',kind,'--label',stateLabel,
       '--memory','1g','--cpus','2','--pids-limit','64','--network','none',
       '--cap-drop','ALL','--security-opt','no-new-privileges','--user',`${process.getuid()}:${process.getgid()}`,
       '--env','HOME=/nonexistent','--env','GIT_CONFIG_NOSYSTEM=1','--env','GIT_CONFIG_GLOBAL=/dev/null',
@@ -73,18 +81,20 @@ export async function runSandbox(cwd, executable, args, {timeoutMs=10_000, signa
     onStarted?.({name,memoryBytes:config.Memory,nanoCpus:config.NanoCpus,privileged:config.Privileged});
     const output=await docker(['start','--attach',name], {timeoutMs,signal});
     const containerState=JSON.parse(await checked(['inspect','--format','{{json .State}}',name]));
-    const incomplete=output.timedOut || output.aborted || containerState.Running || containerState.Status !== 'exited';
+    const actuallyStarted=Boolean(containerState.StartedAt && !containerState.StartedAt.startsWith('0001-'));
+    const incomplete=Boolean(output.timedOut || output.aborted || containerState.Running || containerState.Error || !actuallyStarted || containerState.Status !== 'exited');
     evidence={command:[executable,...args].join(' '),stdout:output.stdout,stderr:output.stderr,
       exitCode:incomplete?null:containerState.ExitCode,durationMs:Math.round(performance.now()-started),
       timedOut:output.timedOut,aborted:output.aborted,truncated:output.truncated,
       status:incomplete?'Incomplete':containerState.ExitCode===0?'Completed':'Failed',
       sandbox:{name,engine:'docker',image:process.env.VERIFIAI_SANDBOX_IMAGE || 'verifai-local-audit:m4',
-        memoryBytes:config.Memory,nanoCpus:config.NanoCpus,privileged:config.Privileged,network:config.NetworkMode,readOnly:config.ReadonlyRootfs}};
+        memoryBytes:config.Memory,nanoCpus:config.NanoCpus,privileged:config.Privileged,network:config.NetworkMode,readOnly:config.ReadonlyRootfs,
+        startedAt:containerState.StartedAt,finishedAt:containerState.FinishedAt,started:actuallyStarted}};
   } catch(error) { primaryError=error; }
   finally {
     if(acquired) {
       try {
-        const owned=(await checked(['ps','-aq','--filter',`name=^/${name}$`,'--filter',`label=${label}`,'--filter',`label=${kind}`]));
+        const owned=(await checked(['ps','-aq','--filter',`name=^/${name}$`,'--filter',`label=${label}`,'--filter',`label=${kind}`,'--filter',`label=${stateLabel}`]));
         if(owned) await checked(['rm','-f',owned]);
         const remaining=await checked(['ps','-aq','--filter',`name=^/${name}$`]);
         if(remaining) throw new Error(`Incomplete: sandbox cleanup failed for ${name}`);

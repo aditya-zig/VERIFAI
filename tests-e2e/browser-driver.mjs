@@ -15,7 +15,7 @@ export async function openBrowser(url) {
     let text='';startupTimer=setTimeout(()=>reject(new Error('Incomplete: installed Chrome startup timed out')),15000);
     child.stderr.on('data',chunk=>{text=(text+chunk).slice(-8192);const match=text.match(/DevTools listening on (ws:\/\/\S+)/);if(match){clearTimeout(startupTimer);resolve(match[1]);}});
     child.once('error',reject);child.once('exit',code=>reject(new Error(`Incomplete: Chrome exited ${code}`)));
-  }).catch(async error=>{clearTimeout(startupTimer);await rm(profile,{recursive:true,force:true});throw error;});
+  }).catch(async error=>{clearTimeout(startupTimer);if(child.pid && child.exitCode===null && child.signalCode===null){const exit=once(child,'exit');child.kill('SIGTERM');await exit;}await rm(profile,{recursive:true,force:true});throw error;});
   const ws=new WebSocket(endpoint);await once(ws,'open');
   let id=0;const pending=new Map();
   ws.addEventListener('message',({data})=>{const message=JSON.parse(data);if(message.id){const request=pending.get(message.id);pending.delete(message.id);if(request){clearTimeout(request.timer);message.error?request.reject(new Error(JSON.stringify(message.error))):request.resolve(message.result);}}});

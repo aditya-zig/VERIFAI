@@ -157,6 +157,23 @@ launch_service() { # $1=service $2=port $3...=command
   say "${svc}: healthy on port ${port}"
 }
 
+# M5: prefer the lightweight local API, not the cloud-era OAuth/AWS API.
+# Check BOTH ports before starting either service. Legacy fixture/repo behavior
+# below stays intact when start:local-api does not exist.
+if node -e 'process.exit(require(process.argv[1]).scripts?.["start:local-api"] ? 0 : 1)' "${repo_root}/package.json" 2>/dev/null; then
+  check_port_free "${web_port}" web "${state_dir}/web.state"; web_rc=$?
+  check_port_free "${api_port}" api "${state_dir}/api.state"; api_rc=$?
+  if [ "${api_rc}" -eq 0 ]; then
+    launch_service api "${api_port}" env PORT="${api_port}" NODE_OPTIONS=--max-old-space-size=256 npm run start:local-api
+  fi
+  if [ "${web_rc}" -eq 0 ]; then
+    launch_service web "${web_port}" env WEB_PORT="${web_port}" VERIFIAI_LOCAL_API_URL="http://127.0.0.1:${api_port}" NODE_OPTIONS=--max-old-space-size=256 npm run start:web
+  fi
+  say "state: ${state_dir}"
+  say "result: started (local web + API; Docker only on demand)"
+  exit 0
+fi
+
 # --- web (required for the local product) ----------------------------------
 check_port_free "${web_port}" web "${state_dir}/web.state"
 rc=$?

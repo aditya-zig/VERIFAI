@@ -60,3 +60,20 @@ test('a crashed sandbox owner is recovered without deleting live or unowned cont
   await recoverSandboxes();
   assert.equal(containers(),'');
 });
+
+test('alternate TMPDIR recovery does not remove another live state namespace',async(t)=>{
+  const temp=await mkdtemp(join(tmpdir(),'verifai-state-scope-'));
+  const cwd=await mkdtemp(join(temp,'repo-'));
+  t.after(()=>rm(temp,{recursive:true,force:true}));
+  const module=new URL('../services/local-sandbox.mjs',import.meta.url).href;
+  const child=spawn(process.execPath,['--input-type=module','-e',`import {runSandbox} from ${JSON.stringify(module)};const controller=new AbortController();process.on('SIGTERM',()=>controller.abort());await runSandbox(${JSON.stringify(cwd)},'node',['-e','setInterval(()=>{},1000)'],{timeoutMs:30000,signal:controller.signal,onStarted:v=>console.log(v.name)});`],{env:{...process.env,TMPDIR:temp},stdio:['ignore','pipe','pipe']});
+  t.after(async()=>{if(child.exitCode===null && child.signalCode===null){const exit=once(child,'exit');child.kill('SIGTERM');await exit;}});
+  const name=await firstLine(child);
+  let running=false;
+  for(let i=0;i<100;i++){if(execFileSync('docker',['inspect','--format','{{.State.Running}}',name],{encoding:'utf8'}).trim()==='true'){running=true;break;}await delay(50);}
+  assert.equal(running,true);
+  await recoverSandboxes();
+  assert.equal(execFileSync('docker',['inspect','--format','{{.State.Running}}',name],{encoding:'utf8'}).trim(),'true','a different state root must preserve this live container');
+  const exit=once(child,'exit');child.kill('SIGTERM');assert.equal((await exit)[0],0);
+  assert.equal(containers(),'');
+});

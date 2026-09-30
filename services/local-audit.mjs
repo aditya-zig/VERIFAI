@@ -6,7 +6,7 @@ let busy = false;
 let activeController;
 export function abortActiveAudit() { activeController?.abort(new Error('Server stopping')); }
 
-export async function auditRepository(record, { timeoutMs = 10_000, env = process.env, signal } = {}) {
+export function acquireLocalAudit(signal) {
   if (busy) {
     const error = new Error('Busy: one local command audit is already running');
     error.statusCode = 429;
@@ -14,7 +14,14 @@ export async function auditRepository(record, { timeoutMs = 10_000, env = proces
   }
   busy = true;
   activeController = new AbortController();
-  const auditSignal = signal ? AbortSignal.any([signal, activeController.signal]) : activeController.signal;
+  const controller = activeController;
+  return { signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
+    release() { if (activeController === controller) { busy = false; activeController = undefined; } } };
+}
+
+export async function auditRepository(record, { timeoutMs = 10_000, env = process.env, signal } = {}) {
+  const lease = acquireLocalAudit(signal);
+  const auditSignal = lease.signal;
   let execution;
   try {
     const command = await selectCommand(record.clone.workspacePath, record.files.items);
@@ -26,5 +33,5 @@ export async function auditRepository(record, { timeoutMs = 10_000, env = proces
   } catch (error) {
     return { status: 'Incomplete', failedStage: execution ? 'analysis' : 'execution',
       error: String(error.message), execution, finding: null };
-  } finally { busy = false; activeController = undefined; }
+  } finally { lease.release(); }
 }

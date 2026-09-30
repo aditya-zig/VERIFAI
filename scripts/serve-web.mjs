@@ -4,6 +4,7 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LocalRepositoryService } from '../services/local-repository.mjs';
 import { abortActiveAudit } from '../services/local-audit.mjs';
+import { MasterAuditService } from '../services/master-audit.mjs';
 
 const root = fileURLToPath(new URL('../apps/web/', import.meta.url));
 const types = {
@@ -22,14 +23,20 @@ function sendJson(res, status, body) {
 
 async function readJson(req) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let bytes = 0;
+  for await (const chunk of req) {
+    bytes += chunk.length;
+    if (bytes > 256 * 1024) { const error = new Error('request body exceeds 256 KiB safety limit'); error.statusCode = 413; throw error; }
+    chunks.push(chunk);
+  }
   if (!chunks.length) return {};
   const raw = Buffer.concat(chunks).toString('utf8');
   if (Buffer.byteLength(raw) > 256 * 1024) throw new Error('request body exceeds 256 KiB safety limit');
   return raw ? JSON.parse(raw) : {};
 }
 
-export function createDemoServer({ deepAudit, repositories = new LocalRepositoryService() } = {}) {
+export function createDemoServer({ deepAudit, repositories = new LocalRepositoryService(), apiOnly = false, apiUrl, env = process.env } = {}) {
+  const audits = new MasterAuditService(repositories, { env });
   const getDeepAudit = async () => {
     if (deepAudit) return deepAudit;
     const { DeepAuditService } = await import('../services/deep-audit/index.mjs');
@@ -41,7 +48,25 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
     const url = new URL(req.url ?? '/', 'http://localhost');
 
     if (req.method === 'GET' && url.pathname === '/health') {
-      return sendJson(res, 200, { ok: true, service: 'verifai-local' });
+      return sendJson(res, 200, { ok: true, service: apiOnly ? 'verifai-local-api' : 'verifai-local' });
+    }
+
+    if (apiUrl && url.pathname.startsWith('/api/local/')) {
+      try {
+        const body = req.method === 'POST' ? JSON.stringify(await readJson(req)) : undefined;
+        const upstream = await fetch(`${apiUrl}${url.pathname}`, { method: req.method, headers: { 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(120_000) });
+        return sendJson(res, upstream.status, await upstream.json());
+      } catch (error) { return sendJson(res, error.statusCode ?? 502, { status: 'Incomplete', error: 'Local API unavailable or request invalid' }); }
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/local/audits') {
+      try { const body = await readJson(req); return sendJson(res, 202, audits.start(body.url)); }
+      catch (error) { return sendJson(res, error.statusCode ?? 400, { status: 'Incomplete', error: String(error.message) }); }
+    }
+    const masterRoute = url.pathname.match(/^\/api\/local\/audits\/([^/]+)$/);
+    if (req.method === 'GET' && masterRoute) {
+      const run = audits.get(decodeURIComponent(masterRoute[1]));
+      return run ? sendJson(res, 200, run) : sendJson(res, 404, { status: 'Incomplete', error: 'audit not found' });
     }
 
     if (req.method === 'POST' && url.pathname === '/api/local/repositories') {
@@ -97,6 +122,8 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
         return sendJson(res, status, { error: message });
       }
     }
+
+    if (apiOnly) return sendJson(res, 404, { error: 'local API route not found' });
 
     if (req.method === 'POST' && url.pathname === '/api/demo/deep-audit') {
       try {
@@ -162,6 +189,7 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
 
   server.shutdown = async () => {
     abortActiveAudit();
+    await audits.waitForIdle();
     await repositories.cleanupAll();
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   };
@@ -171,9 +199,13 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
 
 const entry = process.argv[1] ? resolve(process.argv[1]) : '';
 if (entry === fileURLToPath(import.meta.url)) {
-  const { recoverSandboxes } = await import('../services/local-sandbox.mjs');
-  await recoverSandboxes().catch(error => console.warn(`Incomplete sandbox recovery: ${error.message}`));
-  const server = createDemoServer();
+  if (!process.env.VERIFIAI_LOCAL_API_URL) {
+    const { recoverRepositoryWorkspaces } = await import('../services/repository-workspaces.mjs');
+    const { recoverSandboxes } = await import('../services/local-sandbox.mjs');
+    await recoverRepositoryWorkspaces();
+    await recoverSandboxes().catch(error => console.warn(`Incomplete sandbox recovery: ${error.message}`));
+  }
+  const server = createDemoServer({ apiUrl: process.env.VERIFIAI_LOCAL_API_URL });
   server.listen(Number(process.env.WEB_PORT ?? 4173), process.env.WEB_HOST ?? '127.0.0.1', () => {
     console.log('VERIFAI local web/API: http://127.0.0.1:4173');
   });

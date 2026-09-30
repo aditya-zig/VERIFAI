@@ -768,7 +768,7 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     return `<form id="localRepositoryForm" class="card pad-lg" aria-describedby="localRepositoryHelp">
       <label class="label" for="localRepoUrl">Public GitHub repository URL</label>
       <input id="localRepoUrl" name="url" class="input" type="url" required autocomplete="url" placeholder="https://github.com/owner/repository" />
-      <p id="localRepositoryHelp" class="help">VERIFAI clones the public repository into a temporary local directory, reads its tracked files, then one AI agent returns a single finding.</p>
+      <p id="localRepositoryHelp" class="help">VERIFAI clones the public repository, runs one bounded read-only command, then one API-backed AI model interprets the actual output. This limited check is not full verification.</p>
       <div class="actions"><button id="startLocalAudit" class="btn primary" type="submit">Start local check</button></div>
       <div id="localRepoResult" role="status" aria-live="polite"></div>
     </form>`;
@@ -782,7 +782,7 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
           <h1>Inspect a public GitHub repository.</h1>
           <p class="lede">Paste a URL. VERIFAI clones it to a temporary directory, reads its tracked files, and shows what it found.</p>
           ${localRepositoryFormMarkup()}
-          <p class="tiny muted" style="margin:16px 0 0">This local step clones, reads, and runs one AI analysis. No repair or pull requests.</p>
+          <p class="tiny muted" style="margin:16px 0 0">This local step clones, runs one safe command, and makes one AI call. No installs, repair or pull requests.</p>
         </section>
       </div>`;
   }
@@ -823,7 +823,7 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
         ${packageMarkup}
         <ul>${fileMarkup}</ul>
         <p id="localWorkspacePath"><strong>Temporary directory</strong> <code>${escapeHtml(payload.clone.workspacePath)}</code></p>
-        <div id="localFinding" role="status" aria-live="polite"><p class="muted small">Running one AI analysis…</p></div>
+        <div id="localFinding" role="status" aria-live="polite"><p class="muted small">Running one bounded command and one API model analysis…</p></div>
         <button class="btn sm" type="button" data-action="cleanup-local-repository" data-repository-id="${escapeHtml(payload.id)}">Clean up temporary repository</button>
       </section>`;
       form.dataset.repositoryId = payload.id;
@@ -840,9 +840,22 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     const host = document.getElementById('localFinding');
     if (!host) return;
     try {
-      const response = await fetch(`/api/local/repositories/${encodeURIComponent(id)}/analyze`, { method: 'POST' });
+      const response = await fetch(`/api/local/repositories/${encodeURIComponent(id)}/audit`, { method: 'POST' });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      const execution = payload.execution;
+      const executionMarkup = execution ? `<section id="localExecutionEvidence" class="card pad section">
+        <h4>Real executed evidence</h4>
+        <p><strong>Command</strong> <code>${escapeHtml(execution.command)}</code></p>
+        <p>${escapeHtml(execution.source)} · ${escapeHtml(execution.status)} · Exit: ${escapeHtml(String(execution.exitCode))} · ${execution.durationMs} ms</p>
+        <p>stdout</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stdout || '(empty)')}</pre>
+        <p>stderr</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stderr || '(empty)')}</pre>
+        ${execution.truncated ? '<p>Output capped: showing tail only.</p>' : ''}
+      </section>` : '';
+      if (!payload.finding) {
+        host.innerHTML = `<p class="status failed">Incomplete · ${escapeHtml(payload.failedStage || 'audit')}: ${escapeHtml(payload.error || 'Command timed out')}</p>${executionMarkup}`;
+        return;
+      }
       const finding = payload.finding;
       host.innerHTML = `<section class="card pad section">
         <div class="actions" style="justify-content:space-between;align-items:center">
@@ -851,10 +864,11 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
         </div>
         <p id="localFindingDescription">${escapeHtml(finding.description)}</p>
         <p id="localFindingEvidence"><strong>Evidence</strong> <code>${escapeHtml(finding.evidence.file)}</code></p>
-        <p class="tiny muted">One agent · ${escapeHtml(payload.model.provider)} · ${escapeHtml(payload.model.model)}</p>
+        <p class="tiny muted">${escapeHtml(payload.status)} limited check · One API call · ${escapeHtml(payload.model.provider)} · ${escapeHtml(payload.model.model)}</p>
+        ${executionMarkup}
       </section>`;
     } catch (error) {
-      host.innerHTML = `<p class="status failed">AI analysis failed: ${escapeHtml(error?.message || error)}</p>`;
+      host.innerHTML = `<p class="status failed">Incomplete: ${escapeHtml(error?.message || error)}</p>`;
     }
   }
 

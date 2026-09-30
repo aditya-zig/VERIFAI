@@ -23,7 +23,7 @@ test('one local AI agent analyzes a cloned repo and the UI shows the finding', a
   assert.match(page, /id="startLocalAudit"/, 'frontend exposes a start button');
   assert.match(page, /id="localRepoResult"/, 'frontend has a place to show repository information');
   assert.match(page, /id="localFinding"/, 'frontend has a place to show the agent finding');
-  assert.match(page, /\/api\/local\/repositories.*analyze/, 'the UI calls the single-agent analysis backend');
+  assert.match(page, /\/api\/local\/repositories.*audit/, 'the UI calls the command-backed single-agent audit backend');
 
   const cloneResponse = await fetch(`${baseUrl}/api/local/repositories`, {
     method: 'POST',

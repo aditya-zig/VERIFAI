@@ -6,17 +6,17 @@ const html = await readFile(new URL('../apps/web/index.html', import.meta.url), 
 const css = await readFile(new URL('../apps/web/styles.css', import.meta.url), 'utf8').catch(() => '');
 const js = await readFile(new URL('../apps/web/app.js', import.meta.url), 'utf8').catch(() => '');
 
-test('public site contains the complete VERIFAI marketing story', () => {
-  // The 18 Sep frontend consolidated the old deep-audit/report/fix anchors into
-  // the product demo + workflow application shell. Keep this assertion tied to
-  // the published DOM rather than obsolete prototype section IDs.
-  for (const id of ['product','demo','how','workflow','security','developers']) {
-    assert.match(html, new RegExp(`id=["']${id}["']`), `missing #${id}`);
-  }
-  assert.match(html, /Start Verification/);
-  assert.match(html, /Evidence-backed/);
-  assert.match(html, /Know if your software actually works\./);
-  assert.match(html, /Your users should not be your first real-world test\./);
+test('public landing describes the supported limited local check without verification claims', () => {
+  // M1/M2 replaced the marketing/swarm entry with the real local product.
+  const landing = html.match(/function renderLocalLanding\(\) \{([\s\S]*?)\n  \}/)?.[1];
+  assert.ok(landing, 'local landing renderer exists');
+  assert.match(landing, /Inspect a public GitHub repository/);
+  assert.match(landing, /localRepositoryFormMarkup\(\)/);
+  assert.match(landing, /one safe command/);
+  assert.match(landing, /one AI call/);
+  assert.match(landing, /No installs, repair or pull requests/);
+  assert.doesNotMatch(landing, /Start Verification|Fix verified|10 \/ 10/);
+  assert.match(html, /This limited check is not full verification/);
 });
 
 test('frontend is wired to the real Deep Audit endpoint and live run state', () => {

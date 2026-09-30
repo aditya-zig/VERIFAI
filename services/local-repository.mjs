@@ -3,6 +3,7 @@ import { lstat, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { runOwnedProcess } from './local-command.mjs';
 
 const fileLimit = 100;
 const languageByExtension = new Map([
@@ -44,41 +45,10 @@ function parseRepositoryUrl(value) {
   };
 }
 
-function runGit(args, { cwd, timeoutMs = 120_000, outputLimit = 8_192 } = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn('git', args, {
-      cwd,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    let finished = false;
-    const timeout = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
-
-    const collect = (current, write, chunk) => {
-      const next = current + chunk.toString('utf8');
-      write(next.slice(0, outputLimit));
-      if (next.length > outputLimit) child.kill('SIGTERM');
-    };
-
-    child.stdout.on('data', (chunk) => collect(stdout, (value) => { stdout = value; }, chunk));
-    child.stderr.on('data', (chunk) => collect(stderr, (value) => { stderr = value; }, chunk));
-    child.on('error', (error) => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timeout);
-      reject(new Error(`Could not run git: ${error.message}`));
-    });
-    child.on('close', (code, signal) => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timeout);
-      if (code === 0) return resolve({ stdout, stderr });
-      const detail = stderr.trim();
-      reject(new Error(detail || `git ${args[0]} failed${signal ? ` (${signal})` : ` with exit code ${code}`}`));
-    });
-  });
+async function runGit(args, { cwd, timeoutMs = 119_000, signal } = {}) {
+  const result = await runOwnedProcess('/usr/bin/git', args, { cwd, timeoutMs, signal });
+  if (result.status !== 'Completed') throw new Error(result.stderr.trim() || `git ${args[0]} Incomplete (${result.status})`);
+  return result;
 }
 
 function listTrackedFiles(repositoryPath) {
@@ -176,12 +146,17 @@ async function readRepository(repositoryPath, files) {
 
 export class LocalRepositoryService {
   #repositories = new Map();
+  #clones = new Set();
 
-  async clone(url) {
+  async clone(url, { signal } = {}) {
     const repository = parseRepositoryUrl(url);
-    const workspacePath = await mkdtemp(join(tmpdir(), 'verifai-repository-'));
+    const controller = new AbortController();
+    this.#clones.add(controller);
+    let workspacePath;
     try {
-      await runGit(['clone', '--depth', '1', '--single-branch', '--no-tags', '--quiet', '--', repository.url, workspacePath]);
+      workspacePath = await mkdtemp(join(tmpdir(), 'verifai-repository-'));
+      const cloneSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+      await runGit(['clone', '--depth', '1', '--single-branch', '--no-tags', '--quiet', '--', repository.url, workspacePath], { signal: cloneSignal });
       const listing = await listTrackedFiles(workspacePath);
       const info = await readRepository(workspacePath, listing);
       const files = {
@@ -201,9 +176,9 @@ export class LocalRepositoryService {
       this.#repositories.set(id, record);
       return record;
     } catch (error) {
-      await rm(workspacePath, { recursive: true, force: true });
+      if (workspacePath) await rm(workspacePath, { recursive: true, force: true });
       throw error;
-    }
+    } finally { this.#clones.delete(controller); }
   }
 
   get(id) {
@@ -219,6 +194,8 @@ export class LocalRepositoryService {
   }
 
   async cleanupAll() {
+    for (const controller of this.#clones) controller.abort();
+    while (this.#clones.size) await new Promise(resolve => setTimeout(resolve, 10));
     const ids = [...this.#repositories.keys()];
     await Promise.all(ids.map((id) => this.cleanup(id)));
   }

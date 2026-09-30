@@ -768,7 +768,7 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     return `<form id="localRepositoryForm" class="card pad-lg" aria-describedby="localRepositoryHelp">
       <label class="label" for="localRepoUrl">Public GitHub repository URL</label>
       <input id="localRepoUrl" name="url" class="input" type="url" required autocomplete="url" placeholder="https://github.com/owner/repository" />
-      <p id="localRepositoryHelp" class="help">VERIFAI clones the public repository, runs one bounded read-only command, then one API-backed AI model interprets the actual output. This limited check is not full verification.</p>
+      <p id="localRepositoryHelp" class="help">VERIFAI clones the public repository, runs one bounded read-only command in an on-demand Docker sandbox, then one API-backed AI model interprets the actual output. This limited check is not full verification.</p>
       <div class="actions"><button id="startLocalAudit" class="btn primary" type="submit">Start local check</button></div>
       <div id="localRepoResult" role="status" aria-live="polite"></div>
     </form>`;
@@ -848,6 +848,7 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
         <h4>Real executed evidence</h4>
         <p><strong>Command</strong> <code>${escapeHtml(execution.command)}</code></p>
         <p>${escapeHtml(execution.source)} · ${escapeHtml(execution.status)} · Exit: ${escapeHtml(String(execution.exitCode))} · ${execution.durationMs} ms</p>
+        ${execution.sandbox ? `<p id="localSandboxEvidence"><strong>Docker sandbox started</strong> <code>${escapeHtml(execution.sandbox.name)}</code> · ${execution.sandbox.removed ? 'Removed after execution' : 'Incomplete cleanup'} · ${Math.round(execution.sandbox.memoryBytes / 1048576)} MiB limit · ${execution.sandbox.nanoCpus / 1e9} CPU · privileged: ${execution.sandbox.privileged} · network: ${escapeHtml(execution.sandbox.network)}</p>` : ''}
         <p>stdout</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stdout || '(empty)')}</pre>
         <p>stderr</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stderr || '(empty)')}</pre>
         ${execution.truncated ? '<p>Output capped: showing tail only.</p>' : ''}

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LocalRepositoryService } from '../services/local-repository.mjs';
+import { abortActiveAudit } from '../services/local-audit.mjs';
 
 const root = fileURLToPath(new URL('../apps/web/', import.meta.url));
 const types = {
@@ -159,13 +160,27 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
     }
   });
 
+  server.shutdown = async () => {
+    abortActiveAudit();
+    await repositories.cleanupAll();
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  };
   server.on('close', () => { void repositories.cleanupAll(); });
   return server;
 }
 
 const entry = process.argv[1] ? resolve(process.argv[1]) : '';
 if (entry === fileURLToPath(import.meta.url)) {
-  createDemoServer().listen(Number(process.env.WEB_PORT ?? 4173), process.env.WEB_HOST ?? '127.0.0.1', () => {
-    console.log('VERIFAI demo web: http://localhost:4173');
+  const { recoverSandboxes } = await import('../services/local-sandbox.mjs');
+  await recoverSandboxes().catch(error => console.warn(`Incomplete sandbox recovery: ${error.message}`));
+  const server = createDemoServer();
+  server.listen(Number(process.env.WEB_PORT ?? 4173), process.env.WEB_HOST ?? '127.0.0.1', () => {
+    console.log('VERIFAI local web/API: http://127.0.0.1:4173');
+  });
+  let stopping = false;
+  for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => {
+    if (stopping) return;
+    stopping = true;
+    server.shutdown().then(() => process.exit(0), error => { console.error(`Incomplete shutdown: ${error.message}`); process.exit(1); });
   });
 }

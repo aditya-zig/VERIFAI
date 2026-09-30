@@ -129,7 +129,7 @@ function normalizeFinding(value, trackedFiles) {
   return { title, severity, description, evidence: { file } };
 }
 
-export async function analyzeRepository(record, { env = process.env, fetchImpl = fetch, execution } = {}) {
+export async function analyzeRepository(record, { env = process.env, fetchImpl = fetch, execution, signal } = {}) {
   const config = resolveModelConfig(env);
   const workspacePath = record.clone.workspacePath;
   const context = await buildAnalysisContext(workspacePath, record.files);
@@ -156,7 +156,7 @@ export async function analyzeRepository(record, { env = process.env, fetchImpl =
         },
       ],
     }),
-    signal: AbortSignal.timeout(120_000),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => '');

@@ -163,7 +163,7 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
       if (run.status !== 'Running') {
         try {
           const repair=repairs.get(id);
-          return sendJson(res, 200, { ...run, repair, proof: await artifacts.refresh(run, { repair, browser: run.browser }), pullRequest: pullRequests.get(id) });
+          return sendJson(res, 200, { ...run, repair, proof: await artifacts.getOrPublish(run, { repair, browser: run.browser }), pullRequest: pullRequests.get(id) });
         }
         catch (error) { return sendJson(res, 200, { ...run, proof: { status: 'Incomplete', error: String(error?.message ?? error) } }); }
       }
@@ -177,7 +177,7 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
         const id = decodeURIComponent(repairRoute[1]);
         const repair = await repairs.repair(id, body.patch);
         const run = audits.get(id);
-        const proof = run && run.status !== 'Running' ? await artifacts.refresh(run, { repair, browser: browserResults.get(id) }) : undefined;
+        const proof = run && run.status !== 'Running' ? await artifacts.getOrPublish(run, { repair, browser: browserResults.get(id) }) : undefined;
         return sendJson(res, 200, { ...repair, proof });
       } catch (error) {
         return sendJson(res, error.statusCode ?? 409, { status: 'Incomplete', error: String(error?.message ?? error) });
@@ -194,7 +194,7 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
       const run = audits.get(id);
       if (!run) return sendJson(res, 404, { status: 'Incomplete', error: 'audit not found' });
       if (run.status === 'Running') return sendJson(res, 409, { status: 'Incomplete', error: 'audit still running' });
-      try { return sendJson(res, 200, await artifacts.refresh(run, { repair: repairs.get(id), browser: browserResults.get(id) })); }
+      try { return sendJson(res, 200, await artifacts.getOrPublish(run, { repair: repairs.get(id), browser: browserResults.get(id) })); }
       catch (error) { return sendJson(res, 500, { status: 'Incomplete', error: String(error?.message ?? error) }); }
     }
 

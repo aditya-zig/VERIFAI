@@ -782,7 +782,7 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
           <h1>Inspect a public GitHub repository.</h1>
           <p class="lede">Paste a URL. VERIFAI clones it to a temporary directory, reads its tracked files, and shows what it found.</p>
           ${localRepositoryFormMarkup()}
-          <p class="tiny muted" style="margin:16px 0 0">This local step clones, runs one safe command, and makes one AI call. No installs, repair or pull requests.</p>
+          <p class="tiny muted" style="margin:16px 0 0">The base check remains bounded. Optional browser, repair, proof and pull-request actions appear only after the required evidence gates.</p>
         </section>
       </div>`;
   }
@@ -825,6 +825,11 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     const stages = Object.entries(run.stages).map(([name, stage]) => `<li>${escapeHtml(name)}: ${escapeHtml(stage.status)}${stage.detail ? ` — ${escapeHtml(stage.detail)}` : ''}</li>`).join('');
     const finding = run.finding;
     const execution = run.execution;
+    const specialist = run.specialists?.results?.find(item => item.id === 'security');
+    const proof = run.proof;
+    const browser = run.browser;
+    const canRepair = Number.isInteger(execution?.exitCode) && execution.exitCode !== 0;
+    const terminal = run.status !== 'Running';
     host.innerHTML = `<section class="card pad section" data-audit-id="${escapeHtml(run.id)}">
       <h3>${escapeHtml(run.repository?.fullName || 'Public GitHub repository')}</h3>
       <p id="localAuditStatus" class="status ${run.status === 'Running' ? 'running' : run.status === 'Completed' ? 'unknown' : 'failed'}">${escapeHtml(statusText)}</p>
@@ -836,8 +841,15 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
           <span id="localFindingSeverity" class="status warning">${escapeHtml(finding.severity)}</span>
           <p id="localFindingDescription" style="white-space:pre-wrap">${escapeHtml(finding.description)}</p>
           <p id="localFindingEvidence">Evidence file: <code>${escapeHtml(finding.evidence.file)}</code></p>` : ''}
-        ${run.model ? `<p>One real API call · ${escapeHtml(run.model.provider)} · ${escapeHtml(run.model.model)}</p>` : ''}
+        ${run.model ? `<p>Base model · ${escapeHtml(run.model.provider)} · ${escapeHtml(run.model.model)}</p>` : ''}
       </div>
+      ${specialist ? `<section id="localSecuritySpecialist" class="card pad section">
+        <h4>Security specialist</h4>
+        <p class="status ${specialist.status === 'Completed' ? 'unknown' : 'failed'}">${escapeHtml(specialist.status)}</p>
+        ${specialist.model ? `<p>${escapeHtml(specialist.model.provider)} · ${escapeHtml(specialist.model.model)}</p>` : ''}
+        ${specialist.error ? `<p class="status failed">${escapeHtml(specialist.error)}</p>` : ''}
+        <p>${specialist.findings?.length || 0} persisted finding(s) · ${specialist.evidenceRefs?.length || 0} evidence ref(s)</p>
+      </section>` : ''}
       ${execution ? `<section id="localExecutionEvidence" class="card pad section">
         <h4>Real executed evidence</h4><code>${escapeHtml(execution.command)}</code>
         <p>Exit: ${escapeHtml(String(execution.exitCode))} · ${execution.durationMs} ms · ${escapeHtml(execution.status)}</p>
@@ -847,6 +859,23 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
         ${execution.truncated ? '<p>Output capped: showing tail only.</p>' : ''}
         <p>Executed-output SHA-256: <code>${escapeHtml(run.outputHash || '')}</code></p>
       </section>` : ''}
+      ${browser ? `<section class="card pad section"><h4>Browser journey</h4><p>${escapeHtml(browser.status)} · ${escapeHtml(browser.target?.label || 'fixture')}</p>${browser.screenshotRefs?.[0] ? `<a href="${escapeHtml(browser.screenshotRefs[0])}" target="_blank" rel="noopener">Open captured screenshot</a>` : '<p>No screenshot artifact.</p>'}</section>` : ''}
+      ${proof?.manifest ? `<section class="card pad section"><h4>Proof bundle</h4><p>Manifest <code>${escapeHtml(proof.manifest.id)}</code></p><p>SHA-256 <code>${escapeHtml(proof.manifest.sha256)}</code></p><p>${proof.artifacts?.filter(item => item.status === 'Present').length || 0} materialized artifact(s)</p></section>` : ''}
+      ${terminal ? `<section id="localAuditActions" class="card pad section">
+        <h4>Next verified actions</h4>
+        <div class="actions">
+          ${run.status === 'Completed' ? '<button class="btn sm" type="button" data-local-browser>Run fixture browser journey</button>' : ''}
+          <button class="btn sm" type="button" data-local-proof>Refresh proof</button>
+        </div>
+        ${canRepair ? `<div class="section">
+          <label class="label">Repair one verified file</label>
+          <input class="input" data-repair-path value="${escapeHtml(finding?.evidence?.file || '')}" placeholder="relative/file.js" />
+          <input class="input" data-repair-expected placeholder="Exact text to replace" />
+          <input class="input" data-repair-replacement placeholder="Replacement text" />
+          <button class="btn sm" type="button" data-local-repair>Verify candidate repair</button>
+        </div>` : ''}
+        <div id="localPostAudit" role="status" aria-live="polite"></div>
+      </section>` : ''}
       <p class="tiny muted">A completed limited check is not a full test-suite or security verification. Cleanup is automatic.</p>
       ${run.status === 'Completed' ? `<section class="card pad section">
         <button class="btn" type="button" data-action="run-fixture-browser" data-audit-id="${escapeHtml(run.id)}">Run fixture browser journey</button>
@@ -854,6 +883,81 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
         <div id="localBrowserEvidence" role="status" aria-live="polite"></div>
       </section>` : ''}
     </section>`;
+    host.querySelector('[data-local-browser]')?.addEventListener('click', () => runLocalBrowserJourney(run.id, host));
+    host.querySelector('[data-local-proof]')?.addEventListener('click', () => refreshLocalProof(run.id, host));
+    host.querySelector('[data-local-repair]')?.addEventListener('click', () => runLocalRepair(run.id, host));
+  }
+
+  function renderProofSummary(proof) {
+    if (!proof?.manifest) return '<p class="status failed">Proof bundle incomplete.</p>';
+    const present = proof.artifacts?.filter(item => item.status === 'Present').length || 0;
+    const missing = proof.artifacts?.filter(item => item.status === 'Missing').length || 0;
+    return `<p>Proof manifest <code>${escapeHtml(proof.manifest.id)}</code></p><p>SHA-256 <code>${escapeHtml(proof.manifest.sha256)}</code></p><p>${present} present · ${missing} missing</p>`;
+  }
+
+  async function runLocalBrowserJourney(id, host) {
+    const out = host.querySelector('#localPostAudit');
+    if (out) out.innerHTML = '<p class="muted small">Running the bounded local fixture browser journey…</p>';
+    try {
+      const response = await fetch(`/api/local/audits/${encodeURIComponent(id)}/browser`, { method: 'POST' });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      if (out) out.innerHTML = `<h4>Browser: ${escapeHtml(payload.status)}</h4><p>${escapeHtml(payload.target?.label || 'fixture')}</p>${payload.screenshotRefs?.[0] ? `<a href="${escapeHtml(payload.screenshotRefs[0])}" target="_blank" rel="noopener">Open real screenshot</a>` : '<p>No screenshot returned.</p>'}${renderProofSummary(payload.proof)}`;
+    } catch (error) {
+      if (out) out.innerHTML = `<p class="status failed">Browser Incomplete: ${escapeHtml(error?.message || error)}</p>`;
+    }
+  }
+
+  async function refreshLocalProof(id, host) {
+    const out = host.querySelector('#localPostAudit');
+    try {
+      const response = await fetch(`/api/local/audits/${encodeURIComponent(id)}/artifacts`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      if (out) out.innerHTML = `<h4>Proof refreshed</h4>${renderProofSummary(payload)}`;
+    } catch (error) {
+      if (out) out.innerHTML = `<p class="status failed">Proof Incomplete: ${escapeHtml(error?.message || error)}</p>`;
+    }
+  }
+
+  async function runLocalRepair(id, host) {
+    const out = host.querySelector('#localPostAudit');
+    const path = host.querySelector('[data-repair-path]')?.value.trim();
+    const expected = host.querySelector('[data-repair-expected]')?.value;
+    const replacement = host.querySelector('[data-repair-replacement]')?.value;
+    if (!path || !expected) {
+      if (out) out.innerHTML = '<p class="status failed">Repair needs a relative file and exact text to replace.</p>';
+      return;
+    }
+    if (out) out.innerHTML = '<p class="muted small">Verifying repair in an isolated candidate…</p>';
+    try {
+      const response = await fetch(`/api/local/audits/${encodeURIComponent(id)}/repair`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ patch: { files: [{ path, expected, replacement }] } }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      const before = payload.before ? `${escapeHtml(payload.before.status)} / exit ${escapeHtml(String(payload.before.exitCode))}` : 'Missing';
+      const after = payload.after ? `${escapeHtml(payload.after.status)} / exit ${escapeHtml(String(payload.after.exitCode))}` : 'Missing';
+      if (out) {
+        out.innerHTML = `<h4>Repair verdict: ${escapeHtml(payload.verdict)}</h4><p>Before: ${before}</p><p>After: ${after}</p><p>Original unchanged: ${escapeHtml(String(payload.originalUnchanged))}</p>${renderProofSummary(payload.proof)}${payload.verdict === 'VerifiedRepair' ? '<button class="btn primary sm" type="button" data-local-create-pr>Create PR</button>' : ''}`;
+        out.querySelector('[data-local-create-pr]')?.addEventListener('click', () => createLocalRepairPr(id, out));
+      }
+    } catch (error) {
+      if (out) out.innerHTML = `<p class="status failed">Repair Incomplete: ${escapeHtml(error?.message || error)}</p>`;
+    }
+  }
+
+  async function createLocalRepairPr(id, out) {
+    if (out) out.insertAdjacentHTML('beforeend', '<p class="muted small">Creating reviewable PR from the exact verified repair…</p>');
+    try {
+      const response = await fetch(`/api/local/audits/${encodeURIComponent(id)}/pr`, { method: 'POST' });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      if (out) out.innerHTML = `<h4>Pull request created</h4><p>Branch <code>${escapeHtml(payload.branch)}</code></p><a href="${escapeHtml(payload.pullRequest.url)}" target="_blank" rel="noopener">Open PR #${escapeHtml(String(payload.pullRequest.number))}</a><p class="tiny muted">Merge remains manual.</p>`;
+    } catch (error) {
+      if (out) out.innerHTML = `<p class="status failed">PR creation blocked: ${escapeHtml(error?.message || error)}</p>`;
+    }
   }
 
   async function runFixtureBrowser(button) {

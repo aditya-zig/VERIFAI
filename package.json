@@ -45,6 +45,6 @@
     "@aws-sdk/client-ecs": "^3.0.0",
     "zod": "^4.1.12",
     "@aws-sdk/client-lambda": "^3.0.0",
-    "@aws-sdk/client-s3": "^3.0.0"
+    "@aws-sdk/client-s3": "3.1142.0"
   }
 }

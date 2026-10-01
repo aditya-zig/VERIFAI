@@ -825,6 +825,13 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     const stages = Object.entries(run.stages).map(([name, stage]) => `<li>${escapeHtml(name)}: ${escapeHtml(stage.status)}${stage.detail ? ` — ${escapeHtml(stage.detail)}` : ''}</li>`).join('');
     const finding = run.finding;
     const execution = run.execution;
+    const repairMarkup = execution?.exitCode !== 0 && execution?.exitCode !== null ? `<section id="localRepairAction" class="card pad section">
+      <h4>Repair candidate</h4>
+      <p class="tiny muted">Deliberate action only. Paste one bounded verified candidate patch; VERIFAI tests it in an isolated copy and never edits the original checkout.</p>
+      <textarea id="localRepairPatch" rows="5" class="input" spellcheck="false" placeholder='{"files":[{"path":"file.js","expected":"old","replacement":"new"}]}'></textarea>
+      <div class="actions"><button class="btn primary sm" data-action="repair-local-audit" data-audit-id="${escapeHtml(run.id)}">Verify repair</button></div>
+      <div id="localRepairResult" role="status" aria-live="polite"></div>
+    </section>` : '';
     host.innerHTML = `<section class="card pad section" data-audit-id="${escapeHtml(run.id)}">
       <h3>${escapeHtml(run.repository?.fullName || 'Public GitHub repository')}</h3>
       <p id="localAuditStatus" class="status ${run.status === 'Running' ? 'running' : run.status === 'Completed' ? 'unknown' : 'failed'}">${escapeHtml(statusText)}</p>
@@ -847,8 +854,24 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
         ${execution.truncated ? '<p>Output capped: showing tail only.</p>' : ''}
         <p>Executed-output SHA-256: <code>${escapeHtml(run.outputHash || '')}</code></p>
       </section>` : ''}
+      ${repairMarkup}
       <p class="tiny muted">A completed limited check is not a full test-suite or security verification. Cleanup is automatic.</p>
     </section>`;
+  }
+
+  async function verifyLocalRepair(auditId, buttonEl) {
+    const host=document.getElementById('localRepairResult');
+    const input=document.getElementById('localRepairPatch');
+    buttonEl.disabled=true;
+    try {
+      const patch=JSON.parse(input?.value || '{}');
+      const response=await fetch(`/api/local/audits/${encodeURIComponent(auditId)}/repair`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({patch})});
+      const result=await response.json();
+      if(!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      host.innerHTML=`<p class="status ${result.verdict==='VerifiedRepair'?'verified':result.verdict==='RejectedRepair'?'failed':'unknown'}">${escapeHtml(result.verdict)}</p><p class="tiny muted">Before exit ${escapeHtml(String(result.before?.exitCode))} · After exit ${escapeHtml(String(result.after?.exitCode))} · Original unchanged: ${escapeHtml(String(result.originalUnchanged))}</p>`;
+    } catch(error) {
+      host.innerHTML=`<p class="status failed">Incomplete: ${escapeHtml(error?.message || error)}</p>`;
+    } finally { buttonEl.disabled=false; }
   }
 
   async function renderLocalFinding(id) {
@@ -1447,6 +1470,12 @@ regressions: 0</code></pre>
   });
 
   document.addEventListener('click', (event) => {
+    const repairAudit = event.target.closest('[data-action="repair-local-audit"]');
+    if (repairAudit) {
+      event.preventDefault();
+      verifyLocalRepair(repairAudit.dataset.auditId, repairAudit);
+      return;
+    }
     const cleanupRepository = event.target.closest('[data-action="cleanup-local-repository"]');
     if (cleanupRepository) {
       cleanupLocalRepository(cleanupRepository.dataset.repositoryId, cleanupRepository);

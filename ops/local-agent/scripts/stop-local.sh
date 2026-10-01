@@ -47,7 +47,13 @@ stop_one() { # $1=state file
   pgid="$(grep -m1 '^pgid=' "${state_file}" | cut -d= -f2-)"
 
   if ! pid_alive "${pid}"; then
-    say "${svc}: not running (pid ${pid} gone); clearing stale state"
+    say "${svc}: recorded process is gone; reconciling as Crashed"
+    {
+      printf 'service=%s\n' "${svc}"
+      printf 'pid=%s\n' "${pid}"
+      printf 'status=Crashed\n'
+      printf 'reason=owned process disappeared before stop\n'
+    } > "${state_dir}/${svc}.exit"
     rm -f "${state_file}"
     return 0
   fi
@@ -88,23 +94,20 @@ stop_one() { # $1=state file
     sleep 0.2
   done
   if pid_alive "${pid}"; then
-    say "${svc}: still alive after TERM; sending KILL to verified target"
-    if [ -n "${pgid}" ] && [ "${pgid}" -gt 1 ] 2>/dev/null; then
-      kill -KILL -- "-${pgid}" 2>/dev/null || kill -KILL "${pid}" 2>/dev/null
-    else
-      kill -KILL "${pid}" 2>/dev/null
-    fi
-    sleep 0.5
-  fi
-
-  if pid_alive "${pid}"; then
-    err "${svc}: pid ${pid} still alive after KILL"
+    err "${svc}: still Running after bounded TERM grace; no force kill attempted"
     refused=1
     return 1
   fi
+
+  {
+    printf 'service=%s\n' "${svc}"
+    printf 'pid=%s\n' "${pid}"
+    printf 'status=Stopped\n'
+    printf 'reason=verified graceful stop\n'
+  } > "${state_dir}/${svc}.exit"
   rm -f "${state_file}"
   stopped_any=1
-  say "${svc}: stopped (pid ${pid})"
+  say "${svc}: Stopped (pid ${pid})"
   return 0
 }
 
@@ -128,7 +131,7 @@ for f in "${state_files[@]}"; do
 done
 
 if [ "${refused}" -eq 1 ]; then
-  err "one or more services were REFUSED (identity mismatch) and left untouched"
+  err "one or more services were REFUSED or remained Running; no unrelated process was signalled"
   exit 1
 fi
 if [ "${stopped_any}" -eq 1 ]; then

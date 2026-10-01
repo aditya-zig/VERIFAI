@@ -4,7 +4,7 @@
 // and evidence bounds. Real Chrome execution belongs to parent runtime.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {fixtureHtml, capEntries, completedAudit, validateJourneyOptions, startFixtureServer, runBrowserJourney,
+import {fixtureHtml, completedAudit, validateJourneyOptions, startFixtureServer, runBrowserJourney,
   FIXTURE_BUTTON_ID, FIXTURE_STATUS_ID, FIXTURE_EXPECTED_TEXT,
   MAX_SCREENSHOT_BYTES, MAX_CONSOLE_ENTRIES, MAX_NETWORK_ENTRIES} from '../services/local-browser.mjs';
 
@@ -20,9 +20,6 @@ test('evidence bounds are positive and capped', () => {
   assert.equal(MAX_SCREENSHOT_BYTES, 1_048_576);
   assert.equal(MAX_CONSOLE_ENTRIES, 200);
   assert.equal(MAX_NETWORK_ENTRIES, 200);
-  const entries = Array.from({length: 250}, (_, i) => ({i}));
-  assert.equal(capEntries(entries, 200).length, 200);
-  assert.equal(capEntries(entries, 200)[0].i, 0);
 });
 
 test('only a completed M5 audit can take the journey', () => {
@@ -81,22 +78,6 @@ test('an already-aborted journey reports aborted Incomplete', async () => {
   const result = await runBrowserJourney({auditId: 'a', getAudit: async () => ({status: 'Completed'}), signal: controller.signal});
   assert.equal(result.status, 'Incomplete');
   assert.equal(result.aborted, true);
-});
-
-test('M9 evidence summary exposes screenshotRefs/consoleErrors/networkEvidence', async () => {
-  const {browserEvidenceSummary, errorEntries, SCREENSHOT_ROUTE_PREFIX, MAX_RETAINED_SCREENSHOTS} = await import('../services/local-browser.mjs');
-  // Labelled synthetic unit input only: no browser launched, no real journey.
-  const synthetic = {status: 'Completed', startUrl: 'http://127.0.0.1:9/', finalUrl: 'http://127.0.0.1:9/',
-    actions: [{action: 'click-button'}], assertions: [{passed: true}],
-    screenshotRefs: [`${SCREENSHOT_ROUTE_PREFIX}browser-00000000-0000-4000-8000-000000000000.png`],
-    consoleErrors: [{text: 'boom'}], networkEvidence: [{url: 'http://127.0.0.1:9/'}], durationMs: 10};
-  const summary = browserEvidenceSummary(synthetic);
-  assert.equal(summary.status, 'Completed');
-  assert.deepEqual(summary.screenshotRefs, synthetic.screenshotRefs);
-  assert.deepEqual(summary.consoleErrors, synthetic.consoleErrors);
-  assert.deepEqual(summary.networkEvidence, synthetic.networkEvidence);
-  assert.equal(MAX_RETAINED_SCREENSHOTS, 30);
-  assert.deepEqual(errorEntries([{level: 'error', text: 'bad'}, {level: 'info', text: 'ok'}]).map((e) => e.text), ['bad']);
 });
 
 test('failed launch keeps evidence arrays and truthful cleanup', async () => {

@@ -34,20 +34,11 @@ export function fixtureHtml() {
     `</body></html>`;
 }
 
-export function capEntries(entries, max) { return entries.slice(0, max); }
 export function completedAudit(audit) { return audit?.status === 'Completed'; }
 export function errorEntries(consoleEntries) {
   return consoleEntries.filter((entry) => entry.level === 'error')
     .map((entry) => ({text: entry.text, url: entry.url}));
 }
-// M9-compatible evidence shape: screenshotRefs/consoleErrors/networkEvidence.
-export function browserEvidenceSummary(result) {
-  return {status: result.status, startUrl: result.startUrl, finalUrl: result.finalUrl,
-    actions: result.actions ?? [], assertions: result.assertions ?? [],
-    screenshotRefs: result.screenshotRefs ?? [], consoleErrors: result.consoleErrors ?? [],
-    networkEvidence: result.networkEvidence ?? [], durationMs: result.durationMs};
-}
-
 export function validateJourneyOptions({auditId, getAudit, timeoutMs = 60_000} = {}) {
   if (!auditId || typeof auditId !== 'string') throw new Error('auditId is required');
   if (getAudit !== undefined && typeof getAudit !== 'function') throw new Error('getAudit must be a function');

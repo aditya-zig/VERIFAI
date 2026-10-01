@@ -8,6 +8,7 @@ function canonical(value){
   return value;
 }
 function digest(value){return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');}
+function repairPatchDigest(value){return createHash('sha256').update(JSON.stringify(value)).digest('hex');}
 function clip(value,limit=4000){const text=String(value??'');return text.length<=limit?text:text.slice(0,limit)+'...[truncated]';}
 function requireTransport(t){for(const m of ['verifyRemoteBase','createBranch','commitVerifiedPatch','pushBranch','openPullRequest'])if(typeof t?.[m]!=='function')throw new Error('GitHub transport missing '+m+'()');}
 function assertRepository(repository){if(typeof repository!=='string'||!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository))throw new Error('repository must be owner/name');}
@@ -22,7 +23,7 @@ function assertExecutedRepair(repair){
   if(repair?.cleanup?.candidateRemoved!==true)throw new Error('PR creation requires candidate cleanup');
   if(!repair?.verifiedBaseCommitSha||!/^[0-9a-f]{7,64}$/i.test(repair.verifiedBaseCommitSha))throw new Error('PR creation requires verified base commit SHA');
   if(!repair?.patch||!Array.isArray(repair.patch.files)||!repair.patch.files.length)throw new Error('PR creation requires verified patch');
-  if(repair.patchDigest!==digest(repair.patch))throw new Error('repair patch digest mismatch; re-verification required');
+  if(repair.patchDigest!==repairPatchDigest(repair.patch))throw new Error('repair patch digest mismatch; re-verification required');
   if(!Array.isArray(repair.changedFiles)||repair.changedFiles.length!==repair.patch.files.length)throw new Error('PR creation requires verified file hashes');
   for(const file of repair.changedFiles){
     if(typeof file?.path!=='string'||!/^[0-9a-f]{64}$/i.test(file.beforeHash??'')||!/^[0-9a-f]{64}$/i.test(file.afterHash??''))throw new Error('PR creation requires verified before/after file hashes');

@@ -72,6 +72,7 @@ export async function runSandbox(cwd, executable, args, {timeoutMs=10_000, signa
       '--memory','1g','--cpus','2','--pids-limit','64','--network','none',
       '--cap-drop','ALL','--security-opt','no-new-privileges','--user',`${process.getuid()}:${process.getgid()}`,
       '--env','HOME=/nonexistent','--env','GIT_CONFIG_NOSYSTEM=1','--env','GIT_CONFIG_GLOBAL=/dev/null',
+      '--env','GIT_CONFIG_COUNT=1','--env','GIT_CONFIG_KEY_0=safe.directory','--env','GIT_CONFIG_VALUE_0=/repo',
       '--tmpfs','/tmp:rw,noexec,nosuid,size=64m',
       '--workdir','/repo',process.env.VERIFIAI_SANDBOX_IMAGE || 'verifai-local-audit:m4',executable,...args], {signal});
     // CLI streams files into the stopped container: works on Docker Desktop

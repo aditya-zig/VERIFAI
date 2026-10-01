@@ -9,6 +9,7 @@ import { MasterAuditService } from '../services/master-audit.mjs';
 import { runBrowserJourney, MAX_SCREENSHOT_BYTES, screenshotRoot } from '../services/local-browser.mjs';
 import { LocalRepairService } from '../services/local-repair-service.mjs';
 import { LocalArtifactService } from '../services/local-artifact-service.mjs';
+import { LocalPrService } from '../services/local-pr-service.mjs';
 
 const root = fileURLToPath(new URL('../apps/web/', import.meta.url));
 const types = {
@@ -57,6 +58,7 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
       return await handle.readFile();
     } finally { await handle.close(); }
   } });
+  const pullRequests = new LocalPrService(audits, repairs, artifacts, { env });
   const getDeepAudit = async () => {
     if (deepAudit) return deepAudit;
     const { DeepAuditService } = await import('../services/deep-audit/index.mjs');
@@ -185,6 +187,21 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
       if (run.status === 'Running') return sendJson(res, 409, { status: 'Incomplete', error: 'audit still running' });
       try { return sendJson(res, 200, await artifacts.refresh(run, { repair: repairs.get(id), browser: browserResults.get(id) })); }
       catch (error) { return sendJson(res, 500, { status: 'Incomplete', error: String(error?.message ?? error) }); }
+    }
+
+    const prRouteLocal = url.pathname.match(/^\/api\/local\/audits\/([^/]+)\/pr$/);
+    if (req.method === 'POST' && prRouteLocal) {
+      try {
+        const id = decodeURIComponent(prRouteLocal[1]);
+        const result = await pullRequests.create(id);
+        return sendJson(res, 201, result);
+      } catch (error) {
+        return sendJson(res, error.statusCode ?? 409, { status: 'Incomplete', error: String(error?.message ?? error) });
+      }
+    }
+    if (req.method === 'GET' && prRouteLocal) {
+      const result = pullRequests.get(decodeURIComponent(prRouteLocal[1]));
+      return result ? sendJson(res, 200, result) : sendJson(res, 404, { status: 'Incomplete', error: 'PR not created' });
     }
 
     if (req.method === 'POST' && url.pathname === '/api/local/repositories') {

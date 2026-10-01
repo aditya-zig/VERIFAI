@@ -155,6 +155,41 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
 .status.warning { color: var(--warning); background: var(--warning-soft); border-color: #f0debb; }
 .status.unknown { color: var(--unknown); background: var(--unknown-soft); border-color: #e2e5ea; }
 
+/* Local result page: summary, section cards, machine evidence (adapted from PR #66 presentation) */
+.result-root { display: grid; gap: 16px; min-width: 0; }
+.result-summary { display: grid; gap: 12px; min-width: 0; justify-items: start; }
+.result-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: baseline; gap: 5px; max-width: 100%; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); padding: 4px 10px; font-size: 12px; line-height: 1.35; color: var(--muted); }
+.chip b { color: var(--text); font-weight: 720; overflow-wrap: anywhere; }
+.chip.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11.5px; }
+
+.evidence-card { display: grid; gap: 12px; min-width: 0; }
+.evidence-card > .result-chips { justify-self: start; }
+.evidence-card > h4 { margin: 0; font-size: 13px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.evidence-note { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.55; }
+.evidence-sub { margin: 2px 0 0; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted-2); }
+
+.fact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 168px), 1fr)); gap: 8px; margin: 0; }
+.stage-facts { list-style: none; padding: 0; }
+.fact { min-width: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); padding: 8px 10px; }
+.fact dt { margin: 0 0 3px; font-size: 10.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--muted-2); }
+.fact dd { margin: 0; font-size: 13px; font-weight: 660; color: var(--text); overflow-wrap: anywhere; }
+.fact dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11.5px; font-weight: 600; }
+.fact.good { border-color: #caecd5; background: var(--verified-soft); }
+.fact.bad { border-color: #f2cecb; background: var(--failed-soft); }
+.fact.warn { border-color: #f0debb; background: var(--warning-soft); }
+.fact.good dt, .fact.good dd { color: var(--verified); }
+.fact.bad dt, .fact.bad dd { color: var(--failed); }
+.fact.warn dt, .fact.warn dd { color: var(--warning); }
+
+.artifact-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.artifact-list li { min-width: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); padding: 8px 10px; }
+.artifact-list .artifact-name { font-weight: 700; font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
+
+@media(max-width:720px){
+  .fact-grid { grid-template-columns: 1fr; }
+}
+
 /* Zapier-inspired interactive workflow canvas */
 .flow-shell { position: relative; min-height: 525px; border: 1px solid #d9cec4; border-radius: 22px; background:
   linear-gradient(rgba(45,32,25,.045) 1px, transparent 1px),
@@ -827,9 +862,57 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     }
   }
 
+  function resultTone(value) {
+    return { Completed: 'verified', VerifiedRepair: 'verified', Running: 'running', Failed: 'failed', Incomplete: 'failed', RejectedRepair: 'failed' }[value] || 'unknown';
+  }
+
+  function factTone(value) {
+    return { verified: 'good', failed: 'bad', running: 'warn' }[resultTone(value)] || '';
+  }
+
+  function resultBadge(value, label) {
+    return `<span class="status ${resultTone(value)}">${escapeHtml(label || value || 'Unknown')}</span>`;
+  }
+
+  function chip(label, value) {
+    if (value === undefined || value === null || value === '') return '';
+    return `<span class="chip">${escapeHtml(label)} <b>${escapeHtml(value)}</b></span>`;
+  }
+
+  function monoChip(label, value) {
+    if (!value) return '';
+    return `<span class="chip mono">${escapeHtml(label)} <b>${escapeHtml(value)}</b></span>`;
+  }
+
+  function fact(label, value, tone, mono) {
+    const shown = value === undefined || value === null || value === '' ? 'Missing' : value;
+    return `<div class="fact${tone ? ` ${tone}` : ''}"><dt>${escapeHtml(label)}</dt><dd${mono ? ' class="mono"' : ''}>${escapeHtml(shown)}</dd></div>`;
+  }
+
+  function factGrid(facts) {
+    const cells = facts.filter(Boolean);
+    return cells.length ? `<dl class="fact-grid">${cells.join('')}</dl>` : '';
+  }
+
+  function evidenceCard(id, title, badge, body) {
+    return `<section${id ? ` id="${escapeHtml(id)}"` : ''} class="card pad section evidence-card"><h4>${escapeHtml(title)}${badge || ''}</h4>${body}</section>`;
+  }
+
+  function sandboxDisplay(value) {
+    if (value === true) return 'yes';
+    if (value === false) return 'no';
+    return 'Not reported';
+  }
+
+  function hashChip(label, full) {
+    if (!full) return '';
+    const prefix = String(full).slice(0, 12);
+    return `${monoChip(label, prefix)}<code class="wrap-anywhere">${escapeHtml(String(full))}</code>`;
+  }
+
   function renderMasterAudit(run, host) {
     const statusText = run.status === 'Completed' ? 'Completed limited check' : run.status;
-    const stages = Object.entries(run.stages || {}).map(([name, stage]) => `<li>${escapeHtml(name)}: ${escapeHtml(stage.status)}${stage.detail ? ` — ${escapeHtml(stage.detail)}` : ''}</li>`).join('');
+    const stages = Object.entries(run.stages || {}).map(([name, stage]) => `<li class="fact ${factTone(stage.status)}"><strong>${escapeHtml(name)}: ${escapeHtml(stage.status)}</strong>${stage.detail ? `<p class="evidence-note">${escapeHtml(stage.detail)}${Number.isFinite(stage.durationMs) ? ` · ${escapeHtml(String(stage.durationMs))} ms` : ''}</p>` : ''}</li>`).join('');
     const finding = run.finding;
     const execution = run.execution;
     const specialist = run.specialists?.results?.find(item => item.id === 'security');
@@ -841,13 +924,21 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     const stdoutLines = stdoutText ? stdoutText.split('\n').length : 0;
     const stderrLines = stderrText ? stderrText.split('\n').length : 0;
     const scopeText = finding?.assessment?.scope || finding?.executedCheck?.scope || 'limited-check: single bounded command — not a test suite, not security verification';
-    const coverageText = repair?.coverage?.label || (repair ? 'SAME-COMMAND REPLAY / limited coverage' : '');
+    const coverageText = repair?.coverage?.label || '';
     const findingState = finding?.assessment?.findingState || 'Unconfirmed';
+    const repairFiles = Array.isArray(repair?.changedFiles) ? repair.changedFiles : [];
+    const repairFilesMarkup = repairFiles.length ? `<p class="evidence-sub">Changed files (${repairFiles.length})</p><ul class="artifact-list">${repairFiles.map(file => `<li><span class="artifact-name">${escapeHtml(file.path || 'missing')}</span>${file.beforeHash ? hashChip('before',file.beforeHash) : '<span class="evidence-note">before hash Missing</span>'}${file.afterHash ? hashChip('after',file.afterHash) : '<span class="evidence-note">after hash Missing</span>'}</li>`).join('')}</ul>` : '<p class="evidence-note">No changed file was recorded.</p>';
+    const repairDiffMarkup = repair?.diff ? `<details><summary>Diff · ${escapeHtml(String(repair.diff.length))} chars</summary><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(repair.diff.slice(0, 4000))}${repair.diff.length > 4000 ? '\n...[truncated]' : ''}</pre></details>` : '';
     const repairMarkup = repair?.verdict === 'VerifiedRepair' ? `<section id="localRepairAction" class="card pad section">
       <h4>Verified repair</h4>
       <p class="status verified">VerifiedRepair · before exit ${escapeHtml(String(repair.before?.exitCode))} · after exit ${escapeHtml(String(repair.after?.exitCode))}</p>
       <p class="tiny muted wrap-anywhere">Verified target: <code class="wrap-anywhere">${escapeHtml(repair.verifiedTarget?.command || repair.before?.command || run.selectedCommand || '')}</code> · exit ${escapeHtml(String(repair.verifiedTarget?.exitCode ?? repair.before?.exitCode ?? ''))}</p>
-      ${coverageText ? `<p class="tiny muted wrap-anywhere">${escapeHtml(coverageText)}</p>` : ''}
+      ${repair.verifiedBaseCommitSha ? `<p class="tiny muted wrap-anywhere">Verified base: <code class="wrap-anywhere">${escapeHtml(repair.verifiedBaseCommitSha)}</code></p>` : '<p class="tiny muted wrap-anywhere">Verified base: Missing</p>'}
+      <p class="tiny muted wrap-anywhere">Original unchanged: ${repair.originalUnchanged === true ? 'yes' : repair.originalUnchanged === false ? 'no' : 'Not reported'}</p>
+      ${coverageText ? `<p class="tiny muted wrap-anywhere">${escapeHtml(coverageText)}</p>` : `<p class="tiny muted wrap-anywhere">Regressions run: ${escapeHtml(String(repair.regressions?.length ?? 0))} · coverage Not reported (not assumed SAME-COMMAND)</p>`}
+      ${repair.error ? `<p class="status failed wrap-anywhere">${escapeHtml(repair.error)}</p>` : ''}
+      ${repairFilesMarkup}
+      ${repairDiffMarkup}
       <p class="tiny muted">Review proof first. Creating a PR requires this explicit human action and revalidates the immutable repair, proof manifest, and remote base.</p>
       <div class="actions"><button class="btn primary sm" data-action="create-local-pr" data-audit-id="${escapeHtml(run.id)}">Create PR</button></div>
       <div id="localPrResult" role="status" aria-live="polite">${run.pullRequest?.pullRequest?.url ? `<a class="wrap-anywhere" href="${escapeHtml(run.pullRequest.pullRequest.url)}" target="_blank" rel="noopener">Open created PR</a>` : ''}</div>
@@ -865,7 +956,7 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
       <h4>Proof artifacts${proofBadge}</h4>
       <p class="tiny muted wrap-anywhere">Proof manifest <code class="wrap-anywhere">${escapeHtml(proof.manifest?.id || 'missing')}</code></p>
       <p class="tiny muted wrap-anywhere">SHA-256 <code class="wrap-anywhere">${escapeHtml(proof.manifest?.sha256 || 'missing')}</code> · ${proofPresent} present · ${proofMissing} missing</p>
-      <p class="tiny muted">Only executed evidence is downloadable. Missing steps stay labelled Missing.</p>
+      <p class="tiny muted">Materialized server-owned report data is downloadable; this includes unconfirmed hypotheses, not independent proof of their claims. Missing steps stay labelled Missing.</p>
       <ul>${proof.artifacts.map(item => item.status === 'Present'
         ? `<li><span class="status verified">Present</span> ${escapeHtml(item.name)} · ${escapeHtml(item.path || '')} · <span>SHA-256</span> <code class="wrap-anywhere">${escapeHtml(item.sha256 || '')}</code> · <a class="wrap-anywhere" href="/api/local/audits/${encodeURIComponent(run.id)}/artifacts/${encodeURIComponent(item.path)}" target="_blank" rel="noopener">Download ${escapeHtml(item.name)}</a></li>`
         : `<li><span class="status unknown">Missing</span> ${escapeHtml(item.name)}${item.reason ? ` — ${escapeHtml(item.reason)}` : ''}</li>`).join('')}</ul>
@@ -907,22 +998,21 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     const browserCleanup = browser?.cleanup && typeof browser.cleanup === 'object' ? browser.cleanup : null;
     const cleanupFact = (label, value) => `<div><span class="tiny muted">${escapeHtml(label)}</span><br><strong>${value === true ? 'true' : value === false ? 'false' : 'missing'}</strong></div>`;
     const browserAssertion = browser?.assertion || (Array.isArray(browser?.assertions) ? browser.assertions[0] : null);
-    host.innerHTML = `<section class="card pad section" data-audit-id="${escapeHtml(run.id)}">
+    host.innerHTML = `<section class="card pad section result-root" data-audit-id="${escapeHtml(run.id)}">
       <h3 class="wrap-anywhere">${escapeHtml(run.repository?.fullName || 'Public GitHub repository')}</h3>
       <p id="localAuditStatus" class="status ${run.status === 'Running' ? 'running' : run.status === 'Completed' ? 'unknown' : 'failed'}">${escapeHtml(statusText)}</p>
-      <section id="localSummary" class="card pad section" aria-label="Result summary">
-        <h4>Summary</h4>
-        <div class="local-summary-grid">
-          <div><span class="tiny muted">Status</span><br><strong>${escapeHtml(statusText)}</strong></div>
-          <div><span class="tiny muted">Audit id</span><br><code class="wrap-anywhere">${escapeHtml(run.id || 'missing')}</code></div>
-          <div><span class="tiny muted">Commit</span><br><code class="wrap-anywhere">${escapeHtml(run.repository?.commit || 'missing')}</code></div>
-          <div><span class="tiny muted">Tracked files</span><br><strong>${escapeHtml(String(run.files?.count ?? 'missing'))}</strong></div>
-          <div><span class="tiny muted">Model</span><br><span class="wrap-anywhere">${escapeHtml(run.model ? `${run.model.provider} · ${run.model.model}` : 'missing')}</span></div>
-          <div><span class="tiny muted">Duration</span><br><strong>${escapeHtml(run.durationMs != null ? `${run.durationMs} ms` : 'missing')}</strong></div>
+      <section id="localSummary" class="card pad section result-summary evidence-card" aria-label="Result summary">
+        <h4>Summary ${resultBadge(run.status,statusText)} ${repair?.verdict ? resultBadge(repair.verdict,`Repair ${repair.verdict}`) : ''}</h4>
+        <div class="result-chips">
+          ${chip('Audit id',run.id || 'Missing')}
+          ${chip('Commit',run.repository?.commit || 'Missing')}
+          ${chip('Tracked files',String(run.files?.count ?? 'Missing'))}
+          ${chip('Model',run.model ? `${run.model.provider} · ${run.model.model}` : 'Missing')}
+          ${chip('Duration',run.durationMs != null ? `${run.durationMs} ms` : 'Missing')}
         </div>
       </section>
       ${run.clone?.success ? `<p id="localCloneStatus">Clone succeeded · ${run.files.count} tracked files${run.stages?.cleanup?.status === 'Completed' ? ' · temporary repository cleaned' : ''}</p>` : ''}
-      <ol id="localAuditStages">${stages}</ol>
+      ${evidenceCard('localAuditStagesCard','Stages',resultBadge(run.status),`<ol id="localAuditStages" class="fact-grid stage-facts">${stages}</ol>`)}
       ${run.error ? `<p class="status failed wrap-anywhere">${escapeHtml(run.failedStage)}: ${escapeHtml(run.error)}</p>` : ''}
       <div id="localFinding" role="status" aria-live="polite">
         ${finding ? `<section id="localHypothesis" class="card pad section">
@@ -946,9 +1036,19 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
       ${execution ? `<section id="localExecutionEvidence" class="card pad section">
         <h4>Executed check (server-owned)</h4>
         <p class="tiny muted wrap-anywhere">${escapeHtml(scopeText)}</p>
+        <p id="localExecutionSource" class="tiny muted wrap-anywhere">Source: ${escapeHtml(execution.source || 'Missing')}</p>
         <p><span class="tiny muted">Command</span></p><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere"><code class="wrap-anywhere">${escapeHtml(execution.command || 'missing')}</code></pre>
         <p>Exit: ${escapeHtml(String(execution.exitCode))} · ${execution.durationMs} ms · ${escapeHtml(execution.status)}</p>
-        <p id="localSandboxEvidence" class="wrap-anywhere">Docker sandbox ${execution.sandbox?.started ? 'started' : 'not started'}: <code class="wrap-anywhere">${escapeHtml(execution.sandbox?.name || 'missing')}</code> · ${execution.sandbox?.removed ? 'Removed after execution' : 'Incomplete cleanup'} · ${execution.sandbox?.memoryBytes ? `${execution.sandbox.memoryBytes / 1048576} MiB limit` : 'memory limit missing'} · ${execution.sandbox?.nanoCpus ? `${execution.sandbox.nanoCpus / 1e9} CPUs` : 'CPU limit missing'} · privileged: ${execution.sandbox?.privileged}</p>
+        <p id="localSandboxEvidence" class="wrap-anywhere">Docker sandbox ${execution.sandbox?.started === true ? 'started' : execution.sandbox?.started === false ? 'not started' : 'status Not reported'} · ${execution.sandbox?.removed === true ? 'Removed after execution' : execution.sandbox?.removed === false ? 'Incomplete cleanup' : 'Cleanup Not reported'}</p>
+        ${factGrid([
+          fact('container',execution.sandbox?.name,undefined,true),
+          fact('started',sandboxDisplay(execution.sandbox?.started)),
+          fact('removed',sandboxDisplay(execution.sandbox?.removed)),
+          fact('memory',execution.sandbox?.memoryBytes ? `${execution.sandbox.memoryBytes / 1048576} MiB limit` : 'Not reported'),
+          fact('CPU',execution.sandbox?.nanoCpus ? `${execution.sandbox.nanoCpus / 1e9} CPUs` : 'Not reported'),
+          fact('privileged',sandboxDisplay(execution.sandbox?.privileged)),
+          fact('network',execution.sandbox?.network || 'Not reported'),
+        ])}
         <details><summary>stdout · ${stdoutText.length} chars · ${stdoutLines} lines</summary><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stdout || '(empty)')}</pre></details>
         <details><summary>stderr · ${stderrText.length} chars · ${stderrLines} lines</summary><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stderr || '(empty)')}</pre></details>
         ${execution.truncated ? '<p>Output capped: showing tail only.</p>' : ''}

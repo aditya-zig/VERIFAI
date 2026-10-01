@@ -1,18 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { loadResultPage, renderWithHelpers } from './result-renderer-harness.mjs';
 
-const html = await readFile(new URL('../apps/web/index.html', import.meta.url), 'utf8');
-const body = html.match(/function renderMasterAudit\(run, host\) \{([\s\S]*?)\n  \}/)?.[1];
+const page = await loadResultPage();
+const { html } = page;
+const { body } = page;
 assert.ok(body, 'master renderer exists');
 
 function render(extra = {}) {
-  const host = { innerHTML: '', querySelector: () => null };
-  vm.runInNewContext(`function renderMasterAudit(run,host){${body}\n}\nrenderMasterAudit(run,host);`, {
-    run: { id: 'unit-ui', status: 'Incomplete', stages: {}, ...extra }, host, escapeHtml: (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
-  });
-  return host.innerHTML;
+  return renderWithHelpers(page, { id: 'unit-ui', status: 'Incomplete', stages: {}, ...extra });
 }
 function execution(exitCode) {
   return { exitCode, status: exitCode === 0 ? 'Completed' : 'Failed', command: 'node --check broken.js', source: 'fixture', durationMs: 3, stdout: 'out', stderr: 'err', sandbox: { started: true, removed: true, name: 'unit-fixture', memoryBytes: 1073741824, nanoCpus: 2000000000, privileged: false } };

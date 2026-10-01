@@ -167,7 +167,9 @@ if node -e 'process.exit(require(process.argv[1]).scripts?.["start:local-api"] ?
     launch_service api "${api_port}" env PORT="${api_port}" NODE_OPTIONS=--max-old-space-size=256 npm run start:local-api
   fi
   if [ "${web_rc}" -eq 0 ]; then
-    launch_service web "${web_port}" env WEB_PORT="${web_port}" VERIFIAI_LOCAL_API_URL="http://127.0.0.1:${api_port}" NODE_OPTIONS=--max-old-space-size=256 npm run start:web
+    # The proxy needs no provider/GitHub credentials. Keep all model keys in
+    # the API process; a clean web environment also protects browser children.
+    launch_service web "${web_port}" env -i PATH="${PATH}" HOME="${HOME}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" WEB_PORT="${web_port}" VERIFIAI_LOCAL_API_URL="http://127.0.0.1:${api_port}" NODE_OPTIONS=--max-old-space-size=256 npm run start:web
   fi
   say "state: ${state_dir}"
   say "result: started (local web + API; Docker only on demand)"

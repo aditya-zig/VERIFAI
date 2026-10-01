@@ -848,7 +848,35 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
         <p>Executed-output SHA-256: <code>${escapeHtml(run.outputHash || '')}</code></p>
       </section>` : ''}
       <p class="tiny muted">A completed limited check is not a full test-suite or security verification. Cleanup is automatic.</p>
+      ${run.status === 'Completed' ? `<section class="card pad section">
+        <button class="btn" type="button" data-action="run-fixture-browser" data-audit-id="${escapeHtml(run.id)}">Run fixture browser journey</button>
+        <p class="tiny muted">One button-click integration fixture, not verification of the cloned application. Chrome starts on demand and closes after evidence capture.</p>
+        <div id="localBrowserEvidence" role="status" aria-live="polite"></div>
+      </section>` : ''}
     </section>`;
+  }
+
+  async function runFixtureBrowser(button) {
+    const host = document.getElementById('localBrowserEvidence');
+    const masterButton = document.getElementById('startLocalAudit');
+    button.disabled = true;
+    if (masterButton) masterButton.disabled = true;
+    host.textContent = 'Running isolated fixture browser journey…';
+    try {
+      const response = await fetch(`/api/local/audits/${encodeURIComponent(button.dataset.auditId)}/browser`, { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      const screenshot = result.screenshotRefs?.[0];
+      host.innerHTML = `<p id="localBrowserStatus" class="status ${result.status === 'Completed' ? 'unknown' : 'failed'}">${escapeHtml(result.status)} fixture journey</p>
+        <p>${escapeHtml(result.error || '')}</p>
+        <p>Start URL: ${escapeHtml(result.startUrl || 'Missing')}<br>Final URL: ${escapeHtml(result.finalUrl || 'Missing')}</p>
+        <p>Action: click fixture button. Assertion: ${escapeHtml(result.assertion?.observed || 'Missing')} · ${result.assertion?.passed === true ? 'Passed' : 'Incomplete'} · ${escapeHtml(result.durationMs)} ms</p>
+        <p>Cleanup: ${escapeHtml(JSON.stringify(result.cleanup || {status:'Incomplete'}))}</p>
+        <p>Console errors</p><pre>${escapeHtml(JSON.stringify(result.consoleErrors || []))}</pre>
+        <p>Network evidence</p><pre>${escapeHtml(JSON.stringify(result.networkEvidence || []))}</pre>
+        ${screenshot ? `<a id="localBrowserScreenshot" href="/api/local/audits/${encodeURIComponent(button.dataset.auditId)}/browser/screenshot" target="_blank" rel="noopener">Open actual screenshot</a>` : '<p>Screenshot: Missing (not captured)</p>'}`;
+    } catch (error) { host.textContent = `Incomplete: ${error.message}`; }
+    finally { button.disabled = false; if (masterButton) masterButton.disabled = false; }
   }
 
   async function renderLocalFinding(id) {
@@ -1447,6 +1475,8 @@ regressions: 0</code></pre>
   });
 
   document.addEventListener('click', (event) => {
+    const fixtureBrowser = event.target.closest('[data-action="run-fixture-browser"]');
+    if (fixtureBrowser) { event.preventDefault(); runFixtureBrowser(fixtureBrowser); return; }
     const cleanupRepository = event.target.closest('[data-action="cleanup-local-repository"]');
     if (cleanupRepository) {
       cleanupLocalRepository(cleanupRepository.dataset.repositoryId, cleanupRepository);

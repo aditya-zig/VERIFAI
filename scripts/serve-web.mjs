@@ -1,10 +1,12 @@
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, open, rm } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LocalRepositoryService } from '../services/local-repository.mjs';
-import { abortActiveAudit } from '../services/local-audit.mjs';
+import { abortActiveAudit, acquireLocalAudit } from '../services/local-audit.mjs';
 import { MasterAuditService } from '../services/master-audit.mjs';
+import { runBrowserJourney, MAX_SCREENSHOT_BYTES, screenshotRoot } from '../services/local-browser.mjs';
 
 const root = fileURLToPath(new URL('../apps/web/', import.meta.url));
 const types = {
@@ -37,6 +39,10 @@ async function readJson(req) {
 
 export function createDemoServer({ deepAudit, repositories = new LocalRepositoryService(), apiOnly = false, apiUrl, env = process.env } = {}) {
   const audits = new MasterAuditService(repositories, { env });
+  const browserResults = new Map();
+  const browserImages = new Map();
+  const browserTasks = new Set();
+  let browserController;
   const getDeepAudit = async () => {
     if (deepAudit) return deepAudit;
     const { DeepAuditService } = await import('../services/deep-audit/index.mjs');
@@ -55,6 +61,12 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
       try {
         const body = req.method === 'POST' ? JSON.stringify(await readJson(req)) : undefined;
         const upstream = await fetch(`${apiUrl}${url.pathname}`, { method: req.method, headers: { 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(120_000) });
+        if (/^\/api\/local\/audits\/[^/]+\/browser\/screenshot$/.test(url.pathname) && upstream.ok) {
+          const image = Buffer.from(await upstream.arrayBuffer());
+          if (image.length > MAX_SCREENSHOT_BYTES || upstream.headers.get('content-type') !== 'image/png') throw new Error('Invalid browser screenshot');
+          res.writeHead(200, { 'content-type': 'image/png', 'content-length': image.length, 'cache-control': 'no-store' });
+          return res.end(image);
+        }
         return sendJson(res, upstream.status, await upstream.json());
       } catch (error) { return sendJson(res, error.statusCode ?? 502, { status: 'Incomplete', error: 'Local API unavailable or request invalid' }); }
     }
@@ -63,9 +75,68 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
       try { const body = await readJson(req); return sendJson(res, 202, audits.start(body.url)); }
       catch (error) { return sendJson(res, error.statusCode ?? 400, { status: 'Incomplete', error: String(error.message) }); }
     }
+    const browserRoute = url.pathname.match(/^\/api\/local\/audits\/([^/]+)\/browser(?:\/(screenshot))?$/);
+    if (browserRoute) {
+      const id = decodeURIComponent(browserRoute[1]);
+      const audit = audits.get(id);
+      if (!audit) return sendJson(res, 404, { status: 'Incomplete', error: 'audit not found' });
+      if (req.method === 'GET' && browserRoute[2]) {
+        const imagePath = browserImages.get(id);
+        if (!imagePath) return sendJson(res, 404, { status: 'Incomplete', error: 'screenshot not executed or no longer retained' });
+        let handle;
+        try {
+          handle = await open(imagePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+          const stat = await handle.stat();
+          if (!stat.isFile() || stat.uid !== process.getuid() || stat.size > MAX_SCREENSHOT_BYTES) throw new Error('Invalid screenshot');
+          const image = await handle.readFile();
+          res.writeHead(200, { 'content-type': 'image/png', 'content-length': image.length, 'cache-control': 'no-store' });
+          return res.end(image);
+        } catch { return sendJson(res, 404, { status: 'Incomplete', error: 'screenshot unavailable' }); }
+        finally { await handle?.close(); }
+      }
+      if (req.method === 'GET' && !browserRoute[2]) {
+        const result = browserResults.get(id);
+        return result ? sendJson(res, 200, result) : sendJson(res, 404, { status: 'Incomplete', error: 'browser journey not executed' });
+      }
+      if (req.method === 'POST' && !browserRoute[2]) {
+        if (audit.status !== 'Completed') return sendJson(res, 409, { status: 'Incomplete', error: 'completed M5 audit required' });
+        let lease;
+        try {
+          lease = acquireLocalAudit(AbortSignal.timeout(60_000));
+          browserController = new AbortController();
+          const task = runBrowserJourney({ auditId: id, getAudit: auditId => audits.get(auditId), env,
+            signal: AbortSignal.any([lease.signal, browserController.signal]) });
+          browserTasks.add(task);
+          let result;
+          try { result = await task; } finally { browserTasks.delete(task); }
+          const screenshotUrl = `/api/local/audits/${encodeURIComponent(id)}/browser/screenshot`;
+          result = { ...result, target: 'Local integration fixture; not verification of the cloned application',
+            screenshotRefs: result.screenshot ? [screenshotUrl] : [],
+            consoleErrors: result.consoleErrors ?? (result.console || []).filter(entry => entry.params?.type === 'error' || entry.params?.entry?.level === 'error'),
+            networkEvidence: result.networkEvidence ?? result.network ?? [] };
+          const previousImage = browserImages.get(id);
+          if (previousImage) await rm(previousImage, { force: true });
+          browserImages.delete(id);
+          if (result.screenshot && /^browser-[a-f0-9-]{36}$/.test(result.journeyId)) browserImages.set(id, join(screenshotRoot, `${result.journeyId}.png`));
+          browserResults.set(id, result);
+          while (browserResults.size > 30) {
+            const oldId = browserResults.keys().next().value;
+            const oldImage = browserImages.get(oldId);
+            if (oldImage) await rm(oldImage, { force: true });
+            browserImages.delete(oldId);
+            browserResults.delete(oldId);
+          }
+          return sendJson(res, 200, result);
+        } catch (error) { return sendJson(res, error.statusCode ?? 500, { status: 'Incomplete', error: String(error.message) }); }
+        finally { if (lease) { browserController = undefined; lease.release(); } }
+      }
+      return sendJson(res, 405, { status: 'Incomplete', error: 'method not allowed' });
+    }
     const masterRoute = url.pathname.match(/^\/api\/local\/audits\/([^/]+)$/);
     if (req.method === 'GET' && masterRoute) {
-      const run = audits.get(decodeURIComponent(masterRoute[1]));
+      const id = decodeURIComponent(masterRoute[1]);
+      const run = audits.get(id);
+      if (run && browserResults.has(id)) run.browser = browserResults.get(id);
       return run ? sendJson(res, 200, run) : sendJson(res, 404, { status: 'Incomplete', error: 'audit not found' });
     }
 
@@ -188,7 +259,9 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
   });
 
   server.shutdown = async () => {
+    browserController?.abort(new Error('Server stopping'));
     abortActiveAudit();
+    await Promise.allSettled([...browserTasks]);
     await audits.waitForIdle();
     await repositories.cleanupAll();
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

@@ -5,7 +5,7 @@
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {createServer} from 'node:http';
-import {mkdtemp, mkdir, readdir, rm, stat, unlink, writeFile} from 'node:fs/promises';
+import {mkdtemp, mkdir, readdir, rm, lstat, unlink, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
@@ -51,7 +51,7 @@ export function browserEvidenceSummary(result) {
 export function validateJourneyOptions({auditId, getAudit, timeoutMs = 60_000} = {}) {
   if (!auditId || typeof auditId !== 'string') throw new Error('auditId is required');
   if (getAudit !== undefined && typeof getAudit !== 'function') throw new Error('getAudit must be a function');
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('timeoutMs must be positive');
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 60_000) throw new Error('timeoutMs must be between 1 and 60000');
 }
 
 function busyError() { const error = new Error('Busy: only one local browser journey is allowed'); error.statusCode = 429; return error; }
@@ -133,7 +133,20 @@ async function launchChrome({chromePath, signal}) {
       child.once('exit', (code) => { clearTimeout(startupTimer); signal?.removeEventListener('abort', onAbort); reject(new Error(`Incomplete: Chrome exited ${code}`)); });
     });
     const ws = new WebSocket(endpoint);
-    await once(ws, 'open');
+    await new Promise((resolve, reject) => {
+      const finish = (error) => {
+        clearTimeout(timer); signal?.removeEventListener('abort', aborted);
+        ws.removeEventListener('open', opened); ws.removeEventListener('error', failed);
+        if (error) { ws.close(); reject(error); } else resolve();
+      };
+      const opened = () => finish();
+      const failed = () => finish(new Error('Incomplete: Chrome connection failed'));
+      const aborted = () => finish(signal?.reason ?? new Error('Incomplete: aborted'));
+      const timer = setTimeout(() => finish(new Error('Incomplete: Chrome connection timed out')), CDP_TIMEOUT_MS);
+      ws.addEventListener('open', opened, {once:true}); ws.addEventListener('error', failed, {once:true});
+      signal?.addEventListener('abort', aborted, {once:true});
+      if (signal?.aborted) aborted();
+    });
     const consoleEntries = [];
     const networkEntries = [];
     ws.addEventListener('message', ({data}) => {
@@ -181,17 +194,24 @@ async function launchChrome({chromePath, signal}) {
     };
     return {consoleEntries, networkEntries, evaluate,
       navigate: async (url) => {
-        await call('Page.navigate', {url}, sessionId);
+        // Register before navigation: the tiny loopback page can load before
+        // the Page.navigate response arrives.
         await new Promise((resolve, reject) => {
-          const timer = setTimeout(() => reject(new Error('Incomplete: page load timed out')), CDP_TIMEOUT_MS);
-          const onAbort = () => { clearTimeout(timer); ws.removeEventListener('message', onMessage); reject(signal?.reason ?? new Error('Incomplete: aborted')); };
+          const finish = (error) => {
+            clearTimeout(timer); signal?.removeEventListener('abort', onAbort);
+            ws.removeEventListener('message', onMessage);
+            error ? reject(error) : resolve();
+          };
+          const timer = setTimeout(() => finish(new Error('Incomplete: page load timed out')), CDP_TIMEOUT_MS);
+          const onAbort = () => finish(signal?.reason ?? new Error('Incomplete: aborted'));
           function onMessage({data}) {
             const message = JSON.parse(data);
-            if (message.method === 'Page.loadEventFired' && message.sessionId === sessionId) { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); ws.removeEventListener('message', onMessage); resolve(); }
+            if (message.method === 'Page.loadEventFired' && message.sessionId === sessionId) finish();
           }
-          if (signal?.aborted) { clearTimeout(timer); reject(signal?.reason ?? new Error('Incomplete: aborted')); return; }
+          if (signal?.aborted) { onAbort(); return; }
           signal?.addEventListener('abort', onAbort, {once: true});
           ws.addEventListener('message', onMessage);
+          call('Page.navigate', {url}, sessionId).catch(finish);
         });
       },
       screenshot: async () => {
@@ -216,9 +236,15 @@ async function launchChrome({chromePath, signal}) {
 
 async function retainScreenshots(journeyId) {
   await mkdir(screenshotRoot, {recursive: true, mode: 0o700});
-  const names = (await readdir(screenshotRoot)).filter((name) => name.startsWith('browser-') && name.endsWith('.png'));
+  const rootInfo = await lstat(screenshotRoot);
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink() || rootInfo.uid !== process.getuid() || (rootInfo.mode & 0o077)) throw new Error('Incomplete: screenshot directory ownership not verified');
+  const names = (await readdir(screenshotRoot)).filter((name) => /^browser-[a-f0-9-]{36}\.png$/.test(name));
   if (names.length < MAX_RETAINED_SCREENSHOTS) return;
-  const withTime = await Promise.all(names.map(async (name) => ({name, mtime: (await stat(join(screenshotRoot, name))).mtimeMs})));
+  const withTime = await Promise.all(names.map(async (name) => {
+    const info = await lstat(join(screenshotRoot, name));
+    if (!info.isFile() || info.uid !== process.getuid()) throw new Error('Incomplete: screenshot ownership not verified');
+    return {name, mtime: info.mtimeMs};
+  }));
   withTime.sort((a, b) => b.mtime - a.mtime);
   for (const stale of withTime.slice(MAX_RETAINED_SCREENSHOTS - 1)) await unlink(join(screenshotRoot, stale.name));
   void journeyId;
@@ -237,7 +263,7 @@ export async function runBrowserJourney({auditId, getAudit, timeoutMs = 60_000, 
   let fixture;
   let browser;
   const evidence = () => ({console: consoleEntries, consoleErrors: errorEntries(consoleEntries),
-    network: networkEntries, networkEvidence: networkEntries, cleanup: {...cleanup}});
+    network: networkEntries, networkEvidence: networkEntries, cleanup});
   const fail = (failedStage, error, extra = {}) => ({status: 'Incomplete', failedStage, auditId, journeyId,
     error: String(error?.message ?? error), durationMs: Math.round(performance.now() - started), actions: [...actions], ...evidence(), ...extra});
   try {
@@ -277,6 +303,7 @@ export async function runBrowserJourney({auditId, getAudit, timeoutMs = 60_000, 
     Object.assign(cleanup, closeOutcome);
     await fixture.close(); fixture = null;
     cleanup.fixtureStopped = true;
+    if (!cleanup.browserClosed || !cleanup.profileRemoved) return fail('cleanup', 'Browser clean shutdown was not proven');
     await retainScreenshots(journeyId);
     const screenshotPath = join(screenshotRoot, `${journeyId}.png`);
     await writeFile(screenshotPath, shot, {mode: 0o600});

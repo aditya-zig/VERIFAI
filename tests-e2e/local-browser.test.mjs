@@ -107,7 +107,7 @@ test('failed launch keeps evidence arrays and truthful cleanup', async () => {
   assert.ok(Array.isArray(result.network) && Array.isArray(result.networkEvidence));
   assert.equal(result.cleanup.profileRemoved, true);
   assert.equal(result.cleanup.browserClosed, false);
-  assert.ok(!JSON.stringify(result).includes('/nonexistent/chrome-for-verifai-test') || true);
+  assert.equal(result.cleanup.fixtureStopped, true, 'failure returns only after the fixture is actually stopped');
 });
 
 test('service exposes no filesystem paths in screenshot refs', async () => {

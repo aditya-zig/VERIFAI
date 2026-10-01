@@ -107,7 +107,7 @@ test('public site exposes the local command-backed audit, not legacy swarm CTAs'
   assert.match(html, /\/api\/local\/repositories/);
   assert.match(html, /\/api\/local\/repositories.*audit/);
   assert.match(html, /id="localFindingTitle"/);
-  assert.match(html, /id="localExecutionEvidence"/);
+  assert.match(html, /localExecutionEvidence/);
   for (const field of ['command', 'exitCode', 'stdout', 'stderr', 'durationMs']) {
     assert.ok(html.includes(`execution.${field}`), `UI exposes actual execution ${field}`);
   }

@@ -34,6 +34,14 @@ mkdir -p "${state_dir}/logs"
 web_port="${WEB_PORT:-4173}"
 api_port="${PORT:-8787}"
 
+reconcile_script="$(cd "$(dirname "$0")" && pwd)/reconcile-local.sh"
+if [ -x "$reconcile_script" ]; then
+  if ! "$reconcile_script"; then
+    err "start-local: existing state is Unknown or StaleOwnership; refusing to overwrite it"
+    exit 1
+  fi
+fi
+
 pid_alive() { kill -0 "$1" 2>/dev/null; }
 
 read_state() { # $1=file -> sets st_pid st_start st_cwd st_cmd st_pgid st_port
@@ -144,12 +152,15 @@ launch_service() { # $1=service $2=port $3...=command
   fi
   record_state "${svc}" "${pid}" "${port}" "${log}"
   if ! wait_healthy "${port}" "${pid}"; then
-    err "${svc}: failed health check within 20s; stopping what was just started"
+    err "${svc}: failed health check within 20s; requesting graceful stop"
     pgid="$(grep -m1 '^pgid=' "${state_dir}/${svc}.state" | cut -d= -f2-)"
     [ -n "${pgid}" ] && kill -TERM -- "-${pgid}" 2>/dev/null
     sleep 1
-    [ -n "${pgid}" ] && kill -KILL -- "-${pgid}" 2>/dev/null
-    rm -f "${state_dir}/${svc}.state"
+    if pid_alive "${pid}"; then
+      err "${svc}: still Running after TERM; state preserved and no force kill attempted"
+    else
+      rm -f "${state_dir}/${svc}.state"
+    fi
     err "${svc}: log tail:"
     tail -n 15 "${log}" >&2 || true
     exit 1

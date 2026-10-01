@@ -1,15 +1,50 @@
 import {randomUUID,createHash} from 'node:crypto';
-import {access} from 'node:fs/promises';
+import {access,mkdir,rename,writeFile} from 'node:fs/promises';
+import {join,resolve} from 'node:path';
 import {selectCommand} from './local-command.mjs';
 import {executeSandbox} from './local-sandbox.mjs';
 import {analyzeRepository} from './local-analysis.mjs';
 import {acquireLocalAudit} from './local-audit.mjs';
+import {createSecuritySpecialist,runSequentialSpecialists} from './local-specialists.mjs';
+import {reviewSecurityRepository} from './local-security-specialist.mjs';
 
 const stageNames=['clone','analysis','sandbox','execution','finding','cleanup'];
+
+function securityEnabled(env) {
+  return env.VERIFIAI_M6_SECURITY_SPECIALIST === 'true';
+}
+
+export async function persistSpecialistState(runId,snapshot,{env=process.env}={}) {
+  const root=resolve(env.VERIFIAI_DATA_DIR || './data','specialists');
+  await mkdir(root,{recursive:true,mode:0o700});
+  const path=join(root,`${runId}.json`);
+  const temp=`${path}.tmp-${process.pid}`;
+  const text=JSON.stringify(snapshot,null,2)+'\n';
+  if (Buffer.byteLength(text,'utf8') >= 1024*1024) throw new Error('specialist shared state must stay below 1 MiB');
+  await writeFile(temp,text,{mode:0o600});
+  await rename(temp,path);
+  return path;
+}
+
 export class MasterAuditService {
   #runs=new Map();
   #tasks=new Set();
-  constructor(repositories,{env=process.env}={}) {this.repositories=repositories;this.env=env;}
+  constructor(repositories,{
+    env=process.env,
+    analyze=analyzeRepository,
+    execute=executeSandbox,
+    select=selectCommand,
+    securityReview=reviewSecurityRepository,
+    persistSpecialists=persistSpecialistState,
+  }={}) {
+    this.repositories=repositories;
+    this.env=env;
+    this.analyze=analyze;
+    this.execute=execute;
+    this.select=select;
+    this.securityReview=securityReview;
+    this.persistSpecialists=persistSpecialists;
+  }
   start(url) {
     const lease=acquireLocalAudit(AbortSignal.timeout(120_000)); // Reject Busy BEFORE clone, model, or Docker.
     const id=randomUUID();
@@ -32,7 +67,7 @@ export class MasterAuditService {
       const old=run.stages[name];const now=Date.now();
       run.stages[name]={...old,status,...(detail?{detail}:{}),
         ...(status==='Running'?{startedAt:new Date(now).toISOString(),startedMs:now}:{}),
-        ...(['Completed','Failed','Incomplete'].includes(status)?{durationMs:old.startedMs?now-old.startedMs:0}:{} )};
+        ...(['Completed','Failed','Incomplete'].includes(status)?{durationMs:old.startedMs?now-old.startedMs:0}:{})};
       active=name;
     };
     try {
@@ -40,19 +75,17 @@ export class MasterAuditService {
       record=await this.repositories.clone(url,{signal:lease.signal});
       Object.assign(run,{repository:record.repository,clone:record.clone,files:record.files});
       stage('clone','Completed',`${record.files.count} tracked files cloned`);
-      // Exactly one real model call BEFORE command execution. It inspects real
-      // bounded repository context, not fabricated/predicted command output.
-      // Execution evidence is attached afterward by the server, never by AI.
+      // Exactly one real base model call BEFORE command execution.
       stage('analysis','Running');
-      const analysis=await analyzeRepository(record,{env:this.env,signal:lease.signal,auditId:run.id});
+      const analysis=await this.analyze(record,{env:this.env,signal:lease.signal,auditId:run.id});
       run.model={...analysis.model,calls:1};
       stage('analysis','Completed',`${run.model.provider} / ${run.model.model}`);
       stage('sandbox','Running');
-      const command=await selectCommand(record.clone.workspacePath,record.files.items);
+      const command=await this.select(record.clone.workspacePath,record.files.items);
       run.selectedCommand=[command.executable,...command.args].join(' ');
       stage('execution','Running');
       active='sandbox';
-      run.execution=await executeSandbox(record.clone.workspacePath,command,{signal:lease.signal,onStarted:metadata=>{
+      run.execution=await this.execute(record.clone.workspacePath,command,{signal:lease.signal,onStarted:metadata=>{
         run.stages.sandbox.detail=`Container created: ${metadata.name}`;active='execution';
       }});
       stage('sandbox',run.execution.sandbox.started?'Completed':'Incomplete',`Docker sandbox: ${run.execution.sandbox.name}; removed after command`);
@@ -67,6 +100,42 @@ export class MasterAuditService {
       stage('finding','Completed','API finding attached to server-owned executed evidence');
       terminalStatus=e.exitCode===0?'Completed':'Incomplete';
       if(e.exitCode!==0)run.failedStage='execution';
+
+      // M6 is strictly opt-in. When disabled, the M5 run shape and model count
+      // remain unchanged. When enabled, exactly one security specialist runs
+      // after the base finding and before clone cleanup.
+      if (securityEnabled(this.env)) {
+        const specialist=createSecuritySpecialist((current,options)=>this.securityReview(current,{...options,env:this.env}));
+        try {
+          const result=await runSequentialSpecialists({
+            specialists:[specialist],
+            maxSpecialists:1,
+            maxModelCalls:1,
+            signal:lease.signal,
+            context:{record,auditId:run.id},
+            persist:async(snapshot)=>{
+              run.specialists=snapshot;
+              await this.persistSpecialists(run.id,snapshot,{env:this.env});
+            },
+          });
+          run.specialists=result;
+          if(result.status==='Incomplete') {
+            terminalStatus='Incomplete';
+            run.failedStage='specialist';
+            run.error=result.results.find((item)=>item.status==='Incomplete')?.error || 'Security specialist incomplete';
+          }
+        } catch(error) {
+          terminalStatus='Incomplete';
+          run.failedStage='specialist';
+          run.error=String(error?.message || error);
+          run.specialists=run.specialists || {
+            status:'Incomplete',
+            results:[{id:'security',status:'Incomplete',findings:[],evidenceRefs:[],error:run.error}],
+            evidenceRefs:[],
+            modelCalls:0,
+          };
+        }
+      }
     } catch(error) {
       if(/cleanup failed/i.test(error.message)){active='cleanup';cleanupBroken=true;}
       stage(active,'Incomplete',String(error.message));

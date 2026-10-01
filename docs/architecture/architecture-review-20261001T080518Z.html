@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Architecture review for VERIFAI</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+  </script>
+  <style>
+    .seam-line { border-top: 2px dashed #94a3b8; }
+    .deep { background: linear-gradient(135deg,#0f172a,#1e293b); color:#fff; }
+    .mass-interface { background:#e2e8f0; }
+    .mass-impl { background:#0f172a; color:#fff; }
+    .leak { color:#b91c1c; }
+    code { overflow-wrap:anywhere; }
+  </style>
+</head>
+<body class="bg-stone-50 text-slate-900 font-sans">
+<main class="max-w-6xl mx-auto px-5 py-10 space-y-10">
+  <header class="space-y-3">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h1 class="text-3xl font-semibold tracking-tight">VERIFAI architecture review</h1>
+        <p class="text-sm text-slate-500 mt-1">PR #60 · <code>remote/m6-m10-integration-staging</code> · head <code>86557a45636f</code></p>
+      </div>
+      <div class="text-xs text-slate-500">Generated 2026-10-01</div>
+    </div>
+    <div class="flex flex-wrap gap-3 text-xs text-slate-600">
+      <span class="px-2 py-1 border rounded bg-white">solid box = module</span>
+      <span class="px-2 py-1 border border-dashed rounded bg-white">dashed line = seam</span>
+      <span class="px-2 py-1 border rounded bg-red-50 text-red-700">red = leakage</span>
+      <span class="px-2 py-1 rounded deep">dark = deep module</span>
+    </div>
+    <div class="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-600">
+      Scope: recent M6–M10 integration. <code>GLOSSARY.md</code> and <code>docs/adr/</code> are absent on this branch, so there is no glossary or ADR conflict to preserve yet.
+    </div>
+  </header>
+
+  <section id="candidates" class="space-y-10">
+
+    <article id="audit-run" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+      <div class="flex flex-wrap items-center gap-2">
+        <h2 class="text-2xl font-semibold mr-auto">1. Concentrate the Audit run state</h2>
+        <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800">Strong</span>
+        <span class="text-xs px-2.5 py-1 rounded-full bg-slate-100">in-process</span>
+      </div>
+      <div>
+        <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Files</div>
+        <div class="font-mono text-xs leading-6 text-slate-700 grid sm:grid-cols-2 gap-x-4">
+          <code>scripts/serve-web.mjs</code><code>services/master-audit.mjs</code>
+          <code>services/local-repair-service.mjs</code><code>services/local-artifact-service.mjs</code>
+          <code>services/local-pr-service.mjs</code><code>tests-p1/m6-m10-integration.test.mjs</code>
+        </div>
+      </div>
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before</div>
+          <pre class="mermaid">flowchart TD
+R[HTTP routes] --> A[Audit map]
+R --> B[Browser maps]
+R --> C[Repair map]
+R --> D[Proof map]
+R --> E[PR map]
+A -. raw run .-> R
+B -. raw browser .-> R
+C -. raw repair .-> R
+D -. raw proof .-> R
+E -. raw publication .-> R
+classDef leak stroke:#dc2626,stroke-width:2px;
+class R,A,B,C,D,E leak</pre>
+          <p class="text-xs text-red-700 mt-2">The caller recomposes one Audit run from five stores.</p>
+        </div>
+        <div class="rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">After</div>
+          <div class="h-72 relative flex flex-col items-center justify-center gap-4">
+            <div class="w-3/4 text-center rounded-lg border bg-white p-3 text-sm">HTTP routes</div>
+            <div class="w-3/4 seam-line"></div>
+            <div class="w-4/5 rounded-xl deep p-6 text-center shadow-lg">
+              <div class="text-xs uppercase tracking-wider text-slate-300">Audit run module</div>
+              <div class="text-lg font-semibold mt-2">state + transitions + composed evidence</div>
+              <div class="text-xs text-slate-300 mt-3">browser · repair · proof · publication stay internal</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="grid md:grid-cols-2 gap-4 text-sm">
+        <div><span class="font-semibold">Problem:</span> one Audit run requires bouncing across shallow modules and parallel maps; the route interface knows implementation state and leaks across each seam.</div>
+        <div><span class="font-semibold">Solution:</span> deepen one Audit run module so its interface owns state transitions and composed evidence; keep repository, browser, proof, and GitHub adapter details behind internal seams.</div>
+      </div>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-2 text-xs">
+        <div class="rounded bg-slate-50 p-2"><b>Depth</b>: route learns less</div>
+        <div class="rounded bg-slate-50 p-2"><b>Locality</b>: run truth in one module</div>
+        <div class="rounded bg-slate-50 p-2"><b>Leverage</b>: all routes reuse it</div>
+        <div class="rounded bg-slate-50 p-2"><b>Adapter</b>: external effects stay internal</div>
+      </div>
+      <div class="rounded-lg bg-slate-50 p-3 text-sm"><b>Tests:</b> the interface is the test surface: assert one Audit run transition instead of coordinating five stores. <b>Deletion test:</b> deleting the current small state holders mostly moves assembly into routes; deleting the deep module would fan that complexity back out.</div>
+    </article>
+
+    <article id="repair" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+      <div class="flex flex-wrap items-center gap-2">
+        <h2 class="text-2xl font-semibold mr-auto">2. Deepen Repair verification around executed evidence</h2>
+        <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800">Strong</span>
+        <span class="text-xs px-2.5 py-1 rounded-full bg-slate-100">local-substitutable</span>
+      </div>
+      <div>
+        <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Files</div>
+        <div class="font-mono text-xs leading-6 text-slate-700 grid sm:grid-cols-2 gap-x-4">
+          <code>services/local-repair-service.mjs</code><code>services/local-repair-verification.mjs</code>
+          <code>services/local-sandbox.mjs</code><code>services/local-command.mjs</code>
+          <code>tests-p1/m8-repair-service.test.mjs</code><code>tests-p1/m8-repair-verification.test.mjs</code>
+        </div>
+      </div>
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase tracking-wider text-slate-500 mb-3">Before · layered shallowness</div>
+          <div class="space-y-2 h-72 flex flex-col justify-center">
+            <div class="h-11 border-l-4 border-red-500 bg-red-50 px-3 flex items-center text-sm">caller knows audit failure + commit + command</div>
+            <div class="h-11 border-l-4 border-red-500 bg-red-50 px-3 flex items-center text-sm">LocalRepair builds verify callback</div>
+            <div class="h-11 border-l-4 border-red-500 bg-red-50 px-3 flex items-center text-sm">caller passes verify + regressions + base SHA</div>
+            <div class="h-11 border-l-4 border-slate-400 bg-slate-50 px-3 flex items-center text-sm">verification module copies + patches + checks</div>
+            <div class="h-11 border-l-4 border-red-500 bg-red-50 px-3 flex items-center text-sm">correct provenance depends on callback discipline</div>
+          </div>
+        </div>
+        <div class="rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase tracking-wider text-slate-500 mb-3">After · deep module</div>
+          <div class="h-72 flex flex-col items-center justify-center gap-3">
+            <div class="w-4/5 h-10 rounded bg-slate-100 flex items-center justify-center text-sm">small Repair verification interface</div>
+            <div class="w-4/5 seam-line"></div>
+            <div class="w-4/5 deep rounded-xl p-5 text-center">
+              <div class="font-semibold">candidate + command identity + executed checks</div>
+              <div class="mt-2 text-xs text-slate-300">BEFORE → patch → AFTER → regressions → hashes → cleanup</div>
+              <div class="mt-3 text-xs text-slate-300">repository / execution adapters are internal</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="grid md:grid-cols-2 gap-4 text-sm">
+        <div><span class="font-semibold">Problem:</span> the Repair verification module has a wide interface because callers supply verification callbacks, regressions, provenance inputs, and command identity; depth is lost and the seam leaks correctness rules.</div>
+        <div><span class="font-semibold">Solution:</span> deepen the module so candidate creation, executed evidence consistency, hashes, and cleanup share one implementation; repository and execution adapter choices remain internal to the seam.</div>
+      </div>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-2 text-xs">
+        <div class="rounded bg-slate-50 p-2"><b>Locality</b>: provenance in one module</div>
+        <div class="rounded bg-slate-50 p-2"><b>Leverage</b>: one rule set for all checks</div>
+        <div class="rounded bg-slate-50 p-2"><b>Depth</b>: callers stop building callbacks</div>
+        <div class="rounded bg-slate-50 p-2"><b>Adapter</b>: sandbox/fake variation stays inside</div>
+      </div>
+      <div class="rounded-lg bg-slate-50 p-3 text-sm"><b>Tests:</b> test repair truth through the module interface, not pure callback choreography. <b>Deletion test:</b> deleting <code>local-repair-service.mjs</code> currently moves little more than clone/command/callback assembly into its caller, a shallow signal.</div>
+    </article>
+
+    <article id="proof" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+      <div class="flex flex-wrap items-center gap-2">
+        <h2 class="text-2xl font-semibold mr-auto">3. Make the Proof bundle module authoritative</h2>
+        <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800">Strong</span>
+        <span class="text-xs px-2.5 py-1 rounded-full bg-slate-100">ports &amp; adapters</span>
+      </div>
+      <div>
+        <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Files</div>
+        <div class="font-mono text-xs leading-6 text-slate-700 grid sm:grid-cols-2 gap-x-4">
+          <code>services/proof-artifacts.mjs</code><code>services/local-artifact-service.mjs</code>
+          <code>services/verified-repair-pr.mjs</code><code>scripts/serve-web.mjs</code>
+          <code>tests-p1/m9-proof-artifacts.test.mjs</code><code>tests-p1/m10-verified-pr.test.mjs</code>
+        </div>
+      </div>
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before</div>
+          <pre class="mermaid">flowchart TD
+R[route assembles raw evidence] --> L[LocalArtifact]
+L --> P[Proof writer]
+P --> M[manifest + files]
+M -. names/statuses .-> V[Verified publication]
+V -. hard-coded REQUIRED_PROOF .-> M
+classDef leak stroke:#dc2626,stroke-width:2px;
+class R,L,V leak</pre>
+          <p class="text-xs text-red-700 mt-2">Proof truth is derived in more than one module.</p>
+        </div>
+        <div class="rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">After</div>
+          <div class="h-72 flex flex-col items-center justify-center gap-3">
+            <div class="w-4/5 rounded bg-slate-100 text-center p-2 text-sm">run evidence</div>
+            <div class="w-4/5 seam-line"></div>
+            <div class="w-4/5 rounded-xl deep p-5 text-center">
+              <div class="font-semibold">Proof bundle module</div>
+              <div class="text-xs text-slate-300 mt-2">normalize · redact · materialize · hash · classify readiness</div>
+              <div class="text-xs text-slate-300 mt-3">screenshot adapter stays behind the seam</div>
+            </div>
+            <div class="w-4/5 rounded bg-slate-100 text-center p-2 text-sm">consumers trust one bundle truth</div>
+          </div>
+        </div>
+      </div>
+      <div class="grid md:grid-cols-2 gap-4 text-sm">
+        <div><span class="font-semibold">Problem:</span> proof names, required evidence, redaction, materialization, and publication readiness span multiple modules; the interface is shallow because consumers must understand manifest implementation details across the seam.</div>
+        <div><span class="font-semibold">Solution:</span> deepen the Proof bundle module so one implementation owns evidence truth and readiness; the screenshot adapter is the real seam because production resolution and test substitution both exist.</div>
+      </div>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-2 text-xs">
+        <div class="rounded bg-slate-50 p-2"><b>Locality</b>: required proof names live once</div>
+        <div class="rounded bg-slate-50 p-2"><b>Leverage</b>: M10 consumes one truth</div>
+        <div class="rounded bg-slate-50 p-2"><b>Depth</b>: manifest details disappear</div>
+        <div class="rounded bg-slate-50 p-2"><b>Adapter</b>: screenshot bytes vary cleanly</div>
+      </div>
+      <div class="rounded-lg bg-slate-50 p-3 text-sm"><b>Tests:</b> the interface is the test surface: bundle creation and readiness stay together. <b>Deletion test:</b> deleting the current artifact holder mostly pushes evidence assembly and file reads into routes; the proposed deep module would concentrate that complexity instead.</div>
+    </article>
+
+    <article id="browser" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+      <div class="flex flex-wrap items-center gap-2">
+        <h2 class="text-2xl font-semibold mr-auto">4. Shrink the Browser journey interface</h2>
+        <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-900">Worth exploring</span>
+        <span class="text-xs px-2.5 py-1 rounded-full bg-slate-100">in-process</span>
+      </div>
+      <div>
+        <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Files</div>
+        <div class="font-mono text-xs leading-6 text-slate-700 grid sm:grid-cols-2 gap-x-4">
+          <code>services/local-browser.mjs</code><code>tests-e2e/local-browser.test.mjs</code>
+          <code>tests-e2e/browser-route.test.mjs</code><code>scripts/serve-web.mjs</code>
+        </div>
+      </div>
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase tracking-wider text-slate-500 mb-3">Before · shallow test surface</div>
+          <div class="h-72 flex flex-col justify-center gap-2">
+            <div class="mass-interface rounded p-3 text-sm"><b>Wide interface</b><br><span class="text-xs">fixtureHtml · capEntries · completedAudit · validateJourneyOptions · startFixtureServer · many constants · runBrowserJourney</span></div>
+            <div class="mass-impl rounded p-5 text-sm"><b>Implementation</b><br><span class="text-xs text-slate-300">Chrome process · CDP · fixture · screenshot retention · cleanup · evidence</span></div>
+            <div class="text-xs text-red-700">Tests import implementation helpers directly.</div>
+          </div>
+        </div>
+        <div class="rounded-xl border border-slate-200 p-4">
+          <div class="text-xs uppercase tracking-wider text-slate-500 mb-3">After · deeper test surface</div>
+          <div class="h-72 flex flex-col justify-center gap-2">
+            <div class="mass-interface rounded p-2 text-sm text-center"><b>Small interface</b><br><span class="text-xs">journey behavior + bounded result</span></div>
+            <div class="mass-impl rounded p-8 text-sm"><b>Deep implementation</b><br><span class="text-xs text-slate-300">fixture/CDP/evidence/retention/cleanup helpers become internal</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="grid md:grid-cols-2 gap-4 text-sm">
+        <div><span class="font-semibold">Problem:</span> the Browser journey module exports implementation helpers and constants mainly so tests can reach past the interface; that reduces depth and locality at the seam.</div>
+        <div><span class="font-semibold">Solution:</span> deepen the module by testing through journey behavior and keeping helper implementation private; do not invent a new external adapter seam until a second real adapter exists.</div>
+      </div>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-2 text-xs">
+        <div class="rounded bg-slate-50 p-2"><b>Locality</b>: CDP details stay inside</div>
+        <div class="rounded bg-slate-50 p-2"><b>Leverage</b>: callers learn less</div>
+        <div class="rounded bg-slate-50 p-2"><b>Depth</b>: small interface, large behavior</div>
+        <div class="rounded bg-slate-50 p-2"><b>Adapter</b>: no hypothetical seam yet</div>
+      </div>
+      <div class="rounded-lg bg-slate-50 p-3 text-sm"><b>Tests:</b> the interface becomes the test surface; browser-free tests can use internal seams without exposing them to callers. <b>Deletion test:</b> deleting the exported helpers removes little product behavior, which is a shallow signal.</div>
+    </article>
+  </section>
+
+  <section id="top-recommendation" class="rounded-2xl border-2 border-slate-900 bg-white p-7">
+    <div class="text-xs uppercase tracking-wider text-slate-500">Top recommendation</div>
+    <h2 class="text-2xl font-semibold mt-2"><a class="underline decoration-slate-300 underline-offset-4" href="#audit-run">Concentrate the Audit run state</a></h2>
+    <p class="mt-2 text-slate-700">It gives the most locality and leverage: one concept currently spans five state holders and the request router, so every M6–M10 change makes humans and AI reconstruct the same provenance chain.</p>
+    <p class="mt-2 text-sm text-slate-500">Do it as the first architecture refactor after PR #60's local acceptance, not as another change inside the acceptance gate.</p>
+  </section>
+
+  <footer class="text-xs text-slate-500 pb-4">
+    Review basis: live PR #60 head, M6/M8/M9/M10 rework comments, M7 browser branch, and targeted M6–M10 implementation/tests. No interfaces are proposed here.
+  </footer>
+</main>
+</body>
+</html>

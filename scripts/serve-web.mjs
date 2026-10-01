@@ -61,6 +61,12 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
       try {
         const body = req.method === 'POST' ? JSON.stringify(await readJson(req)) : undefined;
         const upstream = await fetch(`${apiUrl}${url.pathname}`, { method: req.method, headers: { 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(120_000) });
+        if (/^\/api\/local\/audits\/[^/]+\/artifacts\/.+/.test(url.pathname) && upstream.ok) {
+          const bytes = Buffer.from(await upstream.arrayBuffer());
+          if (bytes.length > 50 * 1024 * 1024) throw new Error('Artifact exceeds 50 MiB safety limit');
+          res.writeHead(200, { 'content-type': upstream.headers.get('content-type') || 'application/octet-stream', 'content-length': bytes.length, 'cache-control': 'no-store' });
+          return res.end(bytes);
+        }
         return sendJson(res, upstream.status, await upstream.json());
       } catch (error) { return sendJson(res, error.statusCode ?? 502, { status: 'Incomplete', error: 'Local API unavailable or request invalid' }); }
     }
@@ -75,7 +81,10 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
       const run = audits.get(id);
       if (!run) return sendJson(res, 404, { status: 'Incomplete', error: 'audit not found' });
       if (run.status !== 'Running') {
-        try { return sendJson(res, 200, { ...run, proof: await artifacts.refresh(run, { repair: repairs.get(id) }) }); }
+        try {
+          const repair=repairs.get(id);
+          return sendJson(res, 200, { ...run, repair, proof: await artifacts.refresh(run, { repair }), pullRequest: pullRequests.get(id) });
+        }
         catch (error) { return sendJson(res, 200, { ...run, proof: { status: 'Incomplete', error: String(error?.message ?? error) } }); }
       }
       return sendJson(res, 200, run);
@@ -107,6 +116,28 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
       if (run.status === 'Running') return sendJson(res, 409, { status: 'Incomplete', error: 'audit still running' });
       try { return sendJson(res, 200, await artifacts.refresh(run, { repair: repairs.get(id) })); }
       catch (error) { return sendJson(res, 500, { status: 'Incomplete', error: String(error?.message ?? error) }); }
+    }
+
+    const artifactFileRoute = url.pathname.match(/^\/api\/local\/audits\/([^/]+)\/artifacts\/(.+)$/);
+    if (req.method === 'GET' && artifactFileRoute) {
+      const id = decodeURIComponent(artifactFileRoute[1]);
+      const artifactPath = decodeURIComponent(artifactFileRoute[2]);
+      try {
+        const { item, buffer } = await artifacts.read(id, artifactPath);
+        const contentType = artifactPath.endsWith('.json') ? 'application/json; charset=utf-8'
+          : artifactPath.endsWith('.png') ? 'image/png'
+            : 'text/plain; charset=utf-8';
+        res.writeHead(200, {
+          'content-type': contentType,
+          'content-length': buffer.length,
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff',
+          'content-disposition': `attachment; filename="${encodeURIComponent(item.path.split('/').at(-1) || 'artifact')}"`,
+        });
+        return res.end(buffer);
+      } catch (error) {
+        return sendJson(res, error.statusCode ?? 404, { status: 'Incomplete', error: String(error?.message ?? error) });
+      }
     }
 
     const prRouteLocal = url.pathname.match(/^\/api\/local\/audits\/([^/]+)\/pr$/);

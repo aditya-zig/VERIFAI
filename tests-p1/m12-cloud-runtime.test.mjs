@@ -11,6 +11,9 @@ import {AwsS3RunStore} from '../services/cloud/s3-run-store.mjs';
 import {checkCloudBudget} from '../services/cloud/budget-guard.mjs';
 import {cloudArtifactKey, cloudControlKeys} from '../services/cloud/artifact-contract.mjs';
 import {CloudRuntime} from '../services/runtime/cloud-runtime.mjs';
+import {CloudTaskRuntimeProvider} from '../services/cloud/task-runtime.mjs';
+import {runRuntimeAudit} from '../services/runtime/engine.mjs';
+import {registerRuntimeContract} from './runtime-contract-suite.mjs';
 import {createArtifactBundle} from '../services/proof-artifacts.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -35,6 +38,85 @@ function job(overrides = {}) {
     ...overrides,
   };
 }
+
+function contractExecution(status = 'Completed', extra = {}) {
+  return {
+    status,
+    exitCode: status === 'Completed' ? 0 : status === 'Failed' ? 1 : null,
+    command: 'node check',
+    stdout: status === 'Completed' ? 'ok' : '',
+    stderr: status === 'Failed' ? 'failed' : '',
+    durationMs: 2,
+    ...extra,
+  };
+}
+
+function cloudContractInput(name) {
+  const input = {
+    runId: 'cloud-contract-' + name.replace(/[^a-z0-9]+/gi, '-').toLowerCase(),
+    repositoryUrl: REPO.url,
+    repository: REPO,
+    objective: 'Check cloud task runtime parity',
+    requireArtifact: name === 'missing-artifact',
+    requireBrowser: name === 'browser-unavailable',
+    repair: name === 'repair-rejected' ? {files: []} : undefined,
+    createPullRequest: name === 'stale-approval',
+    approval: name === 'stale-approval' ? {token: 'old'} : undefined,
+  };
+  if (name === 'cancellation') {
+    const controller = new AbortController();
+    controller.abort(new Error('cancel requested'));
+    input.signal = controller.signal;
+  }
+  return input;
+}
+
+function cloudContractFactory(name) {
+  const repositories = {
+    async clone() {
+      if (name === 'cancellation') throw new Error('clone should not start after cancellation');
+      return {
+        id: 'cloud-record',
+        repository: structuredClone(REPO),
+        clone: {success: true, workspacePath: '/tmp/cloud-runtime-fixture'},
+        files: {count: 1, items: ['package.json'], truncated: false, languages: ['JavaScript']},
+      };
+    },
+    async cleanup() {
+      if (name === 'cleanup-failure') throw new Error('owned cleanup failed');
+      return true;
+    },
+  };
+  const provider = new CloudTaskRuntimeProvider({
+    repositories,
+    analyze: async () => {
+      if (name === 'provider-unavailable') throw new Error('provider unavailable');
+      return {
+        model: {provider: 'fixture', model: 'cloud-model'},
+        finding: {
+          title: 'Fixture observation',
+          severity: 'info',
+          description: 'Fixture model observation.',
+          evidence: {file: 'package.json', execution: {invented: true}},
+        },
+      };
+    },
+    select: async () => ({executable: 'node', args: ['check']}),
+    execute: async () => {
+      if (name === 'command-failure') return contractExecution('Failed');
+      if (name === 'timeout') return contractExecution('Incomplete', {timedOut: true});
+      return contractExecution('Completed');
+    },
+    env: {},
+  });
+  provider.browser = async () => ({status: 'Incomplete', error: 'browser unavailable'});
+  provider.repair = async () => ({verdict: 'RejectedRepair', reason: 'candidate did not pass verification'});
+  provider.artifact = async () => ({runId: 'x', artifacts: []});
+  provider.pullRequest = async () => { throw new Error('stale approval binding'); };
+  return {provider, input: cloudContractInput(name)};
+}
+
+registerRuntimeContract('CloudTaskRuntime fixture:', cloudContractFactory, runRuntimeAudit);
 
 class MemoryStore {
   constructor() {

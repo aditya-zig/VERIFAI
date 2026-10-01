@@ -14,5 +14,8 @@ jobs:
           node-version: '22'
       - run: npm install --no-audit --no-fund
       - run: npm run check
+      - name: Build bounded local audit sandbox
+        run: docker build -t verifai-local-audit:m4 -f infra/local/audit.Dockerfile infra/local
       - run: npm run test:local-e2e
-      - run: npm run ops:test
+      - if: always()
+        run: npm run ops:test

@@ -6,20 +6,10 @@
 export function isExecutedFailure(execution) {
   if (!execution || typeof execution !== 'object') return false;
   if (execution.timedOut === true || execution.aborted === true) return false;
+  if (execution.executed === false) return false;
   if (execution.status !== 'Failed') return false;
   if (execution.sandbox?.started !== true) return false;
   if (!Number.isInteger(execution.exitCode) || execution.exitCode === 0) return false;
-  return true;
-}
-
-export function isExecutedSuccess(execution) {
-  if (!execution || typeof execution !== 'object') return false;
-  if (execution.timedOut === true || execution.aborted === true) return false;
-  if (execution.executed === false) return false;
-  const started = execution.sandbox?.started;
-  if (started === false) return false;
-  if (execution.status !== 'Completed') return false;
-  if (execution.exitCode !== 0) return false;
   return true;
 }
 
@@ -83,9 +73,9 @@ export function composeFinding({ modelFinding, execution, selectedCommand, repos
   } else if (!isConsistentExecution(execution)) {
     findingState = 'Incomplete';
     reason = 'inconsistent execution facts (status/exit mismatch)';
-  } else if (command && execution.command && command !== execution.command) {
+  } else if (typeof command === 'string' && command.length > 0 && execution.command !== command) {
     findingState = 'Incomplete';
-    reason = 'selected command differs from executed command; re-verification required';
+    reason = !execution.command ? 'executed command is missing; re-verification required' : 'selected command differs from executed command; re-verification required';
   } else {
     // A single bounded command, pass or fail, never confirms the model allegation.
     findingState = 'Unconfirmed';
@@ -156,7 +146,7 @@ export function repairAdmissionForAudit(audit) {
   const execution = audit?.execution;
   const selectedCommand = audit?.selectedCommand || execution?.command;
   const composed = composeFinding({
-    modelFinding: audit?.finding && audit.finding.title ? { title: audit.finding.title, severity: audit.finding.severity || 'info', description: typeof audit.finding.description === 'string' ? audit.finding.description.split('\n\nExecuted evidence:')[0] : '', evidence: audit.finding.evidence } : { title: '(untitled)', severity: 'info', description: '', evidence: { file: '(unknown)' } },
+    modelFinding: audit?.finding && audit.finding.title ? { title: audit.finding.title, severity: audit.finding.severity || 'info', description: typeof audit.finding.description === 'string' ? audit.finding.description : '', evidence: audit.finding.evidence } : { title: '(untitled)', severity: 'info', description: '', evidence: { file: '(unknown)' } },
     execution,
     selectedCommand,
     repository: audit?.repository,

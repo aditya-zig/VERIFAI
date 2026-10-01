@@ -1,9 +1,16 @@
 import {join,resolve,sep} from 'node:path';
-import {open} from 'node:fs/promises';
+import {mkdir,mkdtemp,open,rename,rm} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {createHash} from 'node:crypto';
-import {createArtifactBundle} from './proof-artifacts.mjs';
+import {createArtifactBundle,artifactBundlePath} from './proof-artifacts.mjs';
 import {proofFingerprint,sha256Bytes} from './proof-snapshots.mjs';
+
+let stagingCounter=0;
+function snapshotInput(value){
+  if(value===undefined)return undefined;
+  try{return structuredClone(value);}
+  catch{return JSON.parse(JSON.stringify(value));}
+}
 
 function secretsFromEnv(env){
   const names=['XKIRO_API_KEY','OPENROUTER_API_KEY','NVIDIA_API_KEY','OLLAMA_API_KEY','GITHUB_TOKEN','GH_TOKEN','VERIFIAI_GITHUB_TOKEN'];
@@ -48,22 +55,56 @@ export class LocalArtifactService{
     }
   }
   async #publishLocked(audit,{repair,browser}={}){
-    const bundle=await createArtifactBundle({
-      rootDir:this.root,runId:audit.id,replace:true,knownSecrets:secretsFromEnv(this.env),screenshotResolver:this.screenshotResolver,
-      data:{
-        run:{id:audit.id,status:audit.status,startedAt:audit.startedAt,finishedAt:audit.finishedAt,durationMs:audit.durationMs,failedStage:audit.failedStage,error:audit.error,stages:audit.stages},
-        repository:audit.repository,
-        finding:audit.finding,
-        specialists:audit.specialists,
-        execution:audit.execution,
-        browser,
-        repair,
-        cleanup:audit.cleanup,
-        model:audit.model,
-      },
-    });
-    const descriptor=publicDescriptor(bundle);
-    this.#remember(audit.id,descriptor,proofFingerprint({audit,repair,browser}));
+    // Caller passes entry-snapshots; fingerprint and bytes derive from the same copy.
+    const fingerprint=proofFingerprint({audit,repair,browser});
+    const data={
+      run:{id:audit.id,status:audit.status,startedAt:audit.startedAt,finishedAt:audit.finishedAt,durationMs:audit.durationMs,failedStage:audit.failedStage,error:audit.error,stages:audit.stages},
+      repository:audit.repository,
+      finding:audit.finding,
+      specialists:audit.specialists,
+      execution:audit.execution,
+      browser,
+      repair,
+      cleanup:audit.cleanup,
+      model:audit.model,
+    };
+    const secrets=secretsFromEnv(this.env);
+    const resolver=this.screenshotResolver;
+    await mkdir(resolve(this.root),{recursive:true,mode:0o700});
+    const finalPath=artifactBundlePath(this.root,audit.id);
+    const stagingRoot=await mkdtemp(join(resolve(this.root),`.staging-${process.pid}-${(stagingCounter+=1)}-`));
+    const backupPath=`${finalPath}.backup-${process.pid}-${stagingCounter}`;
+    let bundle;
+    try{
+      bundle=await createArtifactBundle({rootDir:stagingRoot,runId:audit.id,replace:false,knownSecrets:secrets,screenshotResolver:resolver,data});
+    }catch(error){
+      await rm(stagingRoot,{recursive:true,force:true});
+      throw error;
+    }
+    const stagedPath=artifactBundlePath(stagingRoot,audit.id);
+    let movedBackup=false;
+    try{
+      try{await rename(finalPath,backupPath);movedBackup=true;}
+      catch(error){if(error?.code!=='ENOENT')throw error;}
+      await rename(stagedPath,finalPath);
+    }catch(error){
+      if(movedBackup){
+        try{await rename(backupPath,finalPath);}catch{}
+      }
+      await rm(stagingRoot,{recursive:true,force:true});
+      await rm(backupPath,{recursive:true,force:true});
+      throw error;
+    }
+    await rm(stagingRoot,{recursive:true,force:true});
+    await rm(backupPath,{recursive:true,force:true});
+    const descriptor={
+      runId:bundle.runId,
+      manifest:{id:`proof:${bundle.runId}:manifest`,sha256:bundle.manifestSha256},
+      artifacts:bundle.manifest.artifacts.map(item=>({name:item.name,status:item.status,path:item.path,sha256:item.sha256,reason:item.reason})),
+      screenshotRefs:bundle.manifest.references.screenshots,
+      totalBytes:bundle.totalBytes,
+    };
+    this.#remember(audit.id,descriptor,fingerprint);
     return JSON.parse(JSON.stringify(descriptor));
   }
   async read(runId,artifactPath){
@@ -87,15 +128,20 @@ export class LocalArtifactService{
   }
   async refresh(audit,{repair,browser}={}){
     if(!audit?.id||audit.status==='Running')throw new Error('terminal audit is required for proof artifacts');
-    return this.#withLock(audit.id,()=>this.#publishLocked(audit,{repair,browser}));
+    const auditSnap=snapshotInput(audit),repairSnap=snapshotInput(repair),browserSnap=snapshotInput(browser);
+    return this.#withLock(auditSnap.id,()=>this.#publishLocked(auditSnap,{repair:repairSnap,browser:browserSnap}));
   }
   async getOrPublish(audit,{repair,browser}={}){
     if(!audit?.id||audit.status==='Running')throw new Error('terminal audit is required for proof artifacts');
-    return this.#withLock(audit.id,async()=>{
-      const fingerprint=proofFingerprint({audit,repair,browser});
-      const cached=this.#records.get(audit.id);
-      if(cached&&this.#fingerprints.get(audit.id)===fingerprint)return JSON.parse(JSON.stringify(cached));
-      return this.#publishLocked(audit,{repair,browser});
+    // Snapshot JSON-shaped inputs on entry, before awaiting the per-run
+    // queue. The same snapshot feeds the fingerprint and the bytes, so a
+    // caller mutating its objects during publication cannot poison the cache.
+    const auditSnap=snapshotInput(audit),repairSnap=snapshotInput(repair),browserSnap=snapshotInput(browser);
+    const fingerprint=proofFingerprint({audit:auditSnap,repair:repairSnap,browser:browserSnap});
+    return this.#withLock(auditSnap.id,async()=>{
+      const cached=this.#records.get(auditSnap.id);
+      if(cached&&this.#fingerprints.get(auditSnap.id)===fingerprint)return JSON.parse(JSON.stringify(cached));
+      return this.#publishLocked(auditSnap,{repair:repairSnap,browser:browserSnap});
     });
   }
 }

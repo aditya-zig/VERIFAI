@@ -16,9 +16,9 @@ function safeBranch(runId){const slug=String(runId??'').toLowerCase().replace(/[
 
 function assertExecutedRepair(repair){
   if(repair?.verdict!=='VerifiedRepair')throw new Error('PR creation requires repair.verdict == VerifiedRepair');
-  if(repair?.before?.executed!==true||!Number.isInteger(repair.before.exitCode)||repair.before.exitCode===0)throw new Error('PR creation requires executed BEFORE failure');
-  if(repair?.after?.executed!==true||repair.after.exitCode!==0)throw new Error('PR creation requires executed AFTER verification with exitCode 0');
-  if(!Array.isArray(repair?.regressions)||repair.regressions.some(x=>x?.executed!==true||x?.exitCode!==0))throw new Error('PR creation requires every regression executed with exitCode 0');
+  if(repair?.before?.status!=='Failed'||repair?.before?.executed!==true||!Number.isInteger(repair.before.exitCode)||repair.before.exitCode===0)throw new Error('PR creation requires executed BEFORE failure with status Failed');
+  if(repair?.after?.status!=='Completed'||repair?.after?.executed!==true||repair.after.exitCode!==0)throw new Error('PR creation requires executed AFTER verification with status Completed and exitCode 0');
+  if(!Array.isArray(repair?.regressions)||repair.regressions.some(x=>x?.status!=='Completed'||x?.executed!==true||x?.exitCode!==0))throw new Error('PR creation requires every regression executed with status Completed and exitCode 0');
   if(repair?.originalUnchanged!==true)throw new Error('PR creation requires original workspace unchanged');
   if(repair?.cleanup?.candidateRemoved!==true)throw new Error('PR creation requires candidate cleanup');
   if(!repair?.verifiedBaseCommitSha||!/^[0-9a-f]{7,64}$/i.test(repair.verifiedBaseCommitSha))throw new Error('PR creation requires verified base commit SHA');
@@ -78,15 +78,28 @@ function modelHypothesisBlock({finding,repair}={}){
   const desc=h?.description||finding?.description||'';
   return 'Model hypothesis (Unconfirmed, not verification): '+clip(title,300)+'\n\n'+clip(desc,1500);
 }
+function regressionBlock(repair){
+  const regs=Array.isArray(repair?.regressions)?repair.regressions:[];
+  if(repair?.coverage?.kind==='same-command-replay'){
+    return regs.map((x,i)=>'- Regression '+(i+1)+' (SAME-COMMAND REPLAY): exit '+x.exitCode).join('\n')||'- No regressions configured.';
+  }
+  if(!regs.length)return '- No regressions configured.';
+  return regs.map((x,i)=>'- Regression '+(i+1)+': status '+clip(x?.status||'Missing',40)+' · exit '+String(x?.exitCode)+' · '+clip(x?.command||'configured executed regression check',160)).join('\n');
+}
+function regressionTail(repair){
+  if(repair?.coverage?.kind==='same-command-replay')return 'Same-command replay only; not independent regression breadth.';
+  const count=Array.isArray(repair?.regressions)?repair.regressions.length:0;
+  return count+' configured executed regression check(s); scope limited to those checks, no broader suite claimed.';
+}
 function buildBody({finding,repair,proof}){
-  const regs=repair.regressions.map((x,i)=>'- Regression '+(i+1)+' (SAME-COMMAND REPLAY): exit '+x.exitCode).join('\n')||'- No regressions configured.';
+  const regs=regressionBlock(repair);
   const refs=proof.artifacts.filter(x=>x.status==='Present').map(x=>'- '+x.path+' · '+x.sha256).join('\n');
   const target=verifiedTargetLabel({finding,repair});
   const targetExit=repair?.verifiedTarget?.exitCode ?? repair?.before?.exitCode;
   return '## Verified target (executed command failure)\n'+clip(target,300)+' · exit '+String(targetExit)+
     '\n\n## '+modelHypothesisBlock({finding,repair})+
     '\n\n## Original failure\n'+evidenceLine(repair.before)+'\n\n## After repair\n'+evidenceLine(repair.after)+
-    '\n\n## Regression result\n'+regs+'\nSame-command replay only; not independent regression breadth.'+
+    '\n\n## Regression result\n'+regs+'\n'+regressionTail(repair)+
     '\n\n## Proof manifest\n- '+proof.manifest.id+' · '+proof.manifest.sha256+
     '\n\n## Proof artifacts\n'+refs+'\n\n## Review gate\nHuman approval was bound to this exact verified repair and proof manifest. Merge remains manual.\n';
 }

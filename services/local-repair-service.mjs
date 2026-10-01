@@ -4,10 +4,6 @@ import {runRepairVerification} from './local-repair-verification.mjs';
 import {describeRegressionCoverage,isExecutedFailure,repairAdmissionForAudit} from './finding-evidence.mjs';
 
 function repoUrl(fullName){return `https://github.com/${fullName}`;}
-function executedFailure(e){
-  if(e?.timedOut===true||e?.aborted===true)return false;
-  return e?.status==='Failed'&&e?.sandbox?.started===true&&Number.isInteger(e.exitCode)&&e.exitCode!==0;
-}
 
 export class LocalRepairService{
   #repairs=new Map();
@@ -18,7 +14,7 @@ export class LocalRepairService{
   async repair(auditId,patch,{signal}={}){
     const audit=this.audits.get(auditId);
     if(!audit)throw Object.assign(new Error('audit not found'),{statusCode:404});
-    if(!isExecutedFailure(audit.execution)||!executedFailure(audit.execution))throw Object.assign(new Error('Repair requires a real failed execution from the audit (status Failed, sandbox started, integer nonzero exit)'),{statusCode:409});
+    if(!isExecutedFailure(audit.execution))throw Object.assign(new Error('Repair requires a real failed execution from the audit (status Failed, sandbox started, integer nonzero exit)'),{statusCode:409});
     if(!audit.repository?.fullName||!audit.repository?.commit)throw Object.assign(new Error('Repair requires exact repository commit provenance'),{statusCode:409});
     const admission=repairAdmissionForAudit(audit);
     if(!admission.eligible)throw Object.assign(new Error(`Repair not admitted: ${admission.reason}`),{statusCode:409});
@@ -36,7 +32,7 @@ export class LocalRepairService{
       const coverage=describeRegressionCoverage({count:1,command:rendered});
       const repairFinding={
         findingState:'Unconfirmed',
-        modelHypothesis:audit.finding?.hypothesis || {kind:'model-hypothesis',title:audit.finding?.title,description:typeof audit.finding?.description==='string'?audit.finding.description.split('\n\nExecuted evidence:')[0]:'',confidence:'Unconfirmed'},
+        modelHypothesis:audit.finding?.hypothesis || {kind:'model-hypothesis',title:audit.finding?.title,description:typeof audit.finding?.description==='string'?audit.finding.description:'',confidence:'Unconfirmed'},
         verifiedTarget:{kind:'executed-command-failure',command:audit.execution.command,exitCode:audit.execution.exitCode,status:audit.execution.status,sandboxStarted:true,provenance:{kind:'m5-command',auditId,commit:audit.repository.commit}},
         evidence:audit.execution,
       };

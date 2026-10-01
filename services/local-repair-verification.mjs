@@ -58,8 +58,8 @@ function normalizeEvidence(value){
     ...(raw.provenance&&typeof raw.provenance==='object'?{provenance:raw.provenance}:{}),
   };
 }
-const executedFailure=e=>e?.executed===true&&Number.isInteger(e.exitCode)&&e.exitCode!==0;
-const executedSuccess=e=>e?.executed===true&&e.exitCode===0;
+const executedFailure=e=>e?.status==='Failed'&&e?.executed===true&&Number.isInteger(e.exitCode)&&e.exitCode!==0;
+const executedSuccess=e=>e?.status==='Completed'&&e?.executed===true&&e.exitCode===0;
 
 function assertPatch(patch){
   if(!patch||!Array.isArray(patch.files)||patch.files.length!==1)throw new Error('Invalid patch: exactly one file change is supported');
@@ -114,7 +114,7 @@ export async function runRepairVerification({workspacePath,finding,patch,verify,
     const targetFailure=target&&typeof target==='object'
       &&target.status==='Failed'
       &&Number.isInteger(target.exitCode)&&target.exitCode!==0
-      &&(target.executed!==false&&target.sandboxStarted!==false)
+      &&(target.executed===true||target.sandboxStarted===true)
       &&typeof target.command==='string'&&target.command.length>0;
     if(!legacyConfirmed&&!targetFailure)throw new Error('Verified executed command failure required before repair (model hypothesis stays Unconfirmed)');
     if(!Number.isInteger(timeoutMs)||timeoutMs<10||timeoutMs>60000)throw new Error('timeoutMs must be between 10 and 60000');

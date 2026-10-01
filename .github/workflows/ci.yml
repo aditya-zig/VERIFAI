@@ -14,3 +14,5 @@ jobs:
           node-version: '22'
       - run: npm install --no-audit --no-fund
       - run: npm run check
+      - run: npm run test:local-e2e
+      - run: npm run ops:test

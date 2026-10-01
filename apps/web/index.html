@@ -782,7 +782,7 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
           <h1>Inspect a public GitHub repository.</h1>
           <p class="lede">Paste a URL. VERIFAI clones it to a temporary directory, reads its tracked files, and shows what it found.</p>
           ${localRepositoryFormMarkup()}
-          <p class="tiny muted" style="margin:16px 0 0">The base check remains bounded. Optional browser, repair, proof and pull-request actions appear only after the required evidence gates.</p>
+          <p class="tiny muted" style="margin:16px 0 0">Base check: clone, one safe command and one AI call. No installs, repair or pull requests in that base check. Optional security, browser, repair, proof and human-approved PR actions are separately gated.</p>
         </section>
       </div>`;
   }
@@ -864,7 +864,6 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
       ${terminal ? `<section id="localAuditActions" class="card pad section">
         <h4>Next verified actions</h4>
         <div class="actions">
-          ${run.status === 'Completed' ? '<button class="btn sm" type="button" data-local-browser>Run fixture browser journey</button>' : ''}
           <button class="btn sm" type="button" data-local-proof>Refresh proof</button>
         </div>
         ${canRepair ? `<div class="section">
@@ -883,7 +882,6 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
         <div id="localBrowserEvidence" role="status" aria-live="polite"></div>
       </section>` : ''}
     </section>`;
-    host.querySelector('[data-local-browser]')?.addEventListener('click', () => runLocalBrowserJourney(run.id, host));
     host.querySelector('[data-local-proof]')?.addEventListener('click', () => refreshLocalProof(run.id, host));
     host.querySelector('[data-local-repair]')?.addEventListener('click', () => runLocalRepair(run.id, host));
   }
@@ -893,19 +891,6 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     const present = proof.artifacts?.filter(item => item.status === 'Present').length || 0;
     const missing = proof.artifacts?.filter(item => item.status === 'Missing').length || 0;
     return `<p>Proof manifest <code>${escapeHtml(proof.manifest.id)}</code></p><p>SHA-256 <code>${escapeHtml(proof.manifest.sha256)}</code></p><p>${present} present · ${missing} missing</p>`;
-  }
-
-  async function runLocalBrowserJourney(id, host) {
-    const out = host.querySelector('#localPostAudit');
-    if (out) out.innerHTML = '<p class="muted small">Running the bounded local fixture browser journey…</p>';
-    try {
-      const response = await fetch(`/api/local/audits/${encodeURIComponent(id)}/browser`, { method: 'POST' });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-      if (out) out.innerHTML = `<h4>Browser: ${escapeHtml(payload.status)}</h4><p>${escapeHtml(payload.target?.label || 'fixture')}</p>${payload.screenshotRefs?.[0] ? `<a href="${escapeHtml(payload.screenshotRefs[0])}" target="_blank" rel="noopener">Open real screenshot</a>` : '<p>No screenshot returned.</p>'}${renderProofSummary(payload.proof)}`;
-    } catch (error) {
-      if (out) out.innerHTML = `<p class="status failed">Browser Incomplete: ${escapeHtml(error?.message || error)}</p>`;
-    }
   }
 
   async function refreshLocalProof(id, host) {

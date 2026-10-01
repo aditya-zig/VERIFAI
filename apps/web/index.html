@@ -857,18 +857,50 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
       <div class="actions"><button class="btn primary sm" data-action="repair-local-audit" data-audit-id="${escapeHtml(run.id)}">Verify repair</button></div>
       <div id="localRepairResult" role="status" aria-live="polite"></div>
     </section>` : '';
+    const proofPresent = proof?.artifacts ? proof.artifacts.filter(item => item.status === 'Present').length : 0;
+    const proofMissing = proof?.artifacts ? proof.artifacts.filter(item => item.status === 'Missing').length : 0;
+    const proofBadge = !proof?.artifacts ? '' : proofPresent > 0 && proofMissing === 0 ? ' <span class="status verified">Complete</span>' : proofPresent === 0 ? ' <span class="status failed">Missing</span>' : ' <span class="status warning">Partial</span>';
     const proofMarkup = proof?.artifacts ? `<section id="localProofArtifacts" class="card pad section">
-      <h4>Proof artifacts</h4>
+      <h4>Proof artifacts${proofBadge}</h4>
+      <p class="tiny muted wrap-anywhere">Proof manifest <code class="wrap-anywhere">${escapeHtml(proof.manifest?.id || 'missing')}</code></p>
+      <p class="tiny muted wrap-anywhere">SHA-256 <code class="wrap-anywhere">${escapeHtml(proof.manifest?.sha256 || 'missing')}</code> · ${proofPresent} present · ${proofMissing} missing</p>
       <p class="tiny muted">Only executed evidence is downloadable. Missing steps stay labelled Missing.</p>
       <ul>${proof.artifacts.map(item => item.status === 'Present'
-        ? `<li>${escapeHtml(item.name)} · ${escapeHtml(item.path || '')} · <span>SHA-256</span> <code class="wrap-anywhere">${escapeHtml(item.sha256 || '')}</code> · <a class="wrap-anywhere" href="/api/local/audits/${encodeURIComponent(run.id)}/artifacts/${encodeURIComponent(item.path)}" target="_blank" rel="noopener">Download ${escapeHtml(item.name)}</a></li>`
-        : `<li>${escapeHtml(item.name)} · Missing${item.reason ? ` — ${escapeHtml(item.reason)}` : ''}</li>`).join('')}</ul>
+        ? `<li><span class="status verified">Present</span> ${escapeHtml(item.name)} · ${escapeHtml(item.path || '')} · <span>SHA-256</span> <code class="wrap-anywhere">${escapeHtml(item.sha256 || '')}</code> · <a class="wrap-anywhere" href="/api/local/audits/${encodeURIComponent(run.id)}/artifacts/${encodeURIComponent(item.path)}" target="_blank" rel="noopener">Download ${escapeHtml(item.name)}</a></li>`
+        : `<li><span class="status unknown">Missing</span> ${escapeHtml(item.name)}${item.reason ? ` — ${escapeHtml(item.reason)}` : ''}</li>`).join('')}</ul>
+    </section>` : proof ? `<section id="localProofArtifacts" class="card pad section">
+      <h4>Proof artifacts <span class="status failed">Incomplete</span></h4>
+      <p class="status failed wrap-anywhere">Incomplete: ${escapeHtml(proof.error || 'proof bundle not published')}</p>
     </section>` : '';
     const cleanup = run.cleanup || {};
     const repairCleanup = repair?.cleanup || {};
     const cleanupRow = (label, value) => `<div><span class="tiny muted">${escapeHtml(label)}</span><br><strong>${value === true ? 'true' : value === false ? 'false' : 'missing'}</strong></div>`;
+    const MAX_BROWSER_ROWS = 20;
     const browserConsole = browser?.consoleErrors || browser?.console || [];
     const browserNetwork = browser?.networkEvidence || browser?.network || [];
+    const KNOWN_CONSOLE_KEYS = ['method', 'level', 'text', 'message', 'url', 'location'];
+    const consoleShown = browserConsole.slice(0, MAX_BROWSER_ROWS);
+    const consoleMarkup = consoleShown.map((entry, i) => {
+      const text = entry?.text ?? entry?.message ?? 'Missing text';
+      const location = entry?.url ?? entry?.location ?? 'Missing location';
+      const level = entry?.level ?? entry?.method ?? 'Missing level';
+      const rest = entry && typeof entry === 'object' ? Object.fromEntries(Object.entries(entry).filter(([k]) => !KNOWN_CONSOLE_KEYS.includes(k))) : null;
+      const pretty = rest && Object.keys(rest).length ? JSON.stringify(rest, null, 2).slice(0, 2000) : '';
+      return `<div><p class="tiny muted wrap-anywhere">Row ${i + 1} · ${escapeHtml(String(level))}</p><p class="wrap-anywhere">${escapeHtml(String(text))}</p><p class="tiny muted wrap-anywhere">${escapeHtml(String(location))}</p>${pretty ? `<details><summary>Row ${i + 1} full fields</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(pretty)}${JSON.stringify(rest).length > 2000 ? '\n...[truncated]' : ''}</pre></details>` : ''}</div>`;
+    }).join('');
+    const consoleExtra = browserConsole.length > consoleShown.length ? `<p class="tiny muted">${browserConsole.length - consoleShown.length} more console rows not shown (showing ${consoleShown.length} of ${browserConsole.length}).</p>` : '';
+    const networkShown = browserNetwork.slice(0, MAX_BROWSER_ROWS);
+    const networkMarkup = networkShown.map((row, i) => {
+      const status = row?.status ?? row?.params?.response?.status ?? row?.response?.status;
+      const url = row?.url ?? row?.params?.request?.url ?? row?.params?.response?.url ?? row?.request?.url;
+      const method = row?.method ?? row?.params?.request?.method ?? row?.request?.method;
+      const pretty = row && typeof row === 'object' ? JSON.stringify(row, null, 2).slice(0, 2000) : '';
+      return `<div><p class="wrap-anywhere">${escapeHtml(url != null ? String(url) : 'Missing')}</p><p class="tiny muted wrap-anywhere">Status: ${escapeHtml(status != null ? String(status) : 'not-reported')}${method ? ` · ${escapeHtml(String(method))}` : ''}</p><details><summary>Row ${i + 1} full fields</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(pretty)}${JSON.stringify(row).length > 2000 ? '\n...[truncated]' : ''}</pre></details></div>`;
+    }).join('');
+    const networkExtra = browserNetwork.length > networkShown.length ? `<p class="tiny muted">${browserNetwork.length - networkShown.length} more network rows not shown (showing ${networkShown.length} of ${browserNetwork.length}).</p>` : '';
+    const browserCleanup = browser?.cleanup && typeof browser.cleanup === 'object' ? browser.cleanup : null;
+    const cleanupFact = (label, value) => `<div><span class="tiny muted">${escapeHtml(label)}</span><br><strong>${value === true ? 'true' : value === false ? 'false' : 'missing'}</strong></div>`;
+    const browserAssertion = browser?.assertion || (Array.isArray(browser?.assertions) ? browser.assertions[0] : null);
     host.innerHTML = `<section class="card pad section" data-audit-id="${escapeHtml(run.id)}">
       <h3 class="wrap-anywhere">${escapeHtml(run.repository?.fullName || 'Public GitHub repository')}</h3>
       <p id="localAuditStatus" class="status ${run.status === 'Running' ? 'running' : run.status === 'Completed' ? 'unknown' : 'failed'}">${escapeHtml(statusText)}</p>
@@ -908,16 +940,16 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
       ${execution ? `<section id="localExecutionEvidence" class="card pad section">
         <h4>Executed check (server-owned)</h4>
         <p class="tiny muted wrap-anywhere">${escapeHtml(scopeText)}</p>
-        <p><span class="tiny muted">Command</span><br><code class="wrap-anywhere">${escapeHtml(execution.command || 'missing')}</code></p>
+        <p><span class="tiny muted">Command</span></p><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere"><code class="wrap-anywhere">${escapeHtml(execution.command || 'missing')}</code></pre>
         <p>Exit: ${escapeHtml(String(execution.exitCode))} · ${execution.durationMs} ms · ${escapeHtml(execution.status)}</p>
         <p id="localSandboxEvidence" class="wrap-anywhere">Docker sandbox ${execution.sandbox?.started ? 'started' : 'not started'}: <code class="wrap-anywhere">${escapeHtml(execution.sandbox?.name || 'missing')}</code> · ${execution.sandbox?.removed ? 'Removed after execution' : 'Incomplete cleanup'} · ${execution.sandbox?.memoryBytes ? `${execution.sandbox.memoryBytes / 1048576} MiB limit` : 'memory limit missing'} · ${execution.sandbox?.nanoCpus ? `${execution.sandbox.nanoCpus / 1e9} CPUs` : 'CPU limit missing'} · privileged: ${execution.sandbox?.privileged}</p>
-        <p><span class="tiny muted">stdout · ${stdoutText.length} chars · ${stdoutLines} lines</span></p><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stdout || '(empty)')}</pre>
-        <p><span class="tiny muted">stderr · ${stderrText.length} chars · ${stderrLines} lines</span></p><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stderr || '(empty)')}</pre>
+        <details><summary>stdout · ${stdoutText.length} chars · ${stdoutLines} lines</summary><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stdout || '(empty)')}</pre></details>
+        <details><summary>stderr · ${stderrText.length} chars · ${stderrLines} lines</summary><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stderr || '(empty)')}</pre></details>
         ${execution.truncated ? '<p>Output capped: showing tail only.</p>' : ''}
         <p class="wrap-anywhere">Executed-output SHA-256: <code class="wrap-anywhere">${escapeHtml(run.outputHash || 'missing')}</code></p>
       </section>` : ''}
       ${coverageText && !repair ? `<p class="tiny muted wrap-anywhere">${escapeHtml(coverageText)}</p>` : ''}
-      ${browser ? `<section id="localBrowserJourney" class="card pad section"><h4>Browser journey (fixture only)</h4><p class="wrap-anywhere">${escapeHtml(browser.status)} · ${escapeHtml(browser.target?.label || browser.target || 'Local integration fixture; not verification of the cloned application')}</p>${browser.screenshotRefs?.[0] ? `<a class="wrap-anywhere" href="${escapeHtml(browser.screenshotRefs[0])}" target="_blank" rel="noopener">Open server screenshot (fixture scope only)</a>` : '<p>Screenshot: Missing (not captured)</p>'}<details><summary>Console rows (${browserConsole.length})</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(JSON.stringify(browserConsole).slice(0, 4000))}</pre></details><details><summary>Network rows (${browserNetwork.length})</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(JSON.stringify(browserNetwork).slice(0, 4000))}</pre></details></section>` : ''}
+      ${browser ? `<section id="localBrowserJourney" class="card pad section"><h4>Browser journey <span class="status unknown">Fixture only</span></h4><p class="wrap-anywhere">${escapeHtml(browser.status)} · Local integration fixture; not verification of the cloned application</p>${browserAssertion ? `<p class="wrap-anywhere">Click assertion: expected ${escapeHtml(String(browserAssertion.expected ?? 'Missing'))} · observed ${escapeHtml(String(browserAssertion.observed ?? 'Missing'))} · ${browserAssertion.passed === true ? 'Passed' : 'Incomplete'}</p>` : '<p class="tiny muted">Click assertion: Missing (not reported)</p>'}${browser.screenshotRefs?.[0] ? `<a class="wrap-anywhere" href="${escapeHtml(browser.screenshotRefs[0])}" target="_blank" rel="noopener">Open server screenshot (fixture scope only)</a>` : '<p>Screenshot: Missing (not captured)</p>'}<details><summary>Console rows (${browserConsole.length})</summary>${consoleMarkup || '<p class="tiny muted">No console rows reported.</p>'}${consoleExtra}</details><details><summary>Network rows (${browserNetwork.length})</summary>${networkMarkup || '<p class="tiny muted">No network rows reported.</p>'}${networkExtra}</details><div class="local-summary-grid">${cleanupFact('browserClosed', browserCleanup?.browserClosed)}${cleanupFact('profileRemoved', browserCleanup?.profileRemoved)}${cleanupFact('fixtureStopped', browserCleanup?.fixtureStopped)}</div>${browserCleanup?.error ? `<p class="status failed wrap-anywhere">${escapeHtml(browserCleanup.error)}</p>` : ''}</section>` : ''}
       ${repairMarkup}
       ${proofMarkup}
       <section id="localCleanup" class="card pad section" aria-label="Cleanup facts">
@@ -1012,15 +1044,7 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
       if (!latestResponse.ok) throw new Error('Evidence refresh incomplete');
       renderMasterAudit(await latestResponse.json(), document.getElementById('localRepoResult'));
       host = document.getElementById('localBrowserEvidence');
-      const screenshot = result.screenshotRefs?.[0];
-      host.innerHTML = `<p id="localBrowserStatus" class="status ${result.status === 'Completed' ? 'unknown' : 'failed'}">${escapeHtml(result.status)} fixture journey</p>
-        <p>${escapeHtml(result.error || '')}</p>
-        <p>Start URL: ${escapeHtml(result.startUrl || 'Missing')}<br>Final URL: ${escapeHtml(result.finalUrl || 'Missing')}</p>
-        <p>Action: click fixture button. Assertion: ${escapeHtml(result.assertion?.observed || 'Missing')} · ${result.assertion?.passed === true ? 'Passed' : 'Incomplete'} · ${escapeHtml(result.durationMs)} ms</p>
-        <p>Cleanup: ${escapeHtml(JSON.stringify(result.cleanup || {status:'Incomplete'}))}</p>
-        <p>Console errors</p><pre>${escapeHtml(JSON.stringify(result.consoleErrors || []))}</pre>
-        <p>Network evidence</p><pre>${escapeHtml(JSON.stringify(result.networkEvidence || []))}</pre>
-        ${screenshot ? `<a id="localBrowserScreenshot" href="/api/local/audits/${encodeURIComponent(button.dataset.auditId)}/browser/screenshot" target="_blank" rel="noopener">Open actual screenshot</a>` : '<p>Screenshot: Missing (not captured)</p>'}`;
+      if (host) host.innerHTML = `<p id="localBrowserStatus" class="status ${result.status === 'Completed' ? 'unknown' : 'failed'}">${escapeHtml(result.status)} fixture journey recorded above</p><p class="tiny muted">Full fixture evidence is in the Browser journey card above (server-owned record).</p>`;
     } catch (error) { host.textContent = `Incomplete: ${error.message}`; }
     finally { button.disabled = false; if (masterButton) masterButton.disabled = false; }
   }

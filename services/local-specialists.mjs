@@ -1,7 +1,7 @@
 const allowedStatuses = new Set(['Completed', 'Incomplete']);
-const DEFAULT_MAX_SPECIALISTS = 2;
+const DEFAULT_MAX_SPECIALISTS = 1;
 const HARD_MAX_SPECIALISTS = 4;
-const DEFAULT_MAX_MODEL_CALLS = 2;
+const DEFAULT_MAX_MODEL_CALLS = 1;
 const HARD_MAX_MODEL_CALLS = 4;
 const DEFAULT_MAX_STATE_BYTES = 1024 * 1024;
 
@@ -33,8 +33,8 @@ function assertBounds(maxSpecialists, maxModelCalls, maxStateBytes) {
   if (!Number.isInteger(maxModelCalls) || maxModelCalls < 0 || maxModelCalls > HARD_MAX_MODEL_CALLS) {
     throw new Error(`maxModelCalls must be between 0 and ${HARD_MAX_MODEL_CALLS}`);
   }
-  if (!Number.isInteger(maxStateBytes) || maxStateBytes < 1024 || maxStateBytes > DEFAULT_MAX_STATE_BYTES) {
-    throw new Error('maxStateBytes must be between 1024 bytes and 1 MiB');
+  if (!Number.isInteger(maxStateBytes) || maxStateBytes < 1024 || maxStateBytes >= DEFAULT_MAX_STATE_BYTES) {
+    throw new Error('maxStateBytes must be at least 1024 bytes and strictly below 1 MiB');
   }
 }
 
@@ -44,7 +44,7 @@ export async function runSequentialSpecialists({
   context = {},
   maxSpecialists = DEFAULT_MAX_SPECIALISTS,
   maxModelCalls = DEFAULT_MAX_MODEL_CALLS,
-  maxStateBytes = DEFAULT_MAX_STATE_BYTES,
+  maxStateBytes = DEFAULT_MAX_STATE_BYTES - 1,
   signal,
 } = {}) {
   if (!Array.isArray(specialists) || specialists.length === 0) {
@@ -72,6 +72,27 @@ export async function runSequentialSpecialists({
   const executed = new Set();
   let modelCalls = 0;
 
+  // One lease for every model call in this orchestrator run. A specialist may
+  // attempt Promise.all(callModel(...), callModel(...)); the provider calls
+  // still execute one-at-a-time.
+  let modelTail = Promise.resolve();
+  const callModel = async (invoke) => {
+    signal?.throwIfAborted();
+    if (typeof invoke !== 'function') throw new Error('callModel requires a function');
+    if (modelCalls >= maxModelCalls) throw new Error(`model call limit exceeded (${maxModelCalls})`);
+    modelCalls += 1;
+    let release;
+    const previous = modelTail;
+    modelTail = new Promise((resolve) => { release = resolve; });
+    await previous;
+    signal?.throwIfAborted();
+    try {
+      return await invoke();
+    } finally {
+      release();
+    }
+  };
+
   const persistSnapshot = async () => {
     const snapshot = {
       status: results.some((item) => item.status === 'Incomplete') ? 'Incomplete' : 'Completed',
@@ -80,7 +101,9 @@ export async function runSequentialSpecialists({
       modelCalls,
     };
     const bytes = Buffer.byteLength(JSON.stringify(snapshot), 'utf8');
-    if (bytes > maxStateBytes) throw new Error(`specialist shared state exceeds ${maxStateBytes} bytes`);
+    if (bytes >= 1024 * 1024 || bytes > maxStateBytes) {
+      throw new Error(`specialist shared state exceeds ${maxStateBytes} bytes`);
+    }
     await persist(snapshot);
   };
 
@@ -88,14 +111,6 @@ export async function runSequentialSpecialists({
     signal?.throwIfAborted();
     if (executed.has(specialist.id)) throw new Error(`duplicate specialist execution: ${specialist.id}`);
     executed.add(specialist.id);
-
-    const callModel = async (invoke) => {
-      signal?.throwIfAborted();
-      if (typeof invoke !== 'function') throw new Error('callModel requires a function');
-      if (modelCalls >= maxModelCalls) throw new Error(`model call limit exceeded (${maxModelCalls})`);
-      modelCalls += 1;
-      return invoke();
-    };
 
     let result;
     try {
@@ -118,7 +133,6 @@ export async function runSequentialSpecialists({
 
     results.push(result);
     for (const ref of result.evidenceRefs) if (!evidenceRefs.includes(ref)) evidenceRefs.push(ref);
-
     try {
       await persistSnapshot();
     } catch (error) {
@@ -136,22 +150,12 @@ export async function runSequentialSpecialists({
   };
 }
 
-export function createSourceReviewSpecialist(review) {
-  if (typeof review !== 'function') throw new Error('source review function is required');
+export function createSecuritySpecialist(review) {
+  if (typeof review !== 'function') throw new Error('security review function is required');
   return {
-    id: 'source-review',
-    async run({callModel, repository, signal}) {
-      return callModel(() => review({repository, signal}));
-    },
-  };
-}
-
-export function createExecutionReviewSpecialist(review) {
-  if (typeof review !== 'function') throw new Error('execution review function is required');
-  return {
-    id: 'execution-review',
-    async run({callModel, execution, signal}) {
-      return callModel(() => review({execution, signal}));
+    id: 'security',
+    async run({callModel, record, auditId, signal}) {
+      return callModel(() => review(record, {auditId, signal}));
     },
   };
 }

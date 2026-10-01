@@ -7,6 +7,7 @@ export function isExecutedFailure(execution) {
   if (!execution || typeof execution !== 'object') return false;
   if (execution.timedOut === true || execution.aborted === true) return false;
   if (execution.executed === false) return false;
+  if (typeof execution.command !== 'string' || !execution.command.trim()) return false;
   if (execution.status !== 'Failed') return false;
   if (execution.sandbox?.started !== true) return false;
   if (!Number.isInteger(execution.exitCode) || execution.exitCode === 0) return false;
@@ -144,7 +145,10 @@ export function composeFinding({ modelFinding, execution, selectedCommand, repos
 
 export function repairAdmissionForAudit(audit) {
   const execution = audit?.execution;
-  const selectedCommand = audit?.selectedCommand || execution?.command;
+  const selectedCommand = audit?.selectedCommand;
+  if (typeof selectedCommand !== 'string' || !selectedCommand.trim()) {
+    return { eligible: false, reason: 'exact selected command is required before repair' };
+  }
   const composed = composeFinding({
     modelFinding: audit?.finding && audit.finding.title ? { title: audit.finding.title, severity: audit.finding.severity || 'info', description: typeof audit.finding.description === 'string' ? audit.finding.description : '', evidence: audit.finding.evidence } : { title: '(untitled)', severity: 'info', description: '', evidence: { file: '(unknown)' } },
     execution,

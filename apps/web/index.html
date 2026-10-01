@@ -310,6 +310,7 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
 .local-summary-grid > div { min-width: 0; }
 #localRepoResult, #localRepoResult code, #localRepoResult pre, #localFindingDescription, #localProofArtifacts code, .wrap-anywhere { overflow-wrap: anywhere; word-break: break-word; max-width: 100%; }
 #localRepoResult pre { overflow-x: auto; white-space: pre-wrap; }
+#localRepoResult .status { max-width: 100%; white-space: normal; overflow-wrap: anywhere; line-height: 1.3; }
 #localRepoResult a { overflow-wrap: anywhere; word-break: break-all; }
 .local-log-block { max-height: 220px; overflow: auto; }
 
@@ -850,7 +851,7 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
       <p class="tiny muted">Review proof first. Creating a PR requires this explicit human action and revalidates the immutable repair, proof manifest, and remote base.</p>
       <div class="actions"><button class="btn primary sm" data-action="create-local-pr" data-audit-id="${escapeHtml(run.id)}">Create PR</button></div>
       <div id="localPrResult" role="status" aria-live="polite">${run.pullRequest?.pullRequest?.url ? `<a class="wrap-anywhere" href="${escapeHtml(run.pullRequest.pullRequest.url)}" target="_blank" rel="noopener">Open created PR</a>` : ''}</div>
-    </section>` : execution?.status === 'Failed' && execution?.sandbox?.started === true && Number.isInteger(execution?.exitCode) && execution.exitCode !== 0 ? `<section id="localRepairAction" class="card pad section">
+    </section>` : execution?.status === 'Failed' && execution?.sandbox?.started === true && execution.executed !== false && execution.timedOut !== true && execution.aborted !== true && Number.isInteger(execution?.exitCode) && execution.exitCode !== 0 ? `<section id="localRepairAction" class="card pad section">
       <h4>Repair candidate</h4>
       <p class="tiny muted">Deliberate action only. Paste one bounded candidate patch; VERIFAI tests it in an isolated copy and never edits the original checkout.</p>
       <textarea id="localRepairPatch" rows="5" class="input" spellcheck="false" placeholder='{"files":[{"path":"file.js","expected":"old","replacement":"new"}]}'></textarea>
@@ -881,12 +882,16 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     const KNOWN_CONSOLE_KEYS = ['method', 'level', 'text', 'message', 'url', 'location'];
     const consoleShown = browserConsole.slice(0, MAX_BROWSER_ROWS);
     const consoleMarkup = consoleShown.map((entry, i) => {
-      const text = entry?.text ?? entry?.message ?? 'Missing text';
-      const location = entry?.url ?? entry?.location ?? 'Missing location';
-      const level = entry?.level ?? entry?.method ?? 'Missing level';
+      const log = entry?.params?.entry;
+      const args = entry?.params?.args;
+      const argumentText = Array.isArray(args) ? args.map(arg => arg?.value ?? arg?.description ?? '').join(' ') : undefined;
+      const text = entry?.text ?? entry?.message ?? log?.text ?? argumentText ?? (typeof entry === 'string' ? entry : 'Missing text');
+      const location = entry?.url ?? entry?.location ?? log?.url ?? entry?.params?.stackTrace?.callFrames?.[0]?.url ?? 'Missing location';
+      const level = entry?.level ?? log?.level ?? entry?.params?.type ?? entry?.method ?? 'Missing level';
       const rest = entry && typeof entry === 'object' ? Object.fromEntries(Object.entries(entry).filter(([k]) => !KNOWN_CONSOLE_KEYS.includes(k))) : null;
-      const pretty = rest && Object.keys(rest).length ? JSON.stringify(rest, null, 2).slice(0, 2000) : '';
-      return `<div><p class="tiny muted wrap-anywhere">Row ${i + 1} · ${escapeHtml(String(level))}</p><p class="wrap-anywhere">${escapeHtml(String(text))}</p><p class="tiny muted wrap-anywhere">${escapeHtml(String(location))}</p>${pretty ? `<details><summary>Row ${i + 1} full fields</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(pretty)}${JSON.stringify(rest).length > 2000 ? '\n...[truncated]' : ''}</pre></details>` : ''}</div>`;
+      const fullPretty = rest && Object.keys(rest).length ? JSON.stringify(rest, null, 2) : '';
+      const pretty = fullPretty.slice(0, 2000);
+      return `<div><p class="tiny muted wrap-anywhere">Row ${i + 1} · ${escapeHtml(String(level))}</p><p class="wrap-anywhere">${escapeHtml(String(text))}</p><p class="tiny muted wrap-anywhere">${escapeHtml(String(location))}</p>${pretty ? `<details><summary>Row ${i + 1} full fields</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(pretty)}${fullPretty.length > 2000 ? '\n...[truncated]' : ''}</pre></details>` : ''}</div>`;
     }).join('');
     const consoleExtra = browserConsole.length > consoleShown.length ? `<p class="tiny muted">${browserConsole.length - consoleShown.length} more console rows not shown (showing ${consoleShown.length} of ${browserConsole.length}).</p>` : '';
     const networkShown = browserNetwork.slice(0, MAX_BROWSER_ROWS);
@@ -894,8 +899,9 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
       const status = row?.status ?? row?.params?.response?.status ?? row?.response?.status;
       const url = row?.url ?? row?.params?.request?.url ?? row?.params?.response?.url ?? row?.request?.url;
       const method = row?.method ?? row?.params?.request?.method ?? row?.request?.method;
-      const pretty = row && typeof row === 'object' ? JSON.stringify(row, null, 2).slice(0, 2000) : '';
-      return `<div><p class="wrap-anywhere">${escapeHtml(url != null ? String(url) : 'Missing')}</p><p class="tiny muted wrap-anywhere">Status: ${escapeHtml(status != null ? String(status) : 'not-reported')}${method ? ` · ${escapeHtml(String(method))}` : ''}</p><details><summary>Row ${i + 1} full fields</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(pretty)}${JSON.stringify(row).length > 2000 ? '\n...[truncated]' : ''}</pre></details></div>`;
+      const fullPretty = JSON.stringify(row ?? null, null, 2);
+      const pretty = fullPretty.slice(0, 2000);
+      return `<div><p class="wrap-anywhere">${escapeHtml(url != null ? String(url) : 'Missing')}</p><p class="tiny muted wrap-anywhere">Status: ${escapeHtml(status != null ? String(status) : 'not-reported')}${method ? ` · ${escapeHtml(String(method))}` : ''}</p><details><summary>Row ${i + 1} full fields</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(pretty)}${fullPretty.length > 2000 ? '\n...[truncated]' : ''}</pre></details></div>`;
     }).join('');
     const networkExtra = browserNetwork.length > networkShown.length ? `<p class="tiny muted">${browserNetwork.length - networkShown.length} more network rows not shown (showing ${networkShown.length} of ${browserNetwork.length}).</p>` : '';
     const browserCleanup = browser?.cleanup && typeof browser.cleanup === 'object' ? browser.cleanup : null;
@@ -949,7 +955,7 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
         <p class="wrap-anywhere">Executed-output SHA-256: <code class="wrap-anywhere">${escapeHtml(run.outputHash || 'missing')}</code></p>
       </section>` : ''}
       ${coverageText && !repair ? `<p class="tiny muted wrap-anywhere">${escapeHtml(coverageText)}</p>` : ''}
-      ${browser ? `<section id="localBrowserJourney" class="card pad section"><h4>Browser journey <span class="status unknown">Fixture only</span></h4><p class="wrap-anywhere">${escapeHtml(browser.status)} · Local integration fixture; not verification of the cloned application</p>${browserAssertion ? `<p class="wrap-anywhere">Click assertion: expected ${escapeHtml(String(browserAssertion.expected ?? 'Missing'))} · observed ${escapeHtml(String(browserAssertion.observed ?? 'Missing'))} · ${browserAssertion.passed === true ? 'Passed' : 'Incomplete'}</p>` : '<p class="tiny muted">Click assertion: Missing (not reported)</p>'}${browser.screenshotRefs?.[0] ? `<a class="wrap-anywhere" href="${escapeHtml(browser.screenshotRefs[0])}" target="_blank" rel="noopener">Open server screenshot (fixture scope only)</a>` : '<p>Screenshot: Missing (not captured)</p>'}<details><summary>Console rows (${browserConsole.length})</summary>${consoleMarkup || '<p class="tiny muted">No console rows reported.</p>'}${consoleExtra}</details><details><summary>Network rows (${browserNetwork.length})</summary>${networkMarkup || '<p class="tiny muted">No network rows reported.</p>'}${networkExtra}</details><div class="local-summary-grid">${cleanupFact('browserClosed', browserCleanup?.browserClosed)}${cleanupFact('profileRemoved', browserCleanup?.profileRemoved)}${cleanupFact('fixtureStopped', browserCleanup?.fixtureStopped)}</div>${browserCleanup?.error ? `<p class="status failed wrap-anywhere">${escapeHtml(browserCleanup.error)}</p>` : ''}</section>` : ''}
+      ${browser ? `<section id="localBrowserJourney" class="card pad section"><h4>Browser journey <span class="status unknown">Fixture only</span></h4><p class="wrap-anywhere">${escapeHtml(browser.status)} · Local integration fixture; not verification of the cloned application</p>${browser.error ? `<p class="status failed wrap-anywhere">${escapeHtml(browser.error)}</p>` : ''}${browserAssertion ? `<p class="wrap-anywhere">Click assertion: expected ${escapeHtml(String(browserAssertion.expected ?? 'Missing'))} · observed ${escapeHtml(String(browserAssertion.observed ?? 'Missing'))} · ${browserAssertion.passed === true ? 'Passed' : 'Incomplete'}</p>` : '<p class="tiny muted">Click assertion: Missing (not reported)</p>'}${browser.screenshotRefs?.[0] ? `<a class="btn sm wrap-anywhere" href="${escapeHtml(browser.screenshotRefs[0])}" target="_blank" rel="noopener">Open server screenshot (fixture scope only)</a>` : '<p>Screenshot: Missing (not captured)</p>'}<details><summary>Console rows (${browserConsole.length})</summary>${consoleMarkup || '<p class="tiny muted">No console rows reported.</p>'}${consoleExtra}</details><details><summary>Network rows (${browserNetwork.length})</summary>${networkMarkup || '<p class="tiny muted">No network rows reported.</p>'}${networkExtra}</details><div class="local-summary-grid">${cleanupFact('browserClosed', browserCleanup?.browserClosed)}${cleanupFact('profileRemoved', browserCleanup?.profileRemoved)}${cleanupFact('fixtureStopped', browserCleanup?.fixtureStopped)}</div>${browserCleanup?.error ? `<p class="status failed wrap-anywhere">${escapeHtml(browserCleanup.error)}</p>` : ''}</section>` : ''}
       ${repairMarkup}
       ${proofMarkup}
       <section id="localCleanup" class="card pad section" aria-label="Cleanup facts">

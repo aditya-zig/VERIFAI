@@ -1,7 +1,6 @@
 import {join,resolve,sep} from 'node:path';
 import {mkdir,mkdtemp,open,rename,rm} from 'node:fs/promises';
 import {constants} from 'node:fs';
-import {createHash} from 'node:crypto';
 import {createArtifactBundle,artifactBundlePath} from './proof-artifacts.mjs';
 import {proofFingerprint,sha256Bytes} from './proof-snapshots.mjs';
 
@@ -13,7 +12,7 @@ function snapshotInput(value){
 }
 
 function secretsFromEnv(env){
-  const names=['XKIRO_API_KEY','OPENROUTER_API_KEY','NVIDIA_API_KEY','OLLAMA_API_KEY','GITHUB_TOKEN','GH_TOKEN','VERIFIAI_GITHUB_TOKEN'];
+  const names=['XKIRO_API_KEY','SEEK_AI_API_KEY','OPENROUTER_API_KEY','NVIDIA_API_KEY','OLLAMA_API_KEY','GITHUB_TOKEN','GH_TOKEN','VERIFIAI_GITHUB_TOKEN'];
   return names.map(name=>env[name]).filter(value=>typeof value==='string'&&value.length>=4);
 }
 function publicDescriptor(bundle){
@@ -73,7 +72,7 @@ export class LocalArtifactService{
     await mkdir(resolve(this.root),{recursive:true,mode:0o700});
     const finalPath=artifactBundlePath(this.root,audit.id);
     const stagingRoot=await mkdtemp(join(resolve(this.root),`.staging-${process.pid}-${(stagingCounter+=1)}-`));
-    const backupPath=`${finalPath}.backup-${process.pid}-${stagingCounter}`;
+    const backupPath=join(stagingRoot,'previous');
     let bundle;
     try{
       bundle=await createArtifactBundle({rootDir:stagingRoot,runId:audit.id,replace:false,knownSecrets:secrets,screenshotResolver:resolver,data});
@@ -89,22 +88,24 @@ export class LocalArtifactService{
       await rename(stagedPath,finalPath);
     }catch(error){
       if(movedBackup){
-        try{await rename(backupPath,finalPath);}catch{}
+        try{await rename(backupPath,finalPath);}
+        catch(rollbackError){
+          // Do not destroy the last good bundle when recovery itself fails.
+          // Retain this uniquely owned staging directory for recovery, and
+          // revoke the descriptor so unavailable bytes cannot authorize a PR.
+          this.#records.delete(audit.id);
+          this.#fingerprints.delete(audit.id);
+          throw new AggregateError([error,rollbackError],'Proof publication and rollback failed; previous proof retained for recovery');
+        }
       }
       await rm(stagingRoot,{recursive:true,force:true});
-      await rm(backupPath,{recursive:true,force:true});
       throw error;
     }
-    await rm(stagingRoot,{recursive:true,force:true});
-    await rm(backupPath,{recursive:true,force:true});
-    const descriptor={
-      runId:bundle.runId,
-      manifest:{id:`proof:${bundle.runId}:manifest`,sha256:bundle.manifestSha256},
-      artifacts:bundle.manifest.artifacts.map(item=>({name:item.name,status:item.status,path:item.path,sha256:item.sha256,reason:item.reason})),
-      screenshotRefs:bundle.manifest.references.screenshots,
-      totalBytes:bundle.totalBytes,
-    };
+    const descriptor=publicDescriptor(bundle);
     this.#remember(audit.id,descriptor,fingerprint);
+    // Publication has committed: even if temporary cleanup fails, the cached
+    // descriptor must describe the new on-disk bytes, never the prior bundle.
+    await rm(stagingRoot,{recursive:true,force:true});
     return JSON.parse(JSON.stringify(descriptor));
   }
   async read(runId,artifactPath){

@@ -92,6 +92,37 @@ test('escaping blocks markup injection', () => {
   assert.match(markup, /&lt;img/);
 });
 
+test('contradictory execution evidence never exposes repair controls', () => {
+  for (const extra of [{timedOut:true}, {aborted:true}, {executed:false}]) {
+    assert.doesNotMatch(render({execution:{...execution(1),...extra}}), /data-action="repair-local-audit"/);
+  }
+});
+
+test('raw CDP console rows display their real text, level and location', () => {
+  const markup=render({browser:{status:'Completed',consoleErrors:[
+    {method:'Log.entryAdded',params:{entry:{level:'error',text:'Observed favicon failure',url:'http://fixture.test/favicon.ico'}}},
+    {method:'Runtime.consoleAPICalled',params:{type:'error',args:[{value:'Observed runtime error'}],stackTrace:{callFrames:[{url:'http://fixture.test/app.js'}]}}},
+  ]}});
+  assert.match(markup,/Observed favicon failure/);
+  assert.match(markup,/Observed runtime error/);
+  assert.match(markup,/http:\/\/fixture.test\/app.js/);
+  assert.doesNotMatch(markup,/Missing text/);
+});
+
+test('browser failures state the actual reason and null diagnostic rows stay readable',()=>{
+  const markup=render({browser:{status:'Incomplete',error:'click assertion timed out',networkEvidence:[null]}});
+  assert.match(markup,/click assertion timed out/);
+  assert.match(markup,/Status: not-reported/);
+});
+
+test('pretty diagnostic truncation is explicitly disclosed even when compact JSON is shorter',()=>{
+  const fields=Object.fromEntries(Array.from({length:100},(_,i)=>[`unknown-${i}`,'a']));
+  assert.ok(JSON.stringify(fields).length<2000);
+  assert.ok(JSON.stringify(fields,null,2).length>2000);
+  const markup=render({browser:{status:'Completed',consoleErrors:[fields],networkEvidence:[fields]}});
+  assert.equal((markup.match(/\.\.\.\[truncated\]/g)||[]).length,2);
+});
+
 test('long commands, urls and hashes wrap without overflow CSS', () => {
   assert.match(html, /overflow-wrap:\s*anywhere/);
   assert.match(html, /max-width:\s*100%/);

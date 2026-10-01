@@ -4,7 +4,7 @@
 // and evidence bounds. Real Chrome execution belongs to parent runtime.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {fixtureHtml, completedAudit, validateJourneyOptions, startFixtureServer, runBrowserJourney,
+import {fixtureHtml, completedAudit, errorEntries, validateJourneyOptions, startFixtureServer, runBrowserJourney,
   FIXTURE_BUTTON_ID, FIXTURE_STATUS_ID, FIXTURE_EXPECTED_TEXT,
   MAX_SCREENSHOT_BYTES, MAX_CONSOLE_ENTRIES, MAX_NETWORK_ENTRIES} from '../services/local-browser.mjs';
 
@@ -20,6 +20,14 @@ test('evidence bounds are positive and capped', () => {
   assert.equal(MAX_SCREENSHOT_BYTES, 1_048_576);
   assert.equal(MAX_CONSOLE_ENTRIES, 200);
   assert.equal(MAX_NETWORK_ENTRIES, 200);
+});
+
+test('browser diagnostics retain only actual console errors with their location', () => {
+  const errors = errorEntries([
+    { level: 'error', text: 'failed resource', url: 'http://127.0.0.1/fixture' },
+    { level: 'info', text: 'ready', url: 'http://127.0.0.1/fixture' },
+  ]);
+  assert.deepEqual(errors, [{ text: 'failed resource', url: 'http://127.0.0.1/fixture' }]);
 });
 
 test('only a completed M5 audit can take the journey', () => {

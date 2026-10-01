@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "worker": {
+    "baseImage": "node:22.20.0-bookworm-slim",
+    "baseImageDigest": "recorded by cloud-static CI when registry returns a RepoDigest",
+    "runtime": "Node 22.20.0",
+    "dependencyLock": "package-lock.json generated before build and archived by cloud-static CI",
+    "buildCommit": "git commit SHA of the cloud branch",
+    "imageTagScheme": "verifiai-runtime:<git-sha>",
+    "deployImagePolicy": "immutable ECR image URI; latest forbidden",
+    "dockerSocket": false,
+    "user": "10001:10001"
+  }
+}

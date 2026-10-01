@@ -26,5 +26,5 @@ test('M6 keeps nested evidence and rejects a flat path outside the real tracked 
   await assert.rejects(review({...base,evidence_file:'SECURITY.md'}),/outside the clone/);
 });
 test('M6 missing citation remains invalid, never synthetic PASS',async()=>{
-  await assert.rejects(review(base),/invalid finding/);
+  await assert.rejects(review(base),/missing an evidence file/);
 });

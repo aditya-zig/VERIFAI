@@ -10,7 +10,7 @@ Snapshot only. Before coding, query GitHub for issue/PR/CI state.
 - API-backed models only.
 - No Ollama (do not install it).
 - One heavy process/model/agent at a time.
-- Docker deferred to M4 (#10).
+- Docker is used only for the bounded local command; see [local scope and limits](../../docs/local-mvp.md).
 - TrueForge deferred.
 - AWS deferred (MVP is local-first; cloud comes last and must keep the same behavior).
 - Software factory deferred behind reliable M5 (#11).
@@ -32,10 +32,8 @@ Snapshot only. Before coding, query GitHub for issue/PR/CI state.
 ### Local-agent kit status
 
 - #36 = local-agent bootstrap epic (`ops/local-agent/`).
-- LA0 (root pointer + entry docs) is the current slice; later slices (LA1+) add tested scripts incrementally.
+- The kit contains tested preflight, Docker preparation, startup, shutdown and verification scripts. Consult the scripts and `npm run ops:test`, not historical slice status.
 - **PR #37 = prototype/reference PR only.** It is NOT the clean implementation path. Do not merge it and do not continue building everything in it. Future LA slices may reuse verified material from it; PR #37 gets closed only after replacement slices are merged.
-
-Snapshot of open work when this file was written (2026-09-29): PR #19 (`m1-local-repository`) and PR #21 (`m2-single-local-agent`) are open against `main`; `main` still contains older cloud-first/Strands/AgentCore infrastructure treated as migration debt, not permission to start cloud work. **This paragraph is stale by definition — re-verify below.**
 
 ## Live project state (changes constantly — always re-query)
 

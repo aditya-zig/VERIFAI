@@ -465,7 +465,6 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .001ms !important; }
 }
 
-
 /* --- Marketing UX upgrade: Zapier-inspired editorial rhythm, original VERIFAI visuals --- */
 .marketing-page { padding-top: 0; }
 .marketing-hero { text-align:center; padding:72px 0 44px; max-width:980px; margin:0 auto; }
@@ -572,8 +571,6 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
   .marketing-hero h1{font-size:44px}.marketing-hero .lede{font-size:16px}.particle-band{height:190px;border-radius:16px}.particle-band::after{font-size:9px}.demo-video-shell{padding:16px}.demo-video-caption{display:grid}.editorial-card{padding:18px;min-height:430px}.card-media{min-height:245px}.media-window{width:84%}.metric-strip{grid-template-columns:1fr}.metric-strip>div{border-right:0;border-bottom:1px solid var(--border)!important}.metric-strip>div:last-child{border-bottom:0!important}.how-pro{grid-template-columns:1fr}.landing-cta{padding:56px 20px}.landing-footer{display:grid}.flow-feature{margin-top:72px}
 }
 
-
-
 /* Final publish polish: scroll motion, active navigation, trust/developer content */
 .scroll-reveal { opacity:0; transform:translate3d(0,24px,0); transition:opacity .62s cubic-bezier(.22,.78,.24,1), transform .62s cubic-bezier(.22,.78,.24,1); transition-delay:var(--reveal-delay,0ms); }
 .scroll-reveal.revealed { opacity:1; transform:translate3d(0,0,0); }
@@ -610,15 +607,13 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
   <a class="skip-link" href="#app">Skip to content</a>
   <main id="app" tabindex="-1"></main>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  
+
   <script>
 (() => {
   const app = document.getElementById('app');
   const toast = document.getElementById('toast');
 
   const state = { screen: 'landing' };
-
-  
 
   function escapeHtml(value) {
     return String(value)
@@ -628,10 +623,6 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
       .replaceAll('"','&quot;')
       .replaceAll("'",'&#039;');
   }
-
-  
-
-  
 
   function brand() {
     return `<a class="brand" href="#/landing" data-nav="landing" aria-label="VERIFAI home"><span class="brand-mark" aria-hidden="true"></span><span>VERIFAI</span></a>`;
@@ -643,16 +634,6 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
       <div class="header-actions" style="margin-left:auto"><span class="muted small">Local only</span></div>
     </div></header>`;
   }
-
-  
-
-  
-
-  
-
-  
-
-  
 
   function localRepositoryFormMarkup() {
     return `<form id="localRepositoryForm" class="card pad-lg" aria-describedby="localRepositoryHelp">
@@ -925,65 +906,6 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
 
   }
 
-  function renderProofSummary(proof) {
-    if (!proof?.manifest) return '<p class="status failed">Proof bundle incomplete.</p>';
-    const present = proof.artifacts?.filter(item => item.status === 'Present').length || 0;
-    const missing = proof.artifacts?.filter(item => item.status === 'Missing').length || 0;
-    return `<p>Proof manifest <code>${escapeHtml(proof.manifest.id)}</code></p><p>SHA-256 <code>${escapeHtml(proof.manifest.sha256)}</code></p><p>${present} present · ${missing} missing</p>`;
-  }
-
-  async function refreshLocalProof(id, host) {
-    const out = host.querySelector('#localPostAudit');
-    try {
-      const response = await fetch(`/api/local/audits/${encodeURIComponent(id)}/artifacts`);
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-      if (out) out.innerHTML = `<h4>Proof refreshed</h4>${renderProofSummary(payload)}`;
-    } catch (error) {
-      if (out) out.innerHTML = `<p class="status failed">Proof Incomplete: ${escapeHtml(error?.message || error)}</p>`;
-    }
-  }
-
-  async function runLocalRepair(id, host) {
-    const out = host.querySelector('#localPostAudit');
-    const path = host.querySelector('[data-repair-path]')?.value.trim();
-    const expected = host.querySelector('[data-repair-expected]')?.value;
-    const replacement = host.querySelector('[data-repair-replacement]')?.value;
-    if (!path || !expected) {
-      if (out) out.innerHTML = '<p class="status failed">Repair needs a relative file and exact text to replace.</p>';
-      return;
-    }
-    if (out) out.innerHTML = '<p class="muted small">Verifying repair in an isolated candidate…</p>';
-    try {
-      const response = await fetch(`/api/local/audits/${encodeURIComponent(id)}/repair`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ patch: { files: [{ path, expected, replacement }] } }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-      const before = payload.before ? `${escapeHtml(payload.before.status)} / exit ${escapeHtml(String(payload.before.exitCode))}` : 'Missing';
-      const after = payload.after ? `${escapeHtml(payload.after.status)} / exit ${escapeHtml(String(payload.after.exitCode))}` : 'Missing';
-      if (out) {
-        out.innerHTML = `<h4>Repair verdict: ${escapeHtml(payload.verdict)}</h4><p>Before: ${before}</p><p>After: ${after}</p><p>Original unchanged: ${escapeHtml(String(payload.originalUnchanged))}</p>${renderProofSummary(payload.proof)}${payload.verdict === 'VerifiedRepair' ? '<button class="btn primary sm" type="button" data-local-create-pr>Create PR</button>' : ''}`;
-        out.querySelector('[data-local-create-pr]')?.addEventListener('click', () => createLocalRepairPr(id, out));
-      }
-    } catch (error) {
-      if (out) out.innerHTML = `<p class="status failed">Repair Incomplete: ${escapeHtml(error?.message || error)}</p>`;
-    }
-  }
-
-  async function createLocalRepairPr(id, out) {
-    if (out) out.insertAdjacentHTML('beforeend', '<p class="muted small">Creating reviewable PR from the exact verified repair…</p>');
-    try {
-      const response = await fetch(`/api/local/audits/${encodeURIComponent(id)}/pr`, { method: 'POST' });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-      if (out) out.innerHTML = `<h4>Pull request created</h4><p>Branch <code>${escapeHtml(payload.branch)}</code></p><a href="${escapeHtml(payload.pullRequest.url)}" target="_blank" rel="noopener">Open PR #${escapeHtml(String(payload.pullRequest.number))}</a><p class="tiny muted">Merge remains manual.</p>`;
-    } catch (error) {
-      if (out) out.innerHTML = `<p class="status failed">PR creation blocked: ${escapeHtml(error?.message || error)}</p>`;
-    }
-  }
-
   async function runFixtureBrowser(button) {
     let host = document.getElementById('localBrowserEvidence');
     const masterButton = document.getElementById('startLocalAudit');
@@ -1036,8 +958,6 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     }
   }
 
-
-
   async function cleanupLocalRepository(id, buttonEl) {
     buttonEl.disabled = true;
     try {
@@ -1062,43 +982,6 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     }
   }
 
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-  
-
-  
-
-  
-
-  
-
   const renderers = { landing: renderLocalLanding };
 
   function navigate(screen, push = true) {
@@ -1115,27 +998,6 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     clearTimeout(showToast._timer);
     showToast._timer = setTimeout(() => toast.classList.remove('show'), 2600);
   }
-
-
-
-  
-
-
-  
-
-  
-
-  
-
-  
-
-
-
-  
-
-  
-
-  
 
   function render() {
     const renderer = renderers[state.screen] || renderers.landing;
@@ -1181,7 +1043,6 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
       return;
     }
   });
-
 
   let headerScrollQueued=false;
   window.addEventListener('scroll',()=>{if(headerScrollQueued)return;headerScrollQueued=true;requestAnimationFrame(()=>{document.querySelector('.app-header')?.classList.toggle('scrolled',window.scrollY>10);headerScrollQueued=false})},{passive:true});

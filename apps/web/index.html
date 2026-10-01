@@ -306,6 +306,12 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
 .result-row.verified { border-left: 4px solid var(--verified); }
 .result-row.unknown { border-left: 4px solid var(--unknown); }
 .result-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.local-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+.local-summary-grid > div { min-width: 0; }
+#localRepoResult, #localRepoResult code, #localRepoResult pre, #localFindingDescription, #localProofArtifacts code, .wrap-anywhere { overflow-wrap: anywhere; word-break: break-word; max-width: 100%; }
+#localRepoResult pre { overflow-x: auto; white-space: pre-wrap; }
+#localRepoResult a { overflow-wrap: anywhere; word-break: break-all; }
+.local-log-block { max-height: 220px; overflow: auto; }
 
 .issue-header { display: flex; justify-content: space-between; gap: 18px; align-items: start; margin-bottom: 20px; }
 .issue-meta { display: flex; flex-wrap: wrap; gap: 8px 20px; color: var(--muted); font-size: 13px; }
@@ -822,18 +828,28 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
 
   function renderMasterAudit(run, host) {
     const statusText = run.status === 'Completed' ? 'Completed limited check' : run.status;
-    const stages = Object.entries(run.stages).map(([name, stage]) => `<li>${escapeHtml(name)}: ${escapeHtml(stage.status)}${stage.detail ? ` — ${escapeHtml(stage.detail)}` : ''}</li>`).join('');
+    const stages = Object.entries(run.stages || {}).map(([name, stage]) => `<li>${escapeHtml(name)}: ${escapeHtml(stage.status)}${stage.detail ? ` — ${escapeHtml(stage.detail)}` : ''}</li>`).join('');
     const finding = run.finding;
     const execution = run.execution;
     const specialist = run.specialists?.results?.find(item => item.id === 'security');
     const proof = run.proof;
     const browser = run.browser;
-    const repairMarkup = run.repair?.verdict === 'VerifiedRepair' ? `<section id="localRepairAction" class="card pad section">
+    const repair = run.repair;
+    const stdoutText = execution?.stdout || '';
+    const stderrText = execution?.stderr || '';
+    const stdoutLines = stdoutText ? stdoutText.split('\n').length : 0;
+    const stderrLines = stderrText ? stderrText.split('\n').length : 0;
+    const scopeText = finding?.assessment?.scope || finding?.executedCheck?.scope || 'limited-check: single bounded command — not a test suite, not security verification';
+    const coverageText = repair?.coverage?.label || (repair ? 'SAME-COMMAND REPLAY / limited coverage' : '');
+    const findingState = finding?.assessment?.findingState || 'Unconfirmed';
+    const repairMarkup = repair?.verdict === 'VerifiedRepair' ? `<section id="localRepairAction" class="card pad section">
       <h4>Verified repair</h4>
-      <p class="status verified">VerifiedRepair · before exit ${escapeHtml(String(run.repair.before?.exitCode))} · after exit ${escapeHtml(String(run.repair.after?.exitCode))}</p>
+      <p class="status verified">VerifiedRepair · before exit ${escapeHtml(String(repair.before?.exitCode))} · after exit ${escapeHtml(String(repair.after?.exitCode))}</p>
+      <p class="tiny muted wrap-anywhere">Verified target: <code class="wrap-anywhere">${escapeHtml(repair.verifiedTarget?.command || repair.before?.command || run.selectedCommand || '')}</code> · exit ${escapeHtml(String(repair.verifiedTarget?.exitCode ?? repair.before?.exitCode ?? ''))}</p>
+      ${coverageText ? `<p class="tiny muted wrap-anywhere">${escapeHtml(coverageText)}</p>` : ''}
       <p class="tiny muted">Review proof first. Creating a PR requires this explicit human action and revalidates the immutable repair, proof manifest, and remote base.</p>
       <div class="actions"><button class="btn primary sm" data-action="create-local-pr" data-audit-id="${escapeHtml(run.id)}">Create PR</button></div>
-      <div id="localPrResult" role="status" aria-live="polite">${run.pullRequest?.pullRequest?.url ? `<a href="${escapeHtml(run.pullRequest.pullRequest.url)}" target="_blank" rel="noopener">Open created PR</a>` : ''}</div>
+      <div id="localPrResult" role="status" aria-live="polite">${run.pullRequest?.pullRequest?.url ? `<a class="wrap-anywhere" href="${escapeHtml(run.pullRequest.pullRequest.url)}" target="_blank" rel="noopener">Open created PR</a>` : ''}</div>
     </section>` : execution?.status === 'Failed' && execution?.sandbox?.started === true && Number.isInteger(execution?.exitCode) && execution.exitCode !== 0 ? `<section id="localRepairAction" class="card pad section">
       <h4>Repair candidate</h4>
       <p class="tiny muted">Deliberate action only. Paste one bounded candidate patch; VERIFAI tests it in an isolated copy and never edits the original checkout.</p>
@@ -845,41 +861,74 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
       <h4>Proof artifacts</h4>
       <p class="tiny muted">Only executed evidence is downloadable. Missing steps stay labelled Missing.</p>
       <ul>${proof.artifacts.map(item => item.status === 'Present'
-        ? `<li><a href="/api/local/audits/${encodeURIComponent(run.id)}/artifacts/${encodeURIComponent(item.path)}" target="_blank" rel="noopener">${escapeHtml(item.name)}</a> · <code>${escapeHtml((item.sha256 || '').slice(0,16))}</code></li>`
+        ? `<li>${escapeHtml(item.name)} · ${escapeHtml(item.path || '')} · <span>SHA-256</span> <code class="wrap-anywhere">${escapeHtml(item.sha256 || '')}</code> · <a class="wrap-anywhere" href="/api/local/audits/${encodeURIComponent(run.id)}/artifacts/${encodeURIComponent(item.path)}" target="_blank" rel="noopener">Download ${escapeHtml(item.name)}</a></li>`
         : `<li>${escapeHtml(item.name)} · Missing${item.reason ? ` — ${escapeHtml(item.reason)}` : ''}</li>`).join('')}</ul>
     </section>` : '';
+    const cleanup = run.cleanup || {};
+    const repairCleanup = repair?.cleanup || {};
+    const cleanupRow = (label, value) => `<div><span class="tiny muted">${escapeHtml(label)}</span><br><strong>${value === true ? 'true' : value === false ? 'false' : 'missing'}</strong></div>`;
+    const browserConsole = browser?.consoleErrors || browser?.console || [];
+    const browserNetwork = browser?.networkEvidence || browser?.network || [];
     host.innerHTML = `<section class="card pad section" data-audit-id="${escapeHtml(run.id)}">
-      <h3>${escapeHtml(run.repository?.fullName || 'Public GitHub repository')}</h3>
+      <h3 class="wrap-anywhere">${escapeHtml(run.repository?.fullName || 'Public GitHub repository')}</h3>
       <p id="localAuditStatus" class="status ${run.status === 'Running' ? 'running' : run.status === 'Completed' ? 'unknown' : 'failed'}">${escapeHtml(statusText)}</p>
-      ${run.clone?.success ? `<p id="localCloneStatus">Clone succeeded · ${run.files.count} tracked files${run.stages.cleanup.status === 'Completed' ? ' · temporary repository cleaned' : ''}</p>` : ''}
+      <section id="localSummary" class="card pad section" aria-label="Result summary">
+        <h4>Summary</h4>
+        <div class="local-summary-grid">
+          <div><span class="tiny muted">Status</span><br><strong>${escapeHtml(statusText)}</strong></div>
+          <div><span class="tiny muted">Audit id</span><br><code class="wrap-anywhere">${escapeHtml(run.id || 'missing')}</code></div>
+          <div><span class="tiny muted">Commit</span><br><code class="wrap-anywhere">${escapeHtml(run.repository?.commit || 'missing')}</code></div>
+          <div><span class="tiny muted">Tracked files</span><br><strong>${escapeHtml(String(run.files?.count ?? 'missing'))}</strong></div>
+          <div><span class="tiny muted">Model</span><br><span class="wrap-anywhere">${escapeHtml(run.model ? `${run.model.provider} · ${run.model.model}` : 'missing')}</span></div>
+          <div><span class="tiny muted">Duration</span><br><strong>${escapeHtml(run.durationMs != null ? `${run.durationMs} ms` : 'missing')}</strong></div>
+        </div>
+      </section>
+      ${run.clone?.success ? `<p id="localCloneStatus">Clone succeeded · ${run.files.count} tracked files${run.stages?.cleanup?.status === 'Completed' ? ' · temporary repository cleaned' : ''}</p>` : ''}
       <ol id="localAuditStages">${stages}</ol>
-      ${run.error ? `<p class="status failed">${escapeHtml(run.failedStage)}: ${escapeHtml(run.error)}</p>` : ''}
+      ${run.error ? `<p class="status failed wrap-anywhere">${escapeHtml(run.failedStage)}: ${escapeHtml(run.error)}</p>` : ''}
       <div id="localFinding" role="status" aria-live="polite">
-        ${finding ? `<h3 id="localFindingTitle">${escapeHtml(finding.title)}</h3>
+        ${finding ? `<section id="localHypothesis" class="card pad section">
+          <h4>Model hypothesis · Unconfirmed (opinion, not verification)</h4>
+          <h3 id="localFindingTitle" class="wrap-anywhere">${escapeHtml(finding.title)}</h3>
           <span id="localFindingSeverity" class="status warning">${escapeHtml(finding.severity)}</span>
-          <p id="localFindingDescription" style="white-space:pre-wrap">${escapeHtml(finding.description)}</p>
-          <p id="localFindingEvidence">Evidence file: <code>${escapeHtml(finding.evidence.file)}</code></p>` : ''}
-        ${run.model ? `<p>Base model · ${escapeHtml(run.model.provider)} · ${escapeHtml(run.model.model)}</p>` : ''}
+          <p class="tiny muted">Confidence: Unconfirmed · finding state: ${escapeHtml(findingState)}</p>
+          <p id="localFindingDescription" class="wrap-anywhere" style="white-space:pre-wrap">${escapeHtml(finding.description)}</p>
+          <p id="localFindingEvidence">Evidence file: <code class="wrap-anywhere">${escapeHtml(finding.evidence?.file || 'missing')}</code></p>
+          ${finding?.assessment?.reason ? `<p class="tiny muted wrap-anywhere">${escapeHtml(finding.assessment.reason)}</p>` : ''}
+        </section>` : ''}
+        ${run.model ? `<p class="wrap-anywhere">Base model · ${escapeHtml(run.model.provider)} · ${escapeHtml(run.model.model)}</p>` : ''}
       </div>
       ${specialist ? `<section id="localSecuritySpecialist" class="card pad section">
         <h4>Security specialist</h4>
         <p class="status ${specialist.status === 'Completed' ? 'unknown' : 'failed'}">${escapeHtml(specialist.status)}</p>
-        ${specialist.model ? `<p>${escapeHtml(specialist.model.provider)} · ${escapeHtml(specialist.model.model)}</p>` : ''}
-        ${specialist.error ? `<p class="status failed">${escapeHtml(specialist.error)}</p>` : ''}
+        ${specialist.model ? `<p class="wrap-anywhere">${escapeHtml(specialist.model.provider)} · ${escapeHtml(specialist.model.model)}</p>` : ''}
+        ${specialist.error ? `<p class="status failed wrap-anywhere">${escapeHtml(specialist.error)}</p>` : ''}
         <p>${specialist.findings?.length || 0} persisted finding(s) · ${specialist.evidenceRefs?.length || 0} evidence ref(s)</p>
       </section>` : ''}
       ${execution ? `<section id="localExecutionEvidence" class="card pad section">
-        <h4>Real executed evidence</h4><code>${escapeHtml(execution.command)}</code>
+        <h4>Executed check (server-owned)</h4>
+        <p class="tiny muted wrap-anywhere">${escapeHtml(scopeText)}</p>
+        <p><span class="tiny muted">Command</span><br><code class="wrap-anywhere">${escapeHtml(execution.command || 'missing')}</code></p>
         <p>Exit: ${escapeHtml(String(execution.exitCode))} · ${execution.durationMs} ms · ${escapeHtml(execution.status)}</p>
-        <p id="localSandboxEvidence">Docker sandbox ${execution.sandbox.started ? 'started' : 'not started'}: <code>${escapeHtml(execution.sandbox.name)}</code> · ${execution.sandbox.removed ? 'Removed after execution' : 'Incomplete cleanup'} · ${execution.sandbox.memoryBytes / 1048576} MiB limit · ${execution.sandbox.nanoCpus / 1e9} CPUs · privileged: ${execution.sandbox.privileged}</p>
-        <p>stdout</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stdout || '(empty)')}</pre>
-        <p>stderr</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stderr || '(empty)')}</pre>
+        <p id="localSandboxEvidence" class="wrap-anywhere">Docker sandbox ${execution.sandbox?.started ? 'started' : 'not started'}: <code class="wrap-anywhere">${escapeHtml(execution.sandbox?.name || 'missing')}</code> · ${execution.sandbox?.removed ? 'Removed after execution' : 'Incomplete cleanup'} · ${execution.sandbox?.memoryBytes ? `${execution.sandbox.memoryBytes / 1048576} MiB limit` : 'memory limit missing'} · ${execution.sandbox?.nanoCpus ? `${execution.sandbox.nanoCpus / 1e9} CPUs` : 'CPU limit missing'} · privileged: ${execution.sandbox?.privileged}</p>
+        <p><span class="tiny muted">stdout · ${stdoutText.length} chars · ${stdoutLines} lines</span></p><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stdout || '(empty)')}</pre>
+        <p><span class="tiny muted">stderr · ${stderrText.length} chars · ${stderrLines} lines</span></p><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stderr || '(empty)')}</pre>
         ${execution.truncated ? '<p>Output capped: showing tail only.</p>' : ''}
-        <p>Executed-output SHA-256: <code>${escapeHtml(run.outputHash || '')}</code></p>
+        <p class="wrap-anywhere">Executed-output SHA-256: <code class="wrap-anywhere">${escapeHtml(run.outputHash || 'missing')}</code></p>
       </section>` : ''}
-      ${browser ? `<section class="card pad section"><h4>Browser journey</h4><p>${escapeHtml(browser.status)} · ${escapeHtml(browser.target || 'fixture')}</p>${browser.screenshotRefs?.[0] ? `<a href="${escapeHtml(browser.screenshotRefs[0])}" target="_blank" rel="noopener">Open captured screenshot</a>` : '<p>No screenshot artifact.</p>'}</section>` : ''}
+      ${coverageText && !repair ? `<p class="tiny muted wrap-anywhere">${escapeHtml(coverageText)}</p>` : ''}
+      ${browser ? `<section id="localBrowserJourney" class="card pad section"><h4>Browser journey (fixture only)</h4><p class="wrap-anywhere">${escapeHtml(browser.status)} · ${escapeHtml(browser.target?.label || browser.target || 'Local integration fixture; not verification of the cloned application')}</p>${browser.screenshotRefs?.[0] ? `<a class="wrap-anywhere" href="${escapeHtml(browser.screenshotRefs[0])}" target="_blank" rel="noopener">Open server screenshot (fixture scope only)</a>` : '<p>Screenshot: Missing (not captured)</p>'}<details><summary>Console rows (${browserConsole.length})</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(JSON.stringify(browserConsole).slice(0, 4000))}</pre></details><details><summary>Network rows (${browserNetwork.length})</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(JSON.stringify(browserNetwork).slice(0, 4000))}</pre></details></section>` : ''}
       ${repairMarkup}
       ${proofMarkup}
+      <section id="localCleanup" class="card pad section" aria-label="Cleanup facts">
+        <h4>Cleanup</h4>
+        <div class="local-summary-grid">
+          ${cleanupRow('repositoryRemoved', cleanup.repositoryRemoved)}
+          ${cleanupRow('sandboxRemoved', cleanup.sandboxRemoved)}
+          ${cleanupRow('candidateRemoved', repairCleanup.candidateRemoved ?? cleanup.candidateRemoved)}
+          ${cleanupRow('originalUnchanged', repair?.originalUnchanged ?? cleanup.originalUnchanged)}
+        </div>
+      </section>
       <p class="tiny muted">A completed limited check is not a full test-suite or security verification. Cleanup is automatic.</p>
       ${run.status === 'Completed' ? `<section class="card pad section">
         <button class="btn" type="button" data-action="run-fixture-browser" data-audit-id="${escapeHtml(run.id)}">Run fixture browser journey</button>

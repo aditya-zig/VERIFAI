@@ -15,6 +15,23 @@ function required(name) {
   return value;
 }
 
+function structuredLog(event) {
+  process.stdout.write(JSON.stringify({timestamp: new Date().toISOString(), ...event}) + '\n');
+}
+
+async function taskArn(env = process.env, fetchImpl = fetch) {
+  const base = env.ECS_CONTAINER_METADATA_URI_V4;
+  if (!base) return null;
+  try {
+    const response = await fetchImpl(base.replace(/\/$/, '') + '/task', {signal: AbortSignal.timeout(2000)});
+    if (!response.ok) return null;
+    const payload = await response.json();
+    return typeof payload?.TaskARN === 'string' ? payload.TaskARN : null;
+  } catch {
+    return null;
+  }
+}
+
 function exactRepository() {
   return {
     fullName: required('VERIFIAI_REPOSITORY_FULL_NAME'),
@@ -91,8 +108,19 @@ export async function runCloudWorker({env = process.env, s3} = {}) {
   const timer = setTimeout(() => controller.abort(new Error('cloud worker deadline exceeded')), deadlineMs);
   const provider = new CloudTaskRuntimeProvider({env});
   const repository = exactRepository();
+  const cloudTaskArn = await taskArn(env);
   let run;
   let root;
+
+  structuredLog({
+    event: 'run.started',
+    runId,
+    stage: 'launch',
+    status: 'Running',
+    taskArn: cloudTaskArn,
+    provider: env.VERIFIAI_MODEL_PROVIDER || null,
+    model: env.VERIFIAI_MODEL_ID || null,
+  });
 
   try {
     run = await runRuntimeAudit(provider, {
@@ -104,6 +132,19 @@ export async function runCloudWorker({env = process.env, s3} = {}) {
       commandTimeoutMs: Math.min(10000, deadlineMs - 500),
       signal: controller.signal,
     });
+
+    for (const [stage, value] of Object.entries(run.stages || {})) {
+      structuredLog({
+        event: 'stage.terminal',
+        runId,
+        stage,
+        status: value?.status,
+        durationMs: value?.durationMs ?? null,
+        taskArn: cloudTaskArn,
+        provider: run.model?.provider || env.VERIFIAI_MODEL_PROVIDER || null,
+        model: run.model?.model || env.VERIFIAI_MODEL_ID || null,
+      });
+    }
 
     root = await mkdtemp(join(tmpdir(), 'verifiai-cloud-artifacts-'));
     const bundle = await createArtifactBundle({
@@ -133,6 +174,18 @@ export async function runCloudWorker({env = process.env, s3} = {}) {
     await uploadBundle(client, bucket, bundle);
     run.proof = proofDescriptor(bundle);
     await store.putResult(runId, run);
+    structuredLog({
+      event: 'run.terminal',
+      runId,
+      stage: run.failedStage || 'complete',
+      status: run.status,
+      durationMs: run.durationMs ?? null,
+      taskArn: cloudTaskArn,
+      provider: run.model?.provider || env.VERIFIAI_MODEL_PROVIDER || null,
+      model: run.model?.model || env.VERIFIAI_MODEL_ID || null,
+      artifactRefs: run.proof?.artifacts?.filter((x) => x.status === 'Present').map((x) => x.path) || [],
+      cleanup: run.cleanup || null,
+    });
     return run;
   } catch (error) {
     const failed = {
@@ -148,6 +201,18 @@ export async function runCloudWorker({env = process.env, s3} = {}) {
       finishedAt: new Date().toISOString(),
     };
     await store.putResult(runId, failed).catch(() => undefined);
+    structuredLog({
+      event: 'run.terminal',
+      runId,
+      stage: failed.failedStage,
+      status: failed.status,
+      taskArn: cloudTaskArn,
+      provider: env.VERIFIAI_MODEL_PROVIDER || null,
+      model: env.VERIFIAI_MODEL_ID || null,
+      artifactRefs: [],
+      cleanup: failed.cleanup || null,
+      failureCode: failed.failureCode,
+    });
     return failed;
   } finally {
     clearTimeout(timer);

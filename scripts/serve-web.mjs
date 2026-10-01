@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { LocalRepositoryService } from '../services/local-repository.mjs';
 import { abortActiveAudit } from '../services/local-audit.mjs';
 import { MasterAuditService } from '../services/master-audit.mjs';
+import { LocalRepairService } from '../services/local-repair-service.mjs';
 
 const root = fileURLToPath(new URL('../apps/web/', import.meta.url));
 const types = {
@@ -37,6 +38,7 @@ async function readJson(req) {
 
 export function createDemoServer({ deepAudit, repositories = new LocalRepositoryService(), apiOnly = false, apiUrl, env = process.env } = {}) {
   const audits = new MasterAuditService(repositories, { env });
+  const repairs = new LocalRepairService(repositories, audits, { env });
   const getDeepAudit = async () => {
     if (deepAudit) return deepAudit;
     const { DeepAuditService } = await import('../services/deep-audit/index.mjs');
@@ -67,6 +69,21 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
     if (req.method === 'GET' && masterRoute) {
       const run = audits.get(decodeURIComponent(masterRoute[1]));
       return run ? sendJson(res, 200, run) : sendJson(res, 404, { status: 'Incomplete', error: 'audit not found' });
+    }
+
+    const repairRoute = url.pathname.match(/^\/api\/local\/audits\/([^/]+)\/repair$/);
+    if (req.method === 'POST' && repairRoute) {
+      try {
+        const body = await readJson(req);
+        const repair = await repairs.repair(decodeURIComponent(repairRoute[1]), body.patch);
+        return sendJson(res, 200, repair);
+      } catch (error) {
+        return sendJson(res, error.statusCode ?? 409, { status: 'Incomplete', error: String(error?.message ?? error) });
+      }
+    }
+    if (req.method === 'GET' && repairRoute) {
+      const repair = repairs.get(decodeURIComponent(repairRoute[1]));
+      return repair ? sendJson(res, 200, repair) : sendJson(res, 404, { status: 'Incomplete', error: 'repair not found' });
     }
 
     if (req.method === 'POST' && url.pathname === '/api/local/repositories') {

@@ -16,6 +16,9 @@ jobs:
       - run: npm run check
       - name: Build bounded local audit sandbox
         run: docker build -t verifai-local-audit:m4 -f infra/local/audit.Dockerfile infra/local
-      - run: npm run test:local-e2e
+      - name: Run real local E2E
+        env:
+          XKIRO_API_KEY: ${{ secrets.XKIRO_API_KEY }}
+        run: npm run test:local-e2e
       - if: always()
         run: npm run ops:test

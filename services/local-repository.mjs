@@ -165,6 +165,9 @@ export class LocalRepositoryService {
       ({ workspacePath, registry } = await registerWorkspace(id));
       const cloneSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
       await runGit(['clone', '--depth', '1', '--single-branch', '--no-tags', '--quiet', '--', repository.url, workspacePath], { signal: cloneSignal });
+      const head = (await runGit(['-C', workspacePath, 'rev-parse', 'HEAD'], { signal: cloneSignal })).stdout.trim();
+      if (!/^[0-9a-f]{40}$/i.test(head)) throw new Error('Could not resolve cloned HEAD commit');
+      repository.commit = head;
       const listing = await listTrackedFiles(workspacePath, cloneSignal);
       const info = await readRepository(workspacePath, listing);
       cloneSignal.throwIfAborted();

@@ -33,3 +33,19 @@ test('browser evidence without materializable screenshot records Missing screens
   assert.equal(proof.artifacts.find(x=>x.name==='screenshot-1').status,'Missing');
   assert.deepEqual(proof.screenshotRefs,[]);
 });
+
+
+test('artifact service reads only manifest-owned Present files',async(t)=>{
+  const root=await mkdtemp(join(tmpdir(),'verifiai-artifact-download-'));t.after(()=>rm(root,{recursive:true,force:true}));
+  const service=new LocalArtifactService({env:{VERIFIAI_ARTIFACT_DIR:root}});
+  const audit={id:'run-download',status:'Completed',stages:{},repository:{fullName:'owner/repo',commit:'abc'},
+    finding:{title:'f',severity:'info',evidence:{file:'README'}},
+    execution:{status:'Completed',executed:true,exitCode:0,command:'echo',stdout:'ok',stderr:''},
+    cleanup:{repositoryRemoved:true,sandboxRemoved:true},model:{provider:'stub',model:'stub'}};
+  await service.refresh(audit);
+  const run=await service.read('run-download','run.json');
+  assert.equal(run.item.name,'run');
+  assert.equal(JSON.parse(run.buffer.toString('utf8')).id,'run-download');
+  await assert.rejects(service.read('run-download','../outside'),/not found|invalid/i);
+  await assert.rejects(service.read('run-download','repair.diff'),/not found/i);
+});

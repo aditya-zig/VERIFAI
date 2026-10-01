@@ -20,6 +20,23 @@ Supply `XKIRO_API_KEY` in the backend's launching environment; default provider
 provider key variable. Never commit, paste into logs or send these keys to a
 container/browser. No credential value belongs in this document.
 
+Seek AI uses `VERIFIAI_MODEL_PROVIDER=seek_ai`, an explicit
+`VERIFIAI_MODEL_ID` (for example `glm-5.3-flash` when listed by the provider), and
+`SEEK_AI_API_KEY` in the backend environment. Its default API base URL is
+`https://seekai.cc/v1`; this labels findings as Seek AI rather than xkiro.
+Configuration support is not proof of model compatibility: a real
+`jonschlinkert/is-number` trial returned invalid JSON at the existing 500-token
+cap, and a second trial at 1500 tokens hit the 60-second model timeout. Both
+ended Incomplete with cleanup completed; the speculative cap increase was not
+retained. Provider-specific GLM response/reasoning compatibility remains unverified.
+A subsequent tiny JSON diagnostic with documented `reasoning_effort: low`
+reported `MiniMaxAI/MiniMax-M2.7`, not the requested GLM, and included inline
+reasoning instead of pure JSON. The Seek AI GLM path now fails closed if the
+response omits or differs from the requested model identity (case-insensitive).
+Do not silently accept another model or strip reasoning to label it GLM.
+Seek AI's routing/model mapping must be corrected before real GLM acceptance
+can be retried. See `docs/evidence/seek-ai-glm53-trial.md`.
+
 ## Prepare once, then start
 
 Run from the checkout. With >=20 GiB free and Docker ready:

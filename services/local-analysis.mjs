@@ -10,6 +10,11 @@ const modelProfiles = {
     apiKeyEnv: 'XKIRO_API_KEY',
     defaultModel: 'mistralai/ministral-8b',
   },
+  seek_ai: {
+    baseUrl: 'https://seekai.cc/v1',
+    apiKeyEnv: 'SEEK_AI_API_KEY',
+    defaultModel: undefined,
+  },
   openrouter: {
     baseUrl: 'https://openrouter.ai/api/v1',
     apiKeyEnv: 'OPENROUTER_API_KEY',
@@ -163,6 +168,12 @@ export async function analyzeRepository(record, { env = process.env, fetchImpl =
     throw new Error(`Model call failed: HTTP ${response.status}`);
   }
   const payload = await response.json();
+  // A catalog alias is not proof that Seek AI actually served the requested GLM.
+  // Refuse substitution before parsing content, without echoing untrusted metadata.
+  if (config.provider === 'seek_ai' && config.model === 'glm-5.3-flash'
+      && (typeof payload?.model !== 'string' || payload.model.toLowerCase() !== 'glm-5.3-flash')) {
+    throw new Error('Seek AI did not report the requested glm-5.3-flash model');
+  }
   const text = payload?.choices?.[0]?.message?.content;
   if (!text) throw new Error('Model returned no content');
   const finding = normalizeFinding(extractJson(text), record.files.items);

@@ -6,34 +6,30 @@ The broken state is intentional. Do not publish a separate repository from this 
 
 ## Broken default
 
-```bash
-node --test fixtures/public-proof/before.test.mjs
-```
-
-Expected: non-zero exit.
-
-## Regression
+VERIFAI's bounded command selector reads `package.json` and selects:
 
 ```bash
-node --test fixtures/public-proof/regression.test.mjs
+node --check broken.mjs
 ```
 
-Expected: zero exit before and after repair.
+Expected BEFORE result: non-zero exit caused by the deliberate extra `}`.
 
 ## Exact valid repair
 
-In `is-even.mjs`, replace:
+In `broken.mjs`, replace the final:
 
-```js
-return value % 2 === 1;
+```text
+}}
 ```
 
 with:
 
-```js
-return value % 2 === 0;
+```text
+}
 ```
 
-Then rerun both commands. The main test must exit 0 and the regression must remain 0.
+Expected AFTER result: exit 0.
+
+M8 reruns the same bounded verification as its regression check, so regression must also exit 0.
 
 The original base repository must remain unchanged. VERIFAI may create only a repair branch and pull request. No auto-merge.

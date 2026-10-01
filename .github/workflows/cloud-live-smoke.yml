@@ -1,0 +1,91 @@
+name: Manual cloud smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      worker_image_uri:
+        description: Immutable ECR worker image URI
+        required: true
+        type: string
+      worker_repository_arn:
+        description: ECR repository ARN
+        required: true
+        type: string
+      public_subnets:
+        description: Comma-separated existing public subnet IDs
+        required: true
+        type: string
+      security_groups:
+        description: Comma-separated outbound-only security group IDs
+        required: false
+        type: string
+      smoke_repository_full_name:
+        description: owner/repo
+        required: true
+        type: string
+      smoke_repository_url:
+        description: Public GitHub repository URL
+        required: true
+        type: string
+      smoke_repository_commit:
+        description: Exact 40-char commit SHA
+        required: true
+        type: string
+      model_provider:
+        description: xkiro, openrouter, nvidia, or ollama-cloud
+        required: true
+        type: string
+      model_id:
+        description: Exact model name
+        required: true
+        type: string
+      deadline_ms:
+        description: Bounded smoke deadline
+        required: false
+        default: '300000'
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: cloud-smoke
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+      - name: Generate and install exact dependency lock
+        run: |
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Static preflight
+        run: npm run cloud:preflight
+      - name: Configure authorized AWS deployer identity
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-south-1
+      - name: Run one bounded real cloud smoke
+        env:
+          VERIFIAI_CLOUD_ALLOW_PROVISION: 'true'
+          VERIFIAI_CLOUD_WORKER_IMAGE_URI: ${{ inputs.worker_image_uri }}
+          VERIFIAI_CLOUD_WORKER_REPOSITORY_ARN: ${{ inputs.worker_repository_arn }}
+          VERIFIAI_CLOUD_PROVIDER_SECRET_ARN: ${{ secrets.VERIFIAI_CLOUD_PROVIDER_SECRET_ARN }}
+          VERIFIAI_CLOUD_PUBLIC_SUBNETS: ${{ inputs.public_subnets }}
+          VERIFIAI_CLOUD_SECURITY_GROUPS: ${{ inputs.security_groups }}
+          VERIFIAI_SMOKE_REPOSITORY_FULL_NAME: ${{ inputs.smoke_repository_full_name }}
+          VERIFIAI_SMOKE_REPOSITORY_URL: ${{ inputs.smoke_repository_url }}
+          VERIFIAI_SMOKE_REPOSITORY_COMMIT: ${{ inputs.smoke_repository_commit }}
+          VERIFIAI_MODEL_PROVIDER: ${{ inputs.model_provider }}
+          VERIFIAI_MODEL_ID: ${{ inputs.model_id }}
+          VERIFIAI_CLOUD_DEADLINE_MS: ${{ inputs.deadline_ms }}
+          VERIFIAI_CLOUD_ESTIMATED_SPEND_USD: '0.25'
+        run: npm run cloud:deploy-smoke
+      - name: Teardown instructions
+        if: always()
+        run: echo "Run npm run cloud:teardown with VERIFIAI_CLOUD_ALLOW_PROVISION=true after inspecting smoke artifacts."

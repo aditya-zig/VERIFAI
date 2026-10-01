@@ -1,0 +1,459 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "VERIFAI minimal bounded cloud runtime: one Fargate task per audit, S3 artifacts, CloudWatch logs",
+  "Parameters": {
+    "WorkerImageUri": {
+      "Type": "String",
+      "Description": "Immutable ECR image URI. Do not use latest."
+    },
+    "WorkerRepositoryArn": {
+      "Type": "String",
+      "Description": "ARN of the ECR repository containing WorkerImageUri."
+    },
+    "ProviderSecretArn": {
+      "Type": "String",
+      "Default": "",
+      "NoEcho": true,
+      "Description": "Optional Secrets Manager ARN containing the provider API key value."
+    },
+    "ArtifactRetentionDays": {
+      "Type": "Number",
+      "Default": 7,
+      "MinValue": 1,
+      "MaxValue": 30
+    },
+    "Environment": {
+      "Type": "String",
+      "Default": "dev",
+      "AllowedPattern": "^[A-Za-z0-9._-]{1,32}$"
+    }
+  },
+  "Conditions": {
+    "HasProviderSecret": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "ProviderSecretArn"
+            },
+            ""
+          ]
+        }
+      ]
+    }
+  },
+  "Resources": {
+    "ArtifactBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "IgnorePublicAcls": true,
+          "BlockPublicPolicy": true,
+          "RestrictPublicBuckets": true
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "BoundedRunRetention",
+              "Status": "Enabled",
+              "ExpirationInDays": {
+                "Ref": "ArtifactRetentionDays"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "RuntimeCluster": {
+      "Type": "AWS::ECS::Cluster",
+      "Properties": {
+        "ClusterSettings": [
+          {
+            "Name": "containerInsights",
+            "Value": "disabled"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "project",
+            "Value": "verifiai"
+          },
+          {
+            "Key": "environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          }
+        ]
+      }
+    },
+    "RuntimeLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "RetentionInDays": 7
+      }
+    },
+    "TaskExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "ecs-tasks.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "verifiai-runtime-execution",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "EcrAuthorizationToken",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:GetAuthorizationToken"
+                  ],
+                  "Resource": [
+                    "*"
+                  ]
+                },
+                {
+                  "Sid": "PullWorkerImage",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:BatchCheckLayerAvailability",
+                    "ecr:GetDownloadUrlForLayer",
+                    "ecr:BatchGetImage"
+                  ],
+                  "Resource": [
+                    {
+                      "Ref": "WorkerRepositoryArn"
+                    }
+                  ]
+                },
+                {
+                  "Sid": "WriteRuntimeLogs",
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "${RuntimeLogGroup.Arn}:*"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ProviderSecretPolicy": {
+      "Type": "AWS::IAM::Policy",
+      "Condition": "HasProviderSecret",
+      "Properties": {
+        "PolicyName": "verifiai-provider-secret",
+        "Roles": [
+          {
+            "Ref": "TaskExecutionRole"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:GetSecretValue"
+              ],
+              "Resource": [
+                {
+                  "Ref": "ProviderSecretArn"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "TaskRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "ecs-tasks.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "verifiai-runtime-artifacts",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "WriteOwnedRunArtifacts",
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:PutObject"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "${ArtifactBucket.Arn}/runs/*"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "RuntimeTaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": {
+          "Fn::Sub": "verifiai-runtime-${Environment}"
+        },
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "NetworkMode": "awsvpc",
+        "Cpu": "512",
+        "Memory": "1024",
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "TaskExecutionRole",
+            "Arn"
+          ]
+        },
+        "TaskRoleArn": {
+          "Fn::GetAtt": [
+            "TaskRole",
+            "Arn"
+          ]
+        },
+        "RuntimePlatform": {
+          "CpuArchitecture": "X86_64",
+          "OperatingSystemFamily": "LINUX"
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "verifiai-worker",
+            "Image": {
+              "Ref": "WorkerImageUri"
+            },
+            "Essential": true,
+            "User": "10001",
+            "Privileged": false,
+            "ReadonlyRootFilesystem": false,
+            "LinuxParameters": {
+              "InitProcessEnabled": true
+            },
+            "StopTimeout": 30,
+            "Environment": [
+              {
+                "Name": "VERIFIAI_ARTIFACT_BUCKET",
+                "Value": {
+                  "Ref": "ArtifactBucket"
+                }
+              },
+              {
+                "Name": "VERIFIAI_CLOUD_ENVIRONMENT",
+                "Value": {
+                  "Ref": "Environment"
+                }
+              },
+              {
+                "Name": "AWS_REGION",
+                "Value": {
+                  "Ref": "AWS::Region"
+                }
+              }
+            ],
+            "Secrets": {
+              "Fn::If": [
+                "HasProviderSecret",
+                [
+                  {
+                    "Name": "VERIFIAI_PROVIDER_API_KEY",
+                    "ValueFrom": {
+                      "Ref": "ProviderSecretArn"
+                    }
+                  }
+                ],
+                []
+              ]
+            },
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "RuntimeLogGroup"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "worker"
+              }
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "project",
+            "Value": "verifiai"
+          },
+          {
+            "Key": "environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          }
+        ]
+      }
+    },
+    "ControlPlaneManagedPolicy": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "Description": "Attach explicitly to the VERIFAI control-plane principal; not attached by this stack.",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "LaunchOneRuntimeTask",
+              "Effect": "Allow",
+              "Action": [
+                "ecs:RunTask"
+              ],
+              "Resource": [
+                {
+                  "Ref": "RuntimeTaskDefinition"
+                }
+              ]
+            },
+            {
+              "Sid": "OperateOwnedClusterTasks",
+              "Effect": "Allow",
+              "Action": [
+                "ecs:DescribeTasks",
+                "ecs:StopTask",
+                "ecs:ListTagsForResource",
+                "ecs:TagResource"
+              ],
+              "Resource": [
+                {
+                  "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${RuntimeCluster}/*"
+                }
+              ]
+            },
+            {
+              "Sid": "PassOnlyRuntimeRoles",
+              "Effect": "Allow",
+              "Action": [
+                "iam:PassRole"
+              ],
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "TaskExecutionRole",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::GetAtt": [
+                    "TaskRole",
+                    "Arn"
+                  ]
+                }
+              ]
+            },
+            {
+              "Sid": "RunLockAndState",
+              "Effect": "Allow",
+              "Action": [
+                "s3:GetObject",
+                "s3:PutObject"
+              ],
+              "Resource": [
+                {
+                  "Fn::Sub": "${ArtifactBucket.Arn}/runs/*"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "ArtifactBucketName": {
+      "Value": {
+        "Ref": "ArtifactBucket"
+      }
+    },
+    "ClusterArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "RuntimeCluster",
+          "Arn"
+        ]
+      }
+    },
+    "TaskDefinitionArn": {
+      "Value": {
+        "Ref": "RuntimeTaskDefinition"
+      }
+    },
+    "LogGroupName": {
+      "Value": {
+        "Ref": "RuntimeLogGroup"
+      }
+    },
+    "ControlPlanePolicyArn": {
+      "Value": {
+        "Ref": "ControlPlaneManagedPolicy"
+      }
+    }
+  }
+}

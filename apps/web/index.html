@@ -825,6 +825,14 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     const stages = Object.entries(run.stages).map(([name, stage]) => `<li>${escapeHtml(name)}: ${escapeHtml(stage.status)}${stage.detail ? ` — ${escapeHtml(stage.detail)}` : ''}</li>`).join('');
     const finding = run.finding;
     const execution = run.execution;
+    const proof = run.proof;
+    const proofMarkup = proof?.artifacts ? `<section id="localProofArtifacts" class="card pad section">
+      <h4>Proof artifacts</h4>
+      <p class="tiny muted">Only executed evidence is downloadable. Missing steps stay labelled Missing.</p>
+      <ul>${proof.artifacts.map(item => item.status === 'Present'
+        ? `<li><a href="/api/local/audits/${encodeURIComponent(run.id)}/artifacts/${encodeURIComponent(item.path)}" target="_blank" rel="noopener">${escapeHtml(item.name)}</a> · <code>${escapeHtml((item.sha256 || '').slice(0,16))}</code></li>`
+        : `<li>${escapeHtml(item.name)} · Missing${item.reason ? ` — ${escapeHtml(item.reason)}` : ''}</li>`).join('')}</ul>
+    </section>` : '';
     host.innerHTML = `<section class="card pad section" data-audit-id="${escapeHtml(run.id)}">
       <h3>${escapeHtml(run.repository?.fullName || 'Public GitHub repository')}</h3>
       <p id="localAuditStatus" class="status ${run.status === 'Running' ? 'running' : run.status === 'Completed' ? 'unknown' : 'failed'}">${escapeHtml(statusText)}</p>
@@ -847,6 +855,7 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
         ${execution.truncated ? '<p>Output capped: showing tail only.</p>' : ''}
         <p>Executed-output SHA-256: <code>${escapeHtml(run.outputHash || '')}</code></p>
       </section>` : ''}
+      ${proofMarkup}
       <p class="tiny muted">A completed limited check is not a full test-suite or security verification. Cleanup is automatic.</p>
     </section>`;
   }

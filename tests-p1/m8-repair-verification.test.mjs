@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,rm,symlink,writeFile,mkdir} from 'node:fs/promises';
+import {runOwnedProcess} from '../services/local-command.mjs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {runRepairVerification} from '../services/local-repair-verification.mjs';
@@ -105,4 +106,25 @@ test('timeout aborts the owned check and waits for termination before cleanup',a
       signal.addEventListener('abort',()=>{clearTimeout(timer);terminated=true;resolve({status:'Incomplete',executed:false,exitCode:null});},{once:true});
     }),timeoutMs:30});
   assert.equal(result.verdict,'Incomplete');assert.equal(terminated,true);assert.equal(result.cleanup.candidateRemoved,true);
+});
+
+
+test('timeout reaps an owned verification process before candidate cleanup returns',async(t)=>{
+  const root=await fixture();t.after(()=>rm(root,{recursive:true,force:true}));
+  const pidFile=join(root,'verify.pid');
+  const result=await runRepairVerification({
+    workspacePath:root,finding:{status:'Confirmed'},
+    patch:{files:[{path:'broken.js',expected:'false',replacement:'true'}]},
+    verify:async({signal,workspacePath})=>{
+      const code=`const fs=require('fs');fs.writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000)`;
+      const owned=await runOwnedProcess(process.execPath,['-e',code],{cwd:workspacePath,timeoutMs:5000,signal});
+      return {status:owned.status,executed:true,exitCode:owned.exitCode,command:'node owned-check',stdout:owned.stdout,stderr:owned.stderr};
+    },
+    timeoutMs:120,
+  });
+  assert.equal(result.verdict,'Incomplete');
+  assert.equal(result.cleanup.candidateRemoved,true);
+  const pid=Number(await readFile(pidFile,'utf8'));
+  assert.ok(Number.isInteger(pid)&&pid>1);
+  assert.throws(()=>process.kill(pid,0),error=>error?.code==='ESRCH');
 });

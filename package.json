@@ -25,7 +25,12 @@
     "external:up": "docker compose -f docker-compose.external.yml up --build",
     "external:down": "docker compose -f docker-compose.external.yml down --remove-orphans",
     "start:external-engines": "node services/external-engines/server.mjs",
-    "runtime:contract": "node --test tests-p1/m11-runtime-contract.test.mjs"
+    "runtime:contract": "node --test tests-p1/m11-runtime-contract.test.mjs",
+    "cloud:preflight": "node scripts/cloud-preflight.mjs",
+    "cloud:test-contract": "node --test tests-p1/m11-runtime-contract.test.mjs tests-p1/m12-cloud-runtime.test.mjs",
+    "cloud:worker:self-check": "node scripts/cloud-worker.mjs --self-check",
+    "cloud:deploy-smoke": "node scripts/cloud-deploy-smoke.mjs",
+    "cloud:teardown": "node scripts/cloud-teardown.mjs"
   },
   "devDependencies": {
     "typescript": "^5.8.3"
@@ -39,6 +44,7 @@
     "@aws-sdk/client-ecr": "^3.0.0",
     "@aws-sdk/client-ecs": "^3.0.0",
     "zod": "^4.1.12",
-    "@aws-sdk/client-lambda": "^3.0.0"
+    "@aws-sdk/client-lambda": "^3.0.0",
+    "@aws-sdk/client-s3": "^3.0.0"
   }
 }

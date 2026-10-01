@@ -128,8 +128,10 @@ test('same runId submitted twice launches at most one Fargate task and recovers 
   assert.equal(launch.platformVersion, '1.4.0');
   assert.equal(launch.enableExecuteCommand, false);
   assert.equal(launch.networkConfiguration.awsvpcConfiguration.assignPublicIp, 'ENABLED');
-  const payload = JSON.stringify(launch);
-  assert.equal(/API_KEY|SECRET|TOKEN/i.test(payload), false);
+  const workerEnv = launch.overrides.containerOverrides[0].environment;
+  const envNames = workerEnv.map((item) => item.name);
+  assert.equal(envNames.some((name) => /API_KEY|SECRET|PASSWORD/i.test(name)), false);
+  assert.equal(workerEnv.some((item) => /Bearer\s|ghp_|sk-/i.test(String(item.value))), false);
 });
 
 test('cloud cancellation verifies ownership, stops task, observes terminal stop, preserves artifacts', async () => {

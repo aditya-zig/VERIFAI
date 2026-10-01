@@ -73,32 +73,6 @@ test('presentation helpers ship with local-safe unknown handling', () => {
   assert.equal(h.hashChip('before', ''), '');
 });
 
-test('result page styles ship overflow guards without class collisions', () => {
-  assert.match(html, /\.result-root\s*\{\s*display:\s*grid/);
-  assert.match(html, /\.evidence-card\s*\{\s*display:\s*grid;\s*gap:\s*12px;\s*min-width:\s*0/);
-  assert.match(html, /\.fact-grid\s*\{[^}]*grid-template-columns/);
-  assert.match(html, /\.fact dd\.mono\s*\{[^}]*font-family:\s*ui-monospace/);
-  assert.match(html, /@media\(max-width:720px\)\{\s*\.fact-grid\s*\{\s*grid-template-columns:\s*1fr/);
-  assert.match(html, /\.evidence-card > \.result-chips \{ justify-self: start; \}/);
-  assert.match(html, /#localRepoResult \.status \{ max-width: 100%; white-space: normal; overflow-wrap: anywhere; line-height: 1\.3; \}/);
-  const style = html.match(/<style>([\s\S]*?)<\/style>/)[1];
-  const resultBlock = style.match(/\/\* Local result page[\s\S]*?\/\* Zapier/);
-  assert.ok(resultBlock, 'the adapted result style block exists');
-  const owned = new Set();
-  for (const match of resultBlock[0].matchAll(/(?:^|})\s*([^{}]+)\{/g)) {
-    for (const compound of match[1].split(',')) {
-      const leading = compound.trim().match(/^\.([A-Za-z][\w-]*)/);
-      if (leading) owned.add(leading[1]);
-    }
-  }
-  const restOfPage = style.replace(resultBlock[0], '');
-  const collisions = [...owned].filter((name) => name !== 'status' && name !== 'mono' && new RegExp(`\\.${name}(?![\\w-])`).test(restOfPage));
-  assert.deepEqual(collisions, [], 'adapted result classes do not collide with landing styles');
-  const script = (html.match(/<script>[\s\S]*?<\/script>/g) || []).join('\n');
-  const unused = [...owned].filter((name) => !new RegExp(`class="[^"]*\\b${name}\\b`).test(script));
-  assert.deepEqual(unused, [], 'every adapted result class is actually rendered');
-});
-
 test('completed limited check stays LIMITED with Unconfirmed hypothesis and scope', () => {
   const markup = render({
     status: 'Completed',

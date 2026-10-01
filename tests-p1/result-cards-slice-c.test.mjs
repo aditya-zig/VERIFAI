@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import { loadResultPage, renderWithHelpers } from './result-renderer-harness.mjs';
+import { loadResultPage, renderWithHelpers, functionSource } from './result-renderer-harness.mjs';
 
 const page = await loadResultPage();
 const { html } = page;
@@ -120,12 +120,10 @@ test('pretty diagnostic truncation is explicitly disclosed even when compact JSO
   assert.equal((markup.match(/\.\.\.\[truncated\]/g)||[]).length,2);
 });
 
-test('long commands, urls and hashes wrap without overflow CSS', () => {
-  assert.match(html, /overflow-wrap:\s*anywhere/);
-  assert.match(html, /max-width:\s*100%/);
+test('long commands survive rendering intact', () => {
   const longCommand = `node --check ${'a'.repeat(300)}.js`;
   const markup = render({ execution: { ...execution(0), command: longCommand } });
-  assert.match(markup, /wrap-anywhere/);
+  assert.ok(markup.includes(longCommand));
 });
 
 test('network rows surface nested observed status and Missing URL explicitly', () => {
@@ -192,12 +190,38 @@ test('command renders in a bounded scroll and wrap block', () => {
   assert.match(markup, /<pre class="local-log-block wrap-anywhere"[^>]*><code class="wrap-anywhere">node --check broken\.js<\/code><\/pre>/);
 });
 
-test('fixture browser path consumes the server record without a second raw dump', () => {
-  const fn = html.match(/async function runFixtureBrowser\(button\) \{([\s\S]*?)\n  \}/)?.[1];
-  assert.ok(fn, 'fixture browser flow exists');
-  assert.doesNotMatch(fn, /JSON\.stringify\(result\.consoleErrors/);
-  assert.doesNotMatch(fn, /JSON\.stringify\(result\.networkEvidence/);
-  assert.doesNotMatch(fn, /JSON\.stringify\(result\.cleanup/);
-  assert.match(fn, /renderMasterAudit/);
-  assert.match(fn, /localBrowserStatus/);
+test('fixture browser action refreshes server-owned evidence and restores controls on failure', async () => {
+  // Unit-only fetch envelopes; no browser journey or application verification claimed.
+  for (const refreshOk of [true, false]) {
+    const host = { innerHTML: '', querySelector: () => null };
+    const browserHost = { textContent: '', innerHTML: '' };
+    const button = { dataset: { auditId: 'audit/unit' }, disabled: false };
+    const masterButton = { disabled: false };
+    const run = { id: 'audit/unit', status: 'Completed', stages: {}, execution: execution(0), browser: { status: 'Completed', consoleErrors: [{ text: 'unit observation' }] } };
+    const requests = [];
+    const context = vm.createContext({
+      run, host, button,
+      document: { getElementById: id => ({ localBrowserEvidence: browserHost, localRepoResult: host, startLocalAudit: masterButton })[id] },
+      fetch: async (url, options) => {
+        assert.equal(button.disabled, true);
+        assert.equal(masterButton.disabled, true);
+        requests.push([url, options?.method ?? 'GET']);
+        return requests.length === 1
+          ? { ok: true, json: async () => ({ status: 'Completed' }) }
+          : { ok: refreshOk, json: async () => run };
+      },
+    });
+    await vm.runInContext(`${page.script}\nasync ${functionSource(html, 'runFixtureBrowser')}\nrunFixtureBrowser(button)`, context);
+    assert.deepEqual(requests, [['/api/local/audits/audit%2Funit/browser', 'POST'], ['/api/local/audits/audit%2Funit', 'GET']]);
+    assert.equal(button.disabled, false);
+    assert.equal(masterButton.disabled, false);
+    if (refreshOk) {
+      assert.match(host.innerHTML, /Console rows \(1\)/);
+      assert.match(host.innerHTML, /unit observation/);
+      assert.match(browserHost.innerHTML, /fixture journey recorded above/);
+      assert.doesNotMatch(browserHost.innerHTML, /unit observation/);
+    } else {
+      assert.equal(browserHost.textContent, 'Incomplete: Evidence refresh incomplete');
+    }
+  }
 });

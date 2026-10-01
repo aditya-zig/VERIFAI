@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { LocalRepositoryService } from '../services/local-repository.mjs';
 import { abortActiveAudit } from '../services/local-audit.mjs';
 import { MasterAuditService } from '../services/master-audit.mjs';
+import { LocalRepairService } from '../services/local-repair-service.mjs';
+import { LocalArtifactService } from '../services/local-artifact-service.mjs';
 
 const root = fileURLToPath(new URL('../apps/web/', import.meta.url));
 const types = {
@@ -37,6 +39,8 @@ async function readJson(req) {
 
 export function createDemoServer({ deepAudit, repositories = new LocalRepositoryService(), apiOnly = false, apiUrl, env = process.env } = {}) {
   const audits = new MasterAuditService(repositories, { env });
+  const repairs = new LocalRepairService(repositories, audits, { env });
+  const artifacts = new LocalArtifactService({ env });
   const getDeepAudit = async () => {
     if (deepAudit) return deepAudit;
     const { DeepAuditService } = await import('../services/deep-audit/index.mjs');
@@ -65,8 +69,42 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
     }
     const masterRoute = url.pathname.match(/^\/api\/local\/audits\/([^/]+)$/);
     if (req.method === 'GET' && masterRoute) {
-      const run = audits.get(decodeURIComponent(masterRoute[1]));
-      return run ? sendJson(res, 200, run) : sendJson(res, 404, { status: 'Incomplete', error: 'audit not found' });
+      const id = decodeURIComponent(masterRoute[1]);
+      const run = audits.get(id);
+      if (!run) return sendJson(res, 404, { status: 'Incomplete', error: 'audit not found' });
+      if (run.status !== 'Running') {
+        try { return sendJson(res, 200, { ...run, proof: await artifacts.refresh(run, { repair: repairs.get(id) }) }); }
+        catch (error) { return sendJson(res, 200, { ...run, proof: { status: 'Incomplete', error: String(error?.message ?? error) } }); }
+      }
+      return sendJson(res, 200, run);
+    }
+
+    const repairRoute = url.pathname.match(/^\/api\/local\/audits\/([^/]+)\/repair$/);
+    if (req.method === 'POST' && repairRoute) {
+      try {
+        const body = await readJson(req);
+        const id = decodeURIComponent(repairRoute[1]);
+        const repair = await repairs.repair(id, body.patch);
+        const run = audits.get(id);
+        const proof = run && run.status !== 'Running' ? await artifacts.refresh(run, { repair }) : undefined;
+        return sendJson(res, 200, { ...repair, proof });
+      } catch (error) {
+        return sendJson(res, error.statusCode ?? 409, { status: 'Incomplete', error: String(error?.message ?? error) });
+      }
+    }
+    if (req.method === 'GET' && repairRoute) {
+      const repair = repairs.get(decodeURIComponent(repairRoute[1]));
+      return repair ? sendJson(res, 200, repair) : sendJson(res, 404, { status: 'Incomplete', error: 'repair not found' });
+    }
+
+    const artifactRoute = url.pathname.match(/^\/api\/local\/audits\/([^/]+)\/artifacts$/);
+    if (req.method === 'GET' && artifactRoute) {
+      const id = decodeURIComponent(artifactRoute[1]);
+      const run = audits.get(id);
+      if (!run) return sendJson(res, 404, { status: 'Incomplete', error: 'audit not found' });
+      if (run.status === 'Running') return sendJson(res, 409, { status: 'Incomplete', error: 'audit still running' });
+      try { return sendJson(res, 200, await artifacts.refresh(run, { repair: repairs.get(id) })); }
+      catch (error) { return sendJson(res, 500, { status: 'Incomplete', error: String(error?.message ?? error) }); }
     }
 
     if (req.method === 'POST' && url.pathname === '/api/local/repositories') {

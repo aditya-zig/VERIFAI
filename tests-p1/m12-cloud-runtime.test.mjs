@@ -4,11 +4,14 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {dirname, resolve} from 'node:path';
+import {mkdtemp, rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
 import {AwsCloudControlPlane, assertOwnedCloudTask} from '../services/cloud/aws-control-plane.mjs';
 import {AwsS3RunStore} from '../services/cloud/s3-run-store.mjs';
 import {checkCloudBudget} from '../services/cloud/budget-guard.mjs';
 import {cloudArtifactKey, cloudControlKeys} from '../services/cloud/artifact-contract.mjs';
 import {CloudRuntime} from '../services/runtime/cloud-runtime.mjs';
+import {createArtifactBundle} from '../services/proof-artifacts.mjs';
 
 const execFileAsync = promisify(execFile);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -209,6 +212,42 @@ test('cloud refresh preserves worker terminal states including provider, timeout
     assert.equal(state.status, 'Incomplete');
     assert.equal(state.failureCode, fixture.failureCode);
     assert.equal(state.failedStage, fixture.failedStage);
+  }
+});
+
+test('worker crash after partial artifact preserves known refs and remains Incomplete', async () => {
+  const {store, plane} = control();
+  await plane.start(job());
+  const state = await store.getState('cloud-run-1');
+  state.artifactRefs = ['runs/cloud-run-1/execution/execution.json'];
+  await store.putState('cloud-run-1', state);
+  const terminal = await plane.refresh('cloud-run-1');
+  assert.equal(terminal.status, 'Incomplete');
+  assert.equal(terminal.failureCode, 'WorkerStoppedWithoutResult');
+  assert.deepEqual(terminal.artifactRefs, ['runs/cloud-run-1/execution/execution.json']);
+});
+
+test('cloud artifact layout reuses M9 manifest schema and only adds run prefix', async (t) => {
+  const root = await mkdtemp(resolve(tmpdir(), 'verifiai-cloud-artifact-test-'));
+  t.after(() => rm(root, {recursive: true, force: true}));
+  const bundle = await createArtifactBundle({
+    rootDir: root,
+    runId: 'cloud-artifact-run',
+    data: {
+      run: {id: 'cloud-artifact-run', status: 'Completed'},
+      repository: REPO,
+      finding: {title: 'x', severity: 'info', description: 'x', evidence: {file: 'README'}},
+      execution: {status: 'Completed', exitCode: 0, command: 'git ls-files', stdout: 'README', stderr: ''},
+      cleanup: {status: 'Completed', repositoryRemoved: true},
+      model: {provider: 'fixture', model: 'fixture-model'},
+    },
+  });
+  assert.equal(bundle.manifest.version, 2);
+  assert.equal(bundle.manifest.runId, 'cloud-artifact-run');
+  const present = bundle.manifest.artifacts.filter((item) => item.status === 'Present');
+  assert.ok(present.some((item) => item.path === 'execution.json'));
+  for (const item of present) {
+    assert.ok(cloudArtifactKey(bundle.runId, item.path).startsWith('runs/cloud-artifact-run/'));
   }
 });
 

@@ -1,0 +1,24 @@
+name: Runtime contract
+
+on:
+  push:
+    branches:
+      - 'cloud/m11-runtime-parity-prep'
+      - 'cloud/m12-aws-execution-prep'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+      - run: npm run runtime:contract
+      - run: npm run typecheck

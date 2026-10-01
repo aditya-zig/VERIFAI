@@ -1,5 +1,6 @@
 import {mkdtemp, readdir, readFile, rm} from 'node:fs/promises';
 import {join, relative, resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {tmpdir} from 'node:os';
 import {S3Client, PutObjectCommand} from '@aws-sdk/client-s3';
 import {runRuntimeAudit} from '../services/runtime/engine.mjs';
@@ -161,7 +162,7 @@ if (process.argv.includes('--self-check')) {
     node: process.version,
     dockerSocket: false,
   }));
-} else if (import.meta.url === new URL(process.argv[1], 'file:').href) {
+} else if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const result = await runCloudWorker();
   console.log(JSON.stringify({
     runId: result.id,

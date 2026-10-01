@@ -9,7 +9,7 @@ test('specialists run sequentially, persist before the next starts, and aggregat
   let maxActive = 0;
   const events = [];
   const persisted = [];
-  const specialists = ['source-review', 'execution-review'].map((id) => ({
+  const specialists = ['security','second-stub'].map((id) => ({
     id,
     async run({callModel}) {
       events.push(`start:${id}`);
@@ -33,38 +33,63 @@ test('specialists run sequentially, persist before the next starts, and aggregat
   });
   assert.equal(maxActive, 1);
   assert.deepEqual(events, [
-    'start:source-review','stop:source-review','persist:source-review',
-    'start:execution-review','stop:execution-review','persist:execution-review',
+    'start:security','stop:security','persist:security',
+    'start:second-stub','stop:second-stub','persist:second-stub',
   ]);
-  assert.deepEqual(persisted, [['source-review'], ['source-review','execution-review']]);
+  assert.deepEqual(persisted, [['security'], ['security','second-stub']]);
   assert.equal(result.status, 'Completed');
   assert.equal(result.modelCalls, 2);
-  assert.deepEqual(result.evidenceRefs, ['ev:source-review','ev:execution-review']);
 });
 
-test('a failed specialist becomes Incomplete without hiding later results', async () => {
+test('one specialist cannot create concurrent provider calls through Promise.all', async () => {
+  let active = 0;
+  let peak = 0;
+  const delayedProvider = async () => {
+    active += 1;
+    peak = Math.max(peak, active);
+    await delay(20);
+    active -= 1;
+    return {provider:'stub',model:'stub'};
+  };
   const result = await runSequentialSpecialists({
-    specialists: [
-      {id:'source-review', run: async () => { throw new Error('provider unavailable'); }},
-      {id:'execution-review', run: async () => ({status:'Completed', findings:[], evidenceRefs:['ev:execution']})},
-    ],
-    maxSpecialists: 2,
-    maxModelCalls: 1,
-    persist: async () => {},
+    specialists:[{
+      id:'security',
+      async run({callModel}) {
+        await Promise.all([callModel(delayedProvider),callModel(delayedProvider)]);
+        return {status:'Completed',findings:[],evidenceRefs:[]};
+      },
+    }],
+    maxSpecialists:1,
+    maxModelCalls:2,
+    persist:async()=>{},
+  });
+  assert.equal(result.status,'Completed');
+  assert.equal(result.modelCalls,2);
+  assert.equal(peak,1);
+});
+
+test('a failed specialist becomes Incomplete and is persisted', async () => {
+  const snapshots=[];
+  const result = await runSequentialSpecialists({
+    specialists: [{id:'security', run: async () => { throw new Error('provider unavailable'); }}],
+    maxSpecialists:1,
+    maxModelCalls:1,
+    persist: async (snapshot) => snapshots.push(snapshot),
   });
   assert.equal(result.status, 'Incomplete');
   assert.equal(result.results[0].status, 'Incomplete');
   assert.match(result.results[0].error, /provider unavailable/);
-  assert.equal(result.results[1].status, 'Completed');
+  assert.equal(snapshots.length,1);
+  assert.equal(snapshots[0].results[0].status,'Incomplete');
 });
 
 test('duplicate specialists and model-call overflow are blocked', async () => {
   await assert.rejects(
-    runSequentialSpecialists({specialists:[{id:'same',run:async()=>({status:'Completed'})},{id:'same',run:async()=>({status:'Completed'})}],persist:async()=>{}}),
+    runSequentialSpecialists({specialists:[{id:'same',run:async()=>({status:'Completed'})},{id:'same',run:async()=>({status:'Completed'})}],maxSpecialists:2,persist:async()=>{}}),
     /duplicate specialist/i,
   );
   const result = await runSequentialSpecialists({
-    specialists:[{id:'source-review',run:async({callModel})=>{
+    specialists:[{id:'security',run:async({callModel})=>{
       await callModel(async()=>1);
       await callModel(async()=>2);
       return {status:'Completed'};

@@ -42,6 +42,6 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 printf '%s\n' "watcher: running"
 while true; do
   "$script_dir/reconcile-local.sh" >/dev/null 2>&1 || true
-  sleep "$interval" &
+  sleep "$interval" 9>&- &
   wait $!
 done

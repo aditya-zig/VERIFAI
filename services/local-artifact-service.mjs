@@ -1,4 +1,6 @@
-import {join,resolve} from 'node:path';
+import {join,resolve,sep} from 'node:path';
+import {open} from 'node:fs/promises';
+import {constants} from 'node:fs';
 import {createArtifactBundle} from './proof-artifacts.mjs';
 
 function secretsFromEnv(env){
@@ -22,6 +24,21 @@ export class LocalArtifactService{
   }
   setScreenshotResolver(resolver){if(resolver!==undefined&&typeof resolver!=='function')throw new Error('screenshot resolver must be a function');this.screenshotResolver=resolver;}
   get(runId){const value=this.#records.get(runId);return value?JSON.parse(JSON.stringify(value)):undefined;}
+  async read(runId,artifactPath){
+    const record=this.#records.get(runId);
+    if(!record)throw Object.assign(new Error('proof artifact bundle not found'),{statusCode:404});
+    const item=record.artifacts.find(x=>x.status==='Present'&&x.path===artifactPath);
+    if(!item)throw Object.assign(new Error('proof artifact not found'),{statusCode:404});
+    const base=resolve(this.root,runId),target=resolve(base,artifactPath);
+    if(target!==base&&!target.startsWith(base+sep))throw Object.assign(new Error('invalid artifact path'),{statusCode:400});
+    let handle;
+    try{
+      handle=await open(target,constants.O_RDONLY|constants.O_NOFOLLOW);
+      const stat=await handle.stat();
+      if(!stat.isFile()||stat.uid!==process.getuid()||stat.size>50*1024*1024)throw new Error('artifact ownership/size check failed');
+      return {item:{...item},buffer:await handle.readFile()};
+    }finally{await handle?.close();}
+  }
   async refresh(audit,{repair,browser}={}){
     if(!audit?.id||audit.status==='Running')throw new Error('terminal audit is required for proof artifacts');
     const bundle=await createArtifactBundle({

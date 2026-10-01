@@ -7,6 +7,9 @@ import { LocalRepositoryService } from '../services/local-repository.mjs';
 import { abortActiveAudit, acquireLocalAudit } from '../services/local-audit.mjs';
 import { MasterAuditService } from '../services/master-audit.mjs';
 import { runBrowserJourney, MAX_SCREENSHOT_BYTES, screenshotRoot } from '../services/local-browser.mjs';
+import { LocalRepairService } from '../services/local-repair-service.mjs';
+import { LocalArtifactService } from '../services/local-artifact-service.mjs';
+import { LocalPrService } from '../services/local-pr-service.mjs';
 
 const root = fileURLToPath(new URL('../apps/web/', import.meta.url));
 const types = {
@@ -39,9 +42,26 @@ async function readJson(req) {
 
 export function createDemoServer({ deepAudit, repositories = new LocalRepositoryService(), apiOnly = false, apiUrl, env = process.env } = {}) {
   const audits = new MasterAuditService(repositories, { env });
+  const repairs = new LocalRepairService(repositories, audits, { env });
+  const artifacts = new LocalArtifactService({ env });
+  const pullRequests = new LocalPrService(audits, repairs, artifacts, { env });
   const browserResults = new Map();
   const browserImages = new Map();
   const browserTasks = new Set();
+  artifacts.setScreenshotResolver(async (ref) => {
+    const match = typeof ref === 'string' ? ref.match(/^\/api\/local\/audits\/([^/]+)\/browser\/screenshot$/) : null;
+    if (!match) return undefined;
+    const imagePath = browserImages.get(decodeURIComponent(match[1]));
+    if (!imagePath) return undefined;
+    let handle;
+    try {
+      handle = await open(imagePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const stat = await handle.stat();
+      if (!stat.isFile() || stat.uid !== process.getuid() || stat.size > MAX_SCREENSHOT_BYTES) return undefined;
+      return await handle.readFile();
+    } catch { return undefined; }
+    finally { await handle?.close(); }
+  });
   let browserController;
   const getDeepAudit = async () => {
     if (deepAudit) return deepAudit;
@@ -126,7 +146,12 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
             browserImages.delete(oldId);
             browserResults.delete(oldId);
           }
-          return sendJson(res, 200, result);
+          let proof;
+          try {
+            const currentAudit = audits.get(id);
+            if (currentAudit?.status !== 'Running') proof = await artifacts.refresh(currentAudit, { repair: repairs.get(id), browser: result });
+          } catch (error) { proof = { status: 'Incomplete', error: String(error?.message ?? error) }; }
+          return sendJson(res, 200, { ...result, proof });
         } catch (error) { return sendJson(res, error.statusCode ?? 500, { status: 'Incomplete', error: String(error.message) }); }
         finally { if (lease) { browserController = undefined; lease.release(); } }
       }
@@ -136,8 +161,52 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
     if (req.method === 'GET' && masterRoute) {
       const id = decodeURIComponent(masterRoute[1]);
       const run = audits.get(id);
-      if (run && browserResults.has(id)) run.browser = browserResults.get(id);
-      return run ? sendJson(res, 200, run) : sendJson(res, 404, { status: 'Incomplete', error: 'audit not found' });
+      if (!run) return sendJson(res, 404, { status: 'Incomplete', error: 'audit not found' });
+      const browser = browserResults.get(id);
+      if (browser) run.browser = browser;
+      if (run.status !== 'Running') {
+        try { run.proof = await artifacts.refresh(run, { repair: repairs.get(id), browser }); }
+        catch (error) { run.proof = { status: 'Incomplete', error: String(error?.message ?? error) }; }
+      }
+      return sendJson(res, 200, run);
+    }
+
+    const repairRoute = url.pathname.match(/^\/api\/local\/audits\/([^/]+)\/repair$/);
+    if (req.method === 'POST' && repairRoute) {
+      try {
+        const body = await readJson(req);
+        const id = decodeURIComponent(repairRoute[1]);
+        const repair = await repairs.repair(id, body.patch);
+        const run = audits.get(id);
+        const proof = run && run.status !== 'Running' ? await artifacts.refresh(run, { repair, browser: browserResults.get(id) }) : undefined;
+        return sendJson(res, 200, { ...repair, proof });
+      } catch (error) {
+        return sendJson(res, error.statusCode ?? 409, { status: 'Incomplete', error: String(error?.message ?? error) });
+      }
+    }
+    if (req.method === 'GET' && repairRoute) {
+      const repair = repairs.get(decodeURIComponent(repairRoute[1]));
+      return repair ? sendJson(res, 200, repair) : sendJson(res, 404, { status: 'Incomplete', error: 'repair not found' });
+    }
+
+    const artifactRoute = url.pathname.match(/^\/api\/local\/audits\/([^/]+)\/artifacts$/);
+    if (req.method === 'GET' && artifactRoute) {
+      const id = decodeURIComponent(artifactRoute[1]);
+      const run = audits.get(id);
+      if (!run) return sendJson(res, 404, { status: 'Incomplete', error: 'audit not found' });
+      if (run.status === 'Running') return sendJson(res, 409, { status: 'Incomplete', error: 'audit still running' });
+      try { return sendJson(res, 200, await artifacts.refresh(run, { repair: repairs.get(id), browser: browserResults.get(id) })); }
+      catch (error) { return sendJson(res, 500, { status: 'Incomplete', error: String(error?.message ?? error) }); }
+    }
+
+    const localPrRoute = url.pathname.match(/^\/api\/local\/audits\/([^/]+)\/pr$/);
+    if (req.method === 'POST' && localPrRoute) {
+      try { return sendJson(res, 201, await pullRequests.create(decodeURIComponent(localPrRoute[1]))); }
+      catch (error) { return sendJson(res, error.statusCode ?? 409, { status: 'Incomplete', error: String(error?.message ?? error) }); }
+    }
+    if (req.method === 'GET' && localPrRoute) {
+      const result = pullRequests.get(decodeURIComponent(localPrRoute[1]));
+      return result ? sendJson(res, 200, result) : sendJson(res, 404, { status: 'Incomplete', error: 'PR not created' });
     }
 
     if (req.method === 'POST' && url.pathname === '/api/local/repositories') {

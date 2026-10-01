@@ -4,6 +4,7 @@ import {join,resolve} from 'node:path';
 import {selectCommand} from './local-command.mjs';
 import {executeSandbox} from './local-sandbox.mjs';
 import {analyzeRepository} from './local-analysis.mjs';
+import {composeFinding} from './finding-evidence.mjs';
 import {acquireLocalAudit} from './local-audit.mjs';
 import {createSecuritySpecialist,runSequentialSpecialists} from './local-specialists.mjs';
 import {reviewSecurityRepository} from './local-security-specialist.mjs';
@@ -94,10 +95,24 @@ export class MasterAuditService {
       if(run.execution.status==='Incomplete')throw new Error(run.execution.timedOut?'Command timed out':'Command interrupted');
       stage('finding','Running');
       const e=run.execution;
-      run.finding={...analysis.finding,
-        description:`${analysis.finding.description}\n\nExecuted evidence: ${e.command}\nExit: ${e.exitCode}\nstdout: ${e.stdout || '(empty)'}\nstderr: ${e.stderr || '(empty)'}`,
-        evidence:{...analysis.finding.evidence,execution:e}};
-      stage('finding','Completed','API finding attached to server-owned executed evidence');
+      const composed=composeFinding({
+        modelFinding:analysis.finding,
+        execution:e,
+        selectedCommand:run.selectedCommand,
+        repository:record.repository,
+        auditId:run.id,
+      });
+      run.finding={
+        title:composed.title,
+        severity:composed.severity,
+        description:composed.description,
+        evidence:{file:analysis.finding.evidence?.file,execution:e,selectedCommand:run.selectedCommand,provenance:composed.evidence.provenance},
+        hypothesis:composed.hypothesis,
+        executedCheck:composed.executedCheck,
+        assessment:composed.assessment,
+        verifiedTarget:composed.verifiedTarget,
+      };
+      stage('finding','Completed','Model hypothesis kept separate from server-owned executed evidence');
       terminalStatus=e.exitCode===0?'Completed':'Incomplete';
       if(e.exitCode!==0)run.failedStage='execution';
 

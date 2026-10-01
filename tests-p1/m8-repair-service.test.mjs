@@ -13,7 +13,7 @@ test('repair service rejects audits without executed failure before cloning',asy
 
 test('repair service pins exact commit and cleans reacquired clone',async()=>{
   let cleaned=0,runInput;
-  const audit={id:'a',repository:{fullName:'owner/repo',commit:'abc123'},execution:{status:'Failed',exitCode:1},selectedCommand:'node --check broken.js'};
+  const audit={id:'a',repository:{fullName:'owner/repo',commit:'abc123'},execution:{status:'Failed',exitCode:1,command:'node --check broken.js',sandbox:{started:true,name:'test',removed:true}},selectedCommand:'node --check broken.js'};
   const record={id:'r',repository:{fullName:'owner/repo',commit:'abc123'},clone:{workspacePath:'/tmp/fake'},files:{items:['broken.js']}};
   const repos={async clone(){return record;},async cleanup(){cleaned++;}};
   const service=new LocalRepairService(repos,{get:()=>audit},{
@@ -30,7 +30,7 @@ test('repair service pins exact commit and cleans reacquired clone',async()=>{
 
 test('repair service rejects changed remote HEAD and cleans clone',async()=>{
   let cleaned=0;
-  const audit={repository:{fullName:'owner/repo',commit:'old'},execution:{status:'Failed',exitCode:1},selectedCommand:'node --check broken.js'};
+  const audit={repository:{fullName:'owner/repo',commit:'old'},execution:{status:'Failed',exitCode:1,command:'node --check broken.js',sandbox:{started:true,name:'test',removed:true}},selectedCommand:'node --check broken.js'};
   const repos={async clone(){return {id:'r',repository:{fullName:'owner/repo',commit:'new'},clone:{workspacePath:'/tmp/fake'},files:{items:['broken.js']}};},async cleanup(){cleaned++;}};
   const service=new LocalRepairService(repos,{get:()=>audit});
   await assert.rejects(service.repair('a',{files:[]}),/HEAD changed/i);

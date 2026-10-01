@@ -69,12 +69,25 @@ export function verifyPrApproval({token,secret,runId,repository,baseBranch='main
   return current;
 }
 function evidenceLine(v){if(!v||typeof v!=='object')return 'Missing';return clip(v.status,80)+' · exit '+String(v.exitCode)+(v.stdout?'\nstdout: '+clip(v.stdout,1200):'')+(v.stderr?'\nstderr: '+clip(v.stderr,1200):'');}
+function verifiedTargetLabel({finding,repair}={}){
+  return repair?.verifiedTarget?.command || finding?.verifiedTarget?.command || repair?.before?.command || finding?.executedCheck?.command || repair?.selectedCommand || '(bounded command)';
+}
+function modelHypothesisBlock({finding,repair}={}){
+  const h=repair?.modelHypothesis||finding?.modelHypothesis||finding?.hypothesis;
+  const title=h?.title||finding?.title||'(model hypothesis)';
+  const desc=h?.description||finding?.description||'';
+  return 'Model hypothesis (Unconfirmed, not verification): '+clip(title,300)+'\n\n'+clip(desc,1500);
+}
 function buildBody({finding,repair,proof}){
-  const regs=repair.regressions.map((x,i)=>'- Regression '+(i+1)+': exit '+x.exitCode).join('\n')||'- No regressions configured.';
+  const regs=repair.regressions.map((x,i)=>'- Regression '+(i+1)+' (SAME-COMMAND REPLAY): exit '+x.exitCode).join('\n')||'- No regressions configured.';
   const refs=proof.artifacts.filter(x=>x.status==='Present').map(x=>'- '+x.path+' · '+x.sha256).join('\n');
-  return '## Problem\n'+clip(finding?.title||'Verified VERIFAI finding',300)+'\n\n'+clip(finding?.description||'',2500)+
+  const target=verifiedTargetLabel({finding,repair});
+  const targetExit=repair?.verifiedTarget?.exitCode ?? repair?.before?.exitCode;
+  return '## Verified target (executed command failure)\n'+clip(target,300)+' · exit '+String(targetExit)+
+    '\n\n## '+modelHypothesisBlock({finding,repair})+
     '\n\n## Original failure\n'+evidenceLine(repair.before)+'\n\n## After repair\n'+evidenceLine(repair.after)+
-    '\n\n## Regression result\n'+regs+'\n\n## Proof manifest\n- '+proof.manifest.id+' · '+proof.manifest.sha256+
+    '\n\n## Regression result\n'+regs+'\nSame-command replay only; not independent regression breadth.'+
+    '\n\n## Proof manifest\n- '+proof.manifest.id+' · '+proof.manifest.sha256+
     '\n\n## Proof artifacts\n'+refs+'\n\n## Review gate\nHuman approval was bound to this exact verified repair and proof manifest. Merge remains manual.\n';
 }
 
@@ -87,13 +100,14 @@ export async function createVerifiedRepairPullRequest({
   const branch=safeBranch(runId);
   await transport.verifyRemoteBase({repository,baseBranch,baseCommitSha:repair.verifiedBaseCommitSha,changedFiles:repair.changedFiles});
   await transport.createBranch({repository,baseBranch,branch,expectedBaseSha:repair.verifiedBaseCommitSha});
+  const verifiedLabel=verifiedTargetLabel({finding,repair});
   const committed=await transport.commitVerifiedPatch({
     repository,branch,baseCommitSha:repair.verifiedBaseCommitSha,patch:repair.patch,changedFiles:repair.changedFiles,
-    commitMessage:'VERIFAI verified repair: '+clip(finding?.title||runId,120),
+    commitMessage:'VERIFAI verified repair: '+clip(verifiedLabel,120),
   });
   if(!committed?.commitSha)throw new Error('GitHub transport did not return commitSha');
   await transport.pushBranch({repository,branch,commitSha:committed.commitSha});
-  const pullRequest=await transport.openPullRequest({repository,baseBranch,headBranch:branch,title:'VERIFAI repair: '+clip(finding?.title||runId,120),body:buildBody({finding,repair,proof})});
+  const pullRequest=await transport.openPullRequest({repository,baseBranch,headBranch:branch,title:'VERIFAI repair: '+clip(verifiedLabel,120),body:buildBody({finding,repair,proof})});
   if(!pullRequest)throw new Error('GitHub transport did not return a pull request');
   return {branch,commitSha:committed.commitSha,pullRequest};
 }

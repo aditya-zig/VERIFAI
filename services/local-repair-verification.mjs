@@ -109,7 +109,14 @@ export async function runRepairVerification({workspacePath,finding,patch,verify,
   const result={verdict:'Incomplete',regressions:[],cleanup:{candidateRemoved:false},originalUnchanged:false};
   try{
     if(!workspacePath||typeof workspacePath!=='string')throw new Error('workspacePath is required');
-    if(!(finding?.status==='Confirmed'||finding?.findingState==='Confirmed'))throw new Error('Verified failure required before repair');
+    const legacyConfirmed=finding?.status==='Confirmed'||finding?.findingState==='Confirmed';
+    const target=finding?.verifiedTarget;
+    const targetFailure=target&&typeof target==='object'
+      &&target.status==='Failed'
+      &&Number.isInteger(target.exitCode)&&target.exitCode!==0
+      &&(target.executed!==false&&target.sandboxStarted!==false)
+      &&typeof target.command==='string'&&target.command.length>0;
+    if(!legacyConfirmed&&!targetFailure)throw new Error('Verified executed command failure required before repair (model hypothesis stays Unconfirmed)');
     if(!Number.isInteger(timeoutMs)||timeoutMs<10||timeoutMs>60000)throw new Error('timeoutMs must be between 10 and 60000');
     if(!Array.isArray(regressions)||regressions.length>8||regressions.some(x=>typeof x!=='function'))throw new Error('regressions must contain at most 8 checks');
     const normalizedPatch=assertPatch(patch);

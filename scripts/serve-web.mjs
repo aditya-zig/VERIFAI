@@ -7,6 +7,7 @@ import { LocalRepositoryService } from '../services/local-repository.mjs';
 import { abortActiveAudit, acquireLocalAudit } from '../services/local-audit.mjs';
 import { MasterAuditService } from '../services/master-audit.mjs';
 import { runBrowserJourney, MAX_SCREENSHOT_BYTES, screenshotRoot } from '../services/local-browser.mjs';
+import { LocalRepairService } from '../services/local-repair-service.mjs';
 
 const root = fileURLToPath(new URL('../apps/web/', import.meta.url));
 const types = {
@@ -43,6 +44,7 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
   const browserImages = new Map();
   const browserTasks = new Set();
   let browserController;
+  const repairs = new LocalRepairService(repositories, audits, { env });
   const getDeepAudit = async () => {
     if (deepAudit) return deepAudit;
     const { DeepAuditService } = await import('../services/deep-audit/index.mjs');
@@ -138,6 +140,21 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
       const run = audits.get(id);
       if (run && browserResults.has(id)) run.browser = browserResults.get(id);
       return run ? sendJson(res, 200, run) : sendJson(res, 404, { status: 'Incomplete', error: 'audit not found' });
+    }
+
+    const repairRoute = url.pathname.match(/^\/api\/local\/audits\/([^/]+)\/repair$/);
+    if (req.method === 'POST' && repairRoute) {
+      try {
+        const body = await readJson(req);
+        const repair = await repairs.repair(decodeURIComponent(repairRoute[1]), body.patch);
+        return sendJson(res, 200, repair);
+      } catch (error) {
+        return sendJson(res, error.statusCode ?? 409, { status: 'Incomplete', error: String(error?.message ?? error) });
+      }
+    }
+    if (req.method === 'GET' && repairRoute) {
+      const repair = repairs.get(decodeURIComponent(repairRoute[1]));
+      return repair ? sendJson(res, 200, repair) : sendJson(res, 404, { status: 'Incomplete', error: 'repair not found' });
     }
 
     if (req.method === 'POST' && url.pathname === '/api/local/repositories') {

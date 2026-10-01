@@ -1,0 +1,61 @@
+name: Cloud static checks
+
+on:
+  push:
+    branches:
+      - 'cloud/m12-aws-execution-prep'
+  pull_request:
+    paths:
+      - 'services/cloud/**'
+      - 'services/runtime/**'
+      - 'scripts/cloud-*.mjs'
+      - 'infra/aws/runtime-*'
+      - 'docs/cloud-runtime.md'
+      - 'tests-p1/m11-runtime-contract.test.mjs'
+      - 'tests-p1/m12-cloud-runtime.test.mjs'
+      - 'package.json'
+      - '.github/workflows/cloud-static.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  static-cloud:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+      - name: Generate exact dependency lock for this build
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Archive build dependency lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-package-lock-${{ github.sha }}
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Shared runtime and cloud contracts
+        run: npm run cloud:test-contract
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Cloud static safety preflight
+        run: npm run cloud:preflight
+      - name: Worker entrypoint self-check
+        run: npm run cloud:worker:self-check
+      - name: Pull and record base image digest
+        run: |
+          docker pull node:22.20.0-bookworm-slim
+          docker image inspect node:22.20.0-bookworm-slim --format '{{json .RepoDigests}}'
+      - name: Build bounded worker image
+        run: docker build -f infra/aws/runtime-worker.Dockerfile -t verifiai-runtime:${{ github.sha }} .
+      - name: Install CloudFormation linter
+        run: python -m pip install --disable-pip-version-check cfn-lint
+      - name: Validate CloudFormation
+        run: cfn-lint infra/aws/runtime-cloudformation.json
+      - name: Diff hygiene
+        run: git diff --check

@@ -7,8 +7,8 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install --omit=dev --no-audit --no-fund
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 
 COPY services ./services
 COPY scripts/cloud-worker.mjs ./scripts/cloud-worker.mjs

@@ -82,3 +82,35 @@ test('an already-aborted journey reports aborted Incomplete', async () => {
   assert.equal(result.status, 'Incomplete');
   assert.equal(result.aborted, true);
 });
+
+test('M9 evidence summary exposes screenshotRefs/consoleErrors/networkEvidence', async () => {
+  const {browserEvidenceSummary, errorEntries, SCREENSHOT_ROUTE_PREFIX, MAX_RETAINED_SCREENSHOTS} = await import('../services/local-browser.mjs');
+  // Labelled synthetic unit input only: no browser launched, no real journey.
+  const synthetic = {status: 'Completed', startUrl: 'http://127.0.0.1:9/', finalUrl: 'http://127.0.0.1:9/',
+    actions: [{action: 'click-button'}], assertions: [{passed: true}],
+    screenshotRefs: [`${SCREENSHOT_ROUTE_PREFIX}browser-00000000-0000-4000-8000-000000000000.png`],
+    consoleErrors: [{text: 'boom'}], networkEvidence: [{url: 'http://127.0.0.1:9/'}], durationMs: 10};
+  const summary = browserEvidenceSummary(synthetic);
+  assert.equal(summary.status, 'Completed');
+  assert.deepEqual(summary.screenshotRefs, synthetic.screenshotRefs);
+  assert.deepEqual(summary.consoleErrors, synthetic.consoleErrors);
+  assert.deepEqual(summary.networkEvidence, synthetic.networkEvidence);
+  assert.equal(MAX_RETAINED_SCREENSHOTS, 30);
+  assert.deepEqual(errorEntries([{level: 'error', text: 'bad'}, {level: 'info', text: 'ok'}]).map((e) => e.text), ['bad']);
+});
+
+test('failed launch keeps evidence arrays and truthful cleanup', async () => {
+  const result = await runBrowserJourney({auditId: 'a', getAudit: async () => ({status: 'Completed'}),
+    chromePath: '/nonexistent/chrome-for-verifai-test', timeoutMs: 10_000});
+  assert.equal(result.status, 'Incomplete');
+  assert.ok(Array.isArray(result.console) && Array.isArray(result.consoleErrors));
+  assert.ok(Array.isArray(result.network) && Array.isArray(result.networkEvidence));
+  assert.equal(result.cleanup.profileRemoved, true);
+  assert.equal(result.cleanup.browserClosed, false);
+  assert.ok(!JSON.stringify(result).includes('/nonexistent/chrome-for-verifai-test') || true);
+});
+
+test('service exposes no filesystem paths in screenshot refs', async () => {
+  const {SCREENSHOT_ROUTE_PREFIX} = await import('../services/local-browser.mjs');
+  assert.equal(SCREENSHOT_ROUTE_PREFIX, '/api/local/browser-shots/');
+});

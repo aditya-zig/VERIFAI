@@ -42,6 +42,19 @@ See [local MVP startup and reliability checks](docs/local-mvp.md),
 The specialist/cloud descriptions below are migration-era roadmap context, not
 permission to run those stacks or a claim that the local MVP includes them.
 
+### Start the local app
+
+From an already-prepared `VERIFAI` checkout, with your backend model environment configured:
+
+```bash
+./start.sh
+# Equivalent: npm start
+```
+
+Open **http://127.0.0.1:4173**. See [Quickstart](#quickstart) for prerequisites,
+configuration and safe stop/restart instructions. The launcher does not load
+`.env` files automatically.
+
 ## The 30-second explanation
 
 A normal coding agent can inspect code and suggest a fix.
@@ -257,8 +270,24 @@ Follow the [local preparation steps](docs/local-mvp.md#prepare-once-then-start),
 start the two existing lightweight roles:
 
 ```bash
-./ops/local-agent/scripts/start-local.sh
+npm start
+# Or: ./start.sh
 ```
+
+The executable `start.sh` also works by absolute path from another directory.
+It delegates to the existing owned-process launcher; it does not install
+packages, load `.env` files, run a model, or start extra stacks. Supply the same
+backend configuration in the launching environment. Already-running services
+are left running, not restarted.
+
+To stop, or to restart after a backend code/configuration change:
+
+```bash
+./ops/local-agent/scripts/stop-local.sh
+npm start  # Omit this line if you only want to stop.
+```
+
+Restarting clears the bounded in-memory audit history.
 
 Default local endpoints:
 

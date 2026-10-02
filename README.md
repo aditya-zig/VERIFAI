@@ -42,6 +42,19 @@ See [local MVP startup and reliability checks](docs/local-mvp.md),
 The specialist/cloud descriptions below are migration-era roadmap context, not
 permission to run those stacks or a claim that the local MVP includes them.
 
+### Start the local app
+
+From an already-prepared `VERIFAI` checkout, with your backend model environment configured:
+
+```bash
+./start.sh
+# Equivalent: npm start
+```
+
+Open **http://127.0.0.1:4173**. See [Quickstart](#quickstart) for prerequisites,
+configuration and safe stop/restart instructions. The launcher does not load
+`.env` files automatically.
+
 ## The 30-second explanation
 
 A normal coding agent can inspect code and suggest a fix.

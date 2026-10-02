@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync} from 'node:fs';
+import net from 'node:net';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -17,9 +18,12 @@ function stateDir(tmp){
   const digest=createHash('sha256').update(repoRoot).digest('hex').slice(0,12);
   return path.join(tmp,`verifiai-local-agent-${process.getuid()}-vagent.${digest}`);
 }
-function run(script,args=[],tmp){
-  return spawnSync('bash',[script,...args],{cwd:repoRoot,env:{...process.env,TMPDIR:tmp},encoding:'utf8',timeout:15000});
+function run(script,args=[],tmp,extraEnv={}){
+  return spawnSync('bash',[script,...args],{cwd:repoRoot,env:{...process.env,TMPDIR:tmp,...extraEnv},encoding:'utf8',timeout:15000});
 }
+function freePort(){return new Promise((resolve,reject)=>{const s=net.createServer();s.on('error',reject);s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>resolve(p));});});}
+function occupy(port){return new Promise((resolve,reject)=>{const s=net.createServer();s.on('error',reject);s.listen(port,'127.0.0.1',()=>resolve(s));});}
+function listening(port){return new Promise((resolve)=>{const s=net.connect(port,'127.0.0.1');s.on('connect',()=>{s.end();resolve(true);});s.on('error',()=>resolve(false));});}
 function ps(pid,field){return spawnSync('ps',['-o',`${field}=`,'-p',String(pid)],{encoding:'utf8'}).stdout.trim();}
 function alive(pid){return spawnSync('kill',['-0',String(pid)]).status===0;}
 function writeState(dir,name,fields){mkdirSync(dir,{recursive:true});writeFileSync(path.join(dir,`${name}.state`),Object.entries(fields).map(([k,v])=>`${k}=${v}\n`).join(''));}
@@ -148,4 +152,31 @@ test('watcher uses a lock so duplicate start exits safely, then can restart',asy
     if(alive(first.pid)) first.kill('SIGTERM');
     rmSync(tmp,{recursive:true,force:true});
   }
+});
+
+test('start refuses Unknown/StaleOwnership state before opening any server',async()=>{
+  const tmp=mkdtempSync(path.join(tmpdir(),'verifai-start-gate-'));
+  const decoy=spawn('sleep',['120'],{stdio:'ignore'});
+  try{
+    const dir=stateDir(tmp);
+    const webPort=await freePort(),apiPort=await freePort();
+    const occupants=await Promise.all([occupy(webPort),occupy(apiPort)]);
+    try{
+      // Unknown state: corrupt/incomplete record.
+      mkdirSync(dir,{recursive:true});
+      writeFileSync(path.join(dir,'worker.state'),'service=worker\ncommand=node worker.mjs\n');
+      let r=run(path.join(scripts,'start-local.sh'),[],tmp,{WEB_PORT:String(webPort),PORT:String(apiPort)});
+      assert.notEqual(r.status,0,`start must refuse Unknown state:\n${r.stdout}\n${r.stderr}`);
+      assert.match(`${r.stdout}\n${r.stderr}`,/refusing to overwrite it/,'refusal must come from the reconcile gate');
+      // StaleOwnership: live pid with wrong identity.
+      writeState(dir,'worker',{service:'worker',pid:decoy.pid,start_time:'Mon Jan 1 00:00:00 1990',cwd:repoRoot,command:'sleep 120'});
+      r=run(path.join(scripts,'start-local.sh'),[],tmp,{WEB_PORT:String(webPort),PORT:String(apiPort)});
+      assert.notEqual(r.status,0,`start must refuse StaleOwnership state:\n${r.stdout}\n${r.stderr}`);
+      assert.match(`${r.stdout}\n${r.stderr}`,/refusing to overwrite it/,'refusal must come from the reconcile gate');
+      assert.ok(alive(decoy.pid),'gate refusal must not harm the unrelated process');
+    }finally{occupants.forEach(s=>s.close());}
+    assert.equal(await listening(webPort),false,'no server may open the web port');
+    assert.equal(await listening(apiPort),false,'no server may open the api port');
+    assert.ok(!existsSync(path.join(dir,'web.state'))&&!existsSync(path.join(dir,'api.state')),'no service state may be recorded');
+  }finally{decoy.kill('SIGKILL');rmSync(tmp,{recursive:true,force:true});}
 });

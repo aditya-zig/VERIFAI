@@ -34,6 +34,14 @@ mkdir -p "${state_dir}/logs"
 web_port="${WEB_PORT:-4173}"
 api_port="${PORT:-8787}"
 
+reconcile_script="$(cd "$(dirname "$0")" && pwd)/reconcile-local.sh"
+if [ -x "$reconcile_script" ]; then
+  if ! "$reconcile_script"; then
+    err "start-local: existing state is Unknown or StaleOwnership; refusing to overwrite it"
+    exit 1
+  fi
+fi
+
 pid_alive() { kill -0 "$1" 2>/dev/null; }
 
 read_state() { # $1=file -> sets st_pid st_start st_cwd st_cmd st_pgid st_port

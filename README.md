@@ -257,8 +257,24 @@ Follow the [local preparation steps](docs/local-mvp.md#prepare-once-then-start),
 start the two existing lightweight roles:
 
 ```bash
-./ops/local-agent/scripts/start-local.sh
+npm start
+# Or: ./start.sh
 ```
+
+The executable `start.sh` also works by absolute path from another directory.
+It delegates to the existing owned-process launcher; it does not install
+packages, load `.env` files, run a model, or start extra stacks. Supply the same
+backend configuration in the launching environment. Already-running services
+are left running, not restarted.
+
+To stop, or to restart after a backend code/configuration change:
+
+```bash
+./ops/local-agent/scripts/stop-local.sh
+npm start  # Omit this line if you only want to stop.
+```
+
+Restarting clears the bounded in-memory audit history.
 
 Default local endpoints:
 

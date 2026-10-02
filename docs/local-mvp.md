@@ -45,8 +45,16 @@ Run from the checkout. With >=20 GiB free and Docker ready:
 ./ops/local-agent/scripts/preflight.sh
 ./ops/local-agent/scripts/check-docker.sh
 ./ops/local-agent/scripts/build-sandbox.sh
-./ops/local-agent/scripts/start-local.sh
+./start.sh
 ```
+
+`npm start` is the same launcher. You can also invoke `/path/to/VERIFAI/start.sh`
+from outside the checkout; it selects its own repository directory. The existing
+`ops/local-agent/scripts/start-local.sh` command remains supported. The launcher
+inherits your backend configuration; it does not automatically load `.env` files,
+install packages, start an audit or restart an already-running service. To load
+new backend code/configuration, use the safe stop command below before starting
+again. Restart clears in-memory audit history.
 
 Start launches only the existing lightweight web/API roles, using ports **4173**
 and **8787**, each with a 256 MiB Node old-space heap cap. The local API replaces the old

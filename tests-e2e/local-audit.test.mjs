@@ -11,7 +11,7 @@ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const target='https://github.com/octocat/Hello-World';
 const noContainers=()=>assert.equal(execFileSync('docker',['ps','-aq','--filter',`label=dev.verifiai.local-agent.owner=${sandboxOwner}`],{encoding:'utf8'}).trim(),'');
 
-test('master local audit: real public clone, one API model, Docker command, UI and automatic cleanup',async(t)=>{
+test('master local audit: real public clone, bounded API analysis, Docker command, UI and automatic cleanup',async(t)=>{
   const external=process.env.VERIFIAI_MASTER_URL;
   const server=external?null:createDemoServer();
   if(server){await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.shutdown());}
@@ -46,7 +46,17 @@ test('master local audit: real public clone, one API model, Docker command, UI a
     assert.equal(record.clone.success,true);
     assert.ok(record.files.items.includes('README'));
     assert.ok(record.model.provider && record.model.model);
-    assert.equal(record.model.calls,1);
+    assert.ok(Number.isInteger(record.model.calls) && record.model.calls>=1 && record.model.calls<=5);
+    if(record.model.attempts){
+      assert.equal(record.model.calls,record.model.attempts.filter(attempt=>!attempt.outcome.startsWith('skipped_')).length);
+      assert.equal(record.model.attempts.filter(attempt=>attempt.outcome==='succeeded').length,1);
+      assert.ok(record.model.reportedModel);
+    }
+    if(record.specialists){
+      assert.equal(record.specialists.modelCalls,1,'one admitted security-review lease');
+      assert.equal(record.specialists.results.length,1);
+      assert.equal(record.specialists.apiAttempts,record.specialists.results[0].model.calls,'actual API attempts are not review leases');
+    }
     assert.equal(record.model.requestId,id);
     if(record.model.responseId)assert.ok(!logs.some(log=>log.modelResponseId===record.model.responseId),'provider response identity must not be replayed across master runs');
     assert.equal(record.execution.command,'git -c core.fsmonitor=false ls-files --error-unmatch -- README');

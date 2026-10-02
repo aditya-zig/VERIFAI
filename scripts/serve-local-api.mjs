@@ -1,6 +1,15 @@
-import {createDemoServer} from './serve-web.mjs';
-import {recoverSandboxes} from '../services/local-sandbox.mjs';
-import {recoverRepositoryWorkspaces} from '../services/repository-workspaces.mjs';
+import {fileURLToPath} from 'node:url';
+
+// Only the API entry point loads local secrets. The clean-environment web
+// proxy and its browser children never read this file. Existing env wins.
+try {
+  process.loadEnvFile(fileURLToPath(new URL('../.env.local', import.meta.url)));
+} catch (error) {
+  if (error.code !== 'ENOENT') throw new Error('Unable to load private backend environment');
+}
+const {createDemoServer}=await import('./serve-web.mjs');
+const {recoverSandboxes}=await import('../services/local-sandbox.mjs');
+const {recoverRepositoryWorkspaces}=await import('../services/repository-workspaces.mjs');
 
 await recoverRepositoryWorkspaces();
 await recoverSandboxes().catch(error=>console.warn(`Incomplete sandbox recovery: ${error.message}`));

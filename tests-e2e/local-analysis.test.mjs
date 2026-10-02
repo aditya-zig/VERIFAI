@@ -8,22 +8,17 @@ const repositoryUrl = 'https://github.com/octocat/Hello-World.git';
 const severities = new Set(['critical', 'high', 'medium', 'low', 'info']);
 const fixturePhrases = ['mock finding', 'test finding', 'example vulnerability', 'lorem ipsum'];
 
-test('one local AI agent analyzes a cloned repo and the UI shows the finding', async (context) => {
+test('legacy analysis HTTP endpoint returns a real cloned-source model finding and preserves explicit cleanup', async (context) => {
   const server = createDemoServer();
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  context.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+  context.after(() => server.shutdown());
 
   const address = server.address();
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
-  const pageResponse = await fetch(baseUrl);
-  assert.equal(pageResponse.status, 200);
-  const page = await pageResponse.text();
-  assert.match(page, /id="localRepoUrl"/, 'frontend exposes a GitHub URL input');
-  assert.match(page, /id="startLocalAudit"/, 'frontend exposes a start button');
-  assert.match(page, /id="localRepoResult"/, 'frontend has a place to show repository information');
-  assert.match(page, /id="localFinding"/, 'frontend has a place to show the agent finding');
-  assert.match(page, /\/api\/local\/repositories.*audit/, 'the UI calls the command-backed single-agent audit backend');
+  // The supported UI uses the master audit endpoint (local-audit.test.mjs).
+  // These retained legacy endpoints are exercised behaviorally, not by
+  // looking for obsolete JavaScript route strings in the landing page.
 
   const cloneResponse = await fetch(`${baseUrl}/api/local/repositories`, {
     method: 'POST',

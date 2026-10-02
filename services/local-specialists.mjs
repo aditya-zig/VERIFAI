@@ -70,9 +70,15 @@ export async function runSequentialSpecialists({
   const results = [];
   const evidenceRefs = [];
   const executed = new Set();
-  let modelCalls = 0;
+  let modelCalls = 0; // Historical admitted-review lease counter.
+  let apiAttempts = 0;
+  let apiAttemptsKnown = true;
+  const accountAttempts = model => {
+    if (Number.isInteger(model?.calls) && model.calls >= 0 && model.calls <= 5) apiAttempts += model.calls;
+    else apiAttemptsKnown = false;
+  };
 
-  // One lease for every model call in this orchestrator run. A specialist may
+  // One lease for every logical review in this orchestrator run. A specialist may
   // attempt Promise.all(callModel(...), callModel(...)); the provider calls
   // still execute one-at-a-time.
   let modelTail = Promise.resolve();
@@ -87,7 +93,12 @@ export async function runSequentialSpecialists({
     await previous;
     signal?.throwIfAborted();
     try {
-      return await invoke();
+      const result = await invoke();
+      accountAttempts(result?.model);
+      return result;
+    } catch (error) {
+      accountAttempts(error?.model);
+      throw error;
     } finally {
       release();
     }
@@ -99,6 +110,7 @@ export async function runSequentialSpecialists({
       results: clone(results),
       evidenceRefs: [...evidenceRefs],
       modelCalls,
+      apiAttempts: apiAttemptsKnown ? apiAttempts : null,
     };
     const bytes = Buffer.byteLength(JSON.stringify(snapshot), 'utf8');
     if (bytes >= 1024 * 1024 || bytes > maxStateBytes) {
@@ -128,6 +140,7 @@ export async function runSequentialSpecialists({
         findings: [],
         evidenceRefs: [],
         error: String(error?.message || error),
+        ...(error?.model && typeof error.model === 'object' ? { model: error.model } : {}),
       };
     }
 
@@ -147,6 +160,7 @@ export async function runSequentialSpecialists({
     results,
     evidenceRefs,
     modelCalls,
+    apiAttempts: apiAttemptsKnown ? apiAttempts : null,
   };
 }
 

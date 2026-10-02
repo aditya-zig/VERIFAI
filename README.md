@@ -27,8 +27,8 @@ VERIFAI turns a repository into a controlled verification run: specialist agents
 
 ## Current local path
 
-The supported local path is **public GitHub URL → real clone → one API model
-review → one bounded Docker command → finding with captured execution evidence
+The supported local path is **public GitHub URL → real clone → one bounded API
+review (with ordered model/provider fallback) → one bounded Docker command → finding with captured execution evidence
 → automatic cleanup**. It is a limited check, not full security verification.
 The model hypothesis remains **Unconfirmed**, separate from executed evidence.
 Optional sequential security review, a fixture-only browser journey, same-command
@@ -37,6 +37,7 @@ separately. A verified repair proves that bounded command, not the allegation or
 a complete regression suite. The old synthetic verdict screens are removed.
 
 See [local MVP startup and reliability checks](docs/local-mvp.md),
+[swappable hosted models/providers](docs/local-model-routing.md),
 [settled evidence terms](CONTEXT.md),
 [M4 evidence](docs/evidence/M4.md), and [M5 evidence](docs/evidence/M5.md).
 The specialist/cloud descriptions below are migration-era roadmap context, not
@@ -52,8 +53,8 @@ From an already-prepared `VERIFAI` checkout, with your backend model environment
 ```
 
 Open **http://127.0.0.1:4173**. See [Quickstart](#quickstart) for prerequisites,
-configuration and safe stop/restart instructions. The launcher does not load
-`.env` files automatically.
+configuration and safe stop/restart instructions. The backend optionally loads
+protected, ignored `.env.local`; the clean-environment web proxy does not.
 
 ## The 30-second explanation
 
@@ -262,7 +263,8 @@ git clone https://github.com/aditya-zig/VERIFAI.git
 cd VERIFAI
 
 npm install
-# Supply model configuration in your backend launching environment; never commit keys.
+# Use the launching backend environment or protected .env.local; never commit keys.
+# See docs/local-model-routing.md for the editable ordered provider/model list.
 npm run check
 ```
 
@@ -276,8 +278,9 @@ npm start
 
 The executable `start.sh` also works by absolute path from another directory.
 It delegates to the existing owned-process launcher; it does not install
-packages, load `.env` files, run a model, or start extra stacks. Supply the same
-backend configuration in the launching environment. Already-running services
+packages, run a model, or start extra stacks. The API role loads optional
+`.env.local` before its modules; launching environment values take precedence.
+JSON model-route edits apply on the next review. Already-running services
 are left running, not restarted.
 
 To stop, or to restart after a backend code/configuration change:

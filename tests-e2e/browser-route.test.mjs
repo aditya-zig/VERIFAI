@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFile, writeFile, access, readdir} from 'node:fs/promises';
+import {writeFile, access, readdir} from 'node:fs/promises';
+import {openBrowser} from './browser-driver.mjs';
 import {execFileSync} from 'node:child_process';
 import {sandboxOwner} from '../services/local-sandbox.mjs';
 import {runBrowserJourney} from '../services/local-browser.mjs';
@@ -13,15 +14,6 @@ test('browser endpoint rejects nonexistent audits without launching a browser',a
  assert.equal(res.status,404);const body=await res.json();assert.equal(body.status,'Incomplete');assert.match(body.error,/audit not found/);
  assert.equal((await fetch(`${base}/api/local/audits/not-an-audit/browser/screenshot`)).status,404);
 });
-test('UI explicitly exposes fixture journey only after a completed audit, not arbitrary app verification',async()=>{
- const html=await readFile(new URL('../apps/web/index.html',import.meta.url),'utf8');
- assert.match(html,/Run fixture browser journey/);
- assert.match(html,/run\.status === 'Completed'/);
- assert.match(html,/data-action="run-fixture-browser"/);
- assert.match(html,/not verification of the cloned application/);
- assert.match(html,/browser\/screenshot/);
-});
-
 test('real installed Chrome startup deadline is Incomplete and leaves no profile or fixture',async()=>{
  // Explicit negative-only audit fixture: never used for real success acceptance.
  const before=(await readdir('/tmp')).filter(name=>name.startsWith('verifai-browser-')).sort();
@@ -36,10 +28,18 @@ test('real M5 audit then fixture browser action, screenshot binary proxy and cle
  const web=createDemoServer({apiUrl:`http://127.0.0.1:${api.address().port}`});await new Promise(r=>web.listen(0,'127.0.0.1',r));t.after(()=>web.shutdown());
  const base=`http://127.0.0.1:${web.address().port}`;
  const beforeProfiles=(await readdir('/tmp')).filter(name=>name.startsWith('verifai-browser-')).sort();
- const response=await fetch(`${base}/api/local/audits`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:'https://github.com/octocat/Hello-World'})});assert.equal(response.status,202);
- const {id}=await response.json();let audit;
+ const page=await openBrowser(base);let pageClosed=false;t.after(async()=>{if(!pageClosed)await page.close();});
+ await page.wait(`!!document.getElementById('localRepoUrl') && !document.getElementById('startLocalAudit').disabled`);
+ assert.equal(await page.evaluate(`!!document.querySelector('[data-action="run-fixture-browser"]')`),false);
+ await page.evaluate(`document.getElementById('localRepoUrl').value='https://github.com/octocat/Hello-World';document.getElementById('localRepositoryForm').requestSubmit()`);
+ await page.wait(`!!document.getElementById('localRepositoryForm').dataset.auditId`);
+ const id=await page.evaluate(`document.getElementById('localRepositoryForm').dataset.auditId`);let audit;
  for(let i=0;i<1200;i++){audit=await (await fetch(`${base}/api/local/audits/${id}`)).json();if(audit.status!=='Running')break;await new Promise(r=>setTimeout(r,100));}
  assert.equal(audit.status,'Completed',JSON.stringify(audit));assert.equal(audit.execution.exitCode,0);assert.equal(audit.cleanup.repositoryRemoved,true);await assert.rejects(access(audit.clone.workspacePath));
+ await page.wait(`!!document.querySelector('[data-action="run-fixture-browser"]') && !document.querySelector('[data-action="run-fixture-browser"]').disabled`);
+ assert.match(await page.evaluate(`document.body.innerText`),/not verification of the cloned application/);
+ // Close the observing browser before starting the product fixture browser.
+ await page.close();pageClosed=true;
  const pending=fetch(`${base}/api/local/audits/${id}/browser`,{method:'POST'});
  await new Promise(r=>setTimeout(r,50));
  const busy=await fetch(`${base}/api/local/audits`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:'https://github.com/octocat/Hello-World'})});assert.equal(busy.status,429,'browser holds the same admission as Docker/model');

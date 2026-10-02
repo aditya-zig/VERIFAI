@@ -25,6 +25,17 @@ VERIFAI turns a repository into a controlled verification run: specialist agents
 
 ---
 
+## Current local MVP (M1–M5)
+
+The supported local path is **public GitHub URL → real clone → one API model
+review → one bounded Docker command → finding with captured execution evidence
+→ automatic cleanup**. It is a limited check, not full security verification.
+
+See [local MVP startup and reliability checks](docs/local-mvp.md),
+[M4 evidence](docs/evidence/M4.md), and [M5 evidence](docs/evidence/M5.md).
+The specialist/cloud descriptions below are migration-era roadmap context, not
+permission to run those stacks or a claim that the local MVP includes them.
+
 ## The 30-second explanation
 
 A normal coding agent can inspect code and suggest a fix.

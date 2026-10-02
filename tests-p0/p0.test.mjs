@@ -97,25 +97,23 @@ test('legacy flagship helper refuses to fabricate proof without a real target', 
   assert.match(result.reason, /real Strands swarm|target/i);
 });
 
-test('public site exposes the complete Deep Audit story with live audit CTAs', async () => {
+test('public site exposes the local command-backed audit, not legacy swarm CTAs', async () => {
   const html = await readFile(new URL('../apps/web/index.html', import.meta.url), 'utf8');
-  const js = await readFile(new URL('../apps/web/app.js', import.meta.url), 'utf8');
-  for (const label of ['Audit your repo', 'Deep Audit', 'Live evidence', 'Evidence, not AI guesses', 'Create pull request']) {
-    assert.match(`${html}\n${js}`, new RegExp(label, 'i'));
+  // M1/M2 replaced the cloud-era public entry point. Check the supported local
+  // contract rather than requiring deferred PR generation and six-engine UI.
+  assert.match(html, /landing: renderLocalLanding/);
+  assert.match(html, /id="localRepoUrl"/);
+  assert.match(html, /id="startLocalAudit"/);
+  assert.match(html, /\/api\/local\/repositories/);
+  assert.match(html, /\/api\/local\/repositories.*audit/);
+  assert.match(html, /id="localFindingTitle"/);
+  assert.match(html, /id="localExecutionEvidence"/);
+  assert.match(html, /id="localExecutionSource"/);
+  for (const field of ['command', 'exitCode', 'stdout', 'stderr', 'durationMs', 'source']) {
+    assert.ok(html.includes(`execution.${field}`), `UI exposes actual execution ${field}`);
   }
-  assert.match(html, /data-audit-trigger/);
-  assert.match(js, /openDrawer/);
-  assert.match(js, /runFlagshipAudit/);
-  assert.match(js, /\/api\/audits/);
-  assert.match(js, /fetchSwarm/);
-  assert.match(js, /applySwarm/);
-  assert.match(html, /deployedUrlInput/);
-  assert.match(html, /installableAppInput/);
-  assert.match(html, /tempTokenInput/);
-  assert.match(js, /runResult/);
-  assert.match(js, /Confirmed/);
-  assert.match(js, /Incomplete/);
-  assert.match(js, /verified/);
+  assert.match(html, /Incomplete/);
+  assert.match(html, /data-action="cleanup-local-repository"/);
 });
 
 test('fabricated flagship HTTP endpoint is removed from the public server', async () => {

@@ -1,24 +1,17 @@
-# VERIFAI coding-agent rules
+# VERIFAI — coding-agent entry point
 
-The current AWS Hackathon and **VERIFAI — Grill with Docs** Notion pages are the product/architecture source of truth. The Strands + AgentCore architecture supersedes older deterministic-agent plans.
+VERIFAI development is **local-first**.
 
-## External engines: upstream-first, no substitutes
+**Fresh agents MUST read [`ops/local-agent/START-HERE.md`](ops/local-agent/START-HERE.md) before starting any task.**
 
-When a task names MiroFish, Strix, Cua, Browser Use, OWASP ZAP, Schemathesis, Locust, k6, or Toxiproxy:
+Operating rules:
 
-1. Read `config/external-engines.json`.
-2. Run `node scripts/clone-external-engines.mjs <engine-id>` before writing the adapter. Inspect the pinned upstream source, docs, actual entrypoints, API and output format.
-3. Use the real upstream project. Keep the VERIFAI adapter thin: start/connect -> execute upstream capability -> capture upstream output/artifacts -> normalize evidence -> stop.
-4. Do not implement a "compatible" replacement, hard-coded simulation, fake screenshot, fake security PASS, in-memory fake network fault, guessed CLI, or custom load tester and label it as the named engine.
-5. If the upstream engine cannot run, return **Incomplete** with the exact reason. Never turn absence of a real engine into PASS.
-6. Every named-engine evidence item must identify the upstream repo, pinned commit/version, real command/API invocation, exit/result status, and artifact references.
-7. Do not copy third-party source into VERIFAI core. Keep clones under `.external/` and out of Git. Runtime can use a pinned official package/image when appropriate.
-8. MiroFish and k6 are AGPL components in this plan: keep them as separate services/containers. Preserve all required notices/source obligations. Cua's optional `[omni]` dependency has separate AGPL implications and is not enabled by default.
-9. Do not declare an integration done merely because an adapter, Dockerfile, mock, test fixture, or UI label exists. Done means a clean run invoked the real upstream engine and captured real artifacts.
-10. Before pushing, run the relevant real-engine acceptance check. If credentials/infrastructure prevent that check, leave the task explicitly incomplete rather than adding synthetic proof.
+- GitHub is the implementation source of truth. Current issue/PR/CI state must be checked live — never from memory or an old chat.
+- Work one issue at a time: issue → branch → RED → smallest GREEN → verification → PR.
+- Evidence over AI opinion. Missing capability = Incomplete/Unknown; never invent PASS.
+- Humans approve merges. Never auto-merge.
+- Do not start AWS, TrueForge, Docker, Ollama, or software-factory work unless the assigned roadmap issue explicitly requires it.
+- Development machine has 8 GB RAM: API-backed models only, one heavy process at a time.
 
-## Current known legacy violations
+Kit index: [`ops/local-agent/README.md`](ops/local-agent/README.md). Historical/cloud docs remain elsewhere in the repo as migration debt, not as current direction.
 
-The legacy deterministic Deep Audit contains synthetic/compatibility paths such as Strix/Cua fallbacks, hard-coded MiroFish persona outcomes, and in-memory chaos records. Treat these as migration debt, not valid proof that those upstream engines are integrated.
-
-New work must remove/replace those paths, not build more features on top of them.

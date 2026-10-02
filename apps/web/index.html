@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta name="color-scheme" content="light" />
-  <meta name="description" content="VERIFAI — Autonomous Software Verification Lab clickable prototype" />
+  <meta name="description" content="Clone and inspect a public GitHub repository locally with VERIFAI." />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2379AF96'/%3E%3C/svg%3E" />
-  <title>VERIFAI — Autonomous Software Verification Lab</title>
+  <title>VERIFAI — Local repository check</title>
   <style>
 :root {
   --bg: #fffaf5;
@@ -154,6 +154,41 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
 .status.running { color: var(--running); background: var(--running-soft); border-color: #cadcff; }
 .status.warning { color: var(--warning); background: var(--warning-soft); border-color: #f0debb; }
 .status.unknown { color: var(--unknown); background: var(--unknown-soft); border-color: #e2e5ea; }
+
+/* Local result page: summary, section cards, machine evidence (adapted from PR #66 presentation) */
+.result-root { display: grid; gap: 16px; min-width: 0; }
+.result-summary { display: grid; gap: 12px; min-width: 0; justify-items: start; }
+.result-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: baseline; gap: 5px; max-width: 100%; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); padding: 4px 10px; font-size: 12px; line-height: 1.35; color: var(--muted); }
+.chip b { color: var(--text); font-weight: 720; overflow-wrap: anywhere; }
+.chip.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11.5px; }
+
+.evidence-card { display: grid; gap: 12px; min-width: 0; }
+.evidence-card > .result-chips { justify-self: start; }
+.evidence-card > h4 { margin: 0; font-size: 13px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.evidence-note { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.55; }
+.evidence-sub { margin: 2px 0 0; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted-2); }
+
+.fact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 168px), 1fr)); gap: 8px; margin: 0; }
+.stage-facts { list-style: none; padding: 0; }
+.fact { min-width: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); padding: 8px 10px; }
+.fact dt { margin: 0 0 3px; font-size: 10.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--muted-2); }
+.fact dd { margin: 0; font-size: 13px; font-weight: 660; color: var(--text); overflow-wrap: anywhere; }
+.fact dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11.5px; font-weight: 600; }
+.fact.good { border-color: #caecd5; background: var(--verified-soft); }
+.fact.bad { border-color: #f2cecb; background: var(--failed-soft); }
+.fact.warn { border-color: #f0debb; background: var(--warning-soft); }
+.fact.good dt, .fact.good dd { color: var(--verified); }
+.fact.bad dt, .fact.bad dd { color: var(--failed); }
+.fact.warn dt, .fact.warn dd { color: var(--warning); }
+
+.artifact-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.artifact-list li { min-width: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); padding: 8px 10px; }
+.artifact-list .artifact-name { font-weight: 700; font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
+
+@media(max-width:720px){
+  .fact-grid { grid-template-columns: 1fr; }
+}
 
 /* Zapier-inspired interactive workflow canvas */
 .flow-shell { position: relative; min-height: 525px; border: 1px solid #d9cec4; border-radius: 22px; background:
@@ -306,6 +341,13 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
 .result-row.verified { border-left: 4px solid var(--verified); }
 .result-row.unknown { border-left: 4px solid var(--unknown); }
 .result-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.local-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+.local-summary-grid > div { min-width: 0; }
+#localRepoResult, #localRepoResult code, #localRepoResult pre, #localFindingDescription, #localProofArtifacts code, .wrap-anywhere { overflow-wrap: anywhere; word-break: break-word; max-width: 100%; }
+#localRepoResult pre { overflow-x: auto; white-space: pre-wrap; }
+#localRepoResult .status { max-width: 100%; white-space: normal; overflow-wrap: anywhere; line-height: 1.3; }
+#localRepoResult a { overflow-wrap: anywhere; word-break: break-all; }
+.local-log-block { max-height: 220px; overflow: auto; }
 
 .issue-header { display: flex; justify-content: space-between; gap: 18px; align-items: start; margin-bottom: 20px; }
 .issue-meta { display: flex; flex-wrap: wrap; gap: 8px 20px; color: var(--muted); font-size: 13px; }
@@ -581,7 +623,7 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
   ];
 
   const SCREEN_META = {
-    landing: { title: 'VERIFAI', section: 'Marketing' },
+    landing: { title: 'Local repository check', section: 'Local' },
     login: { title: 'Sign in', section: 'Authentication' },
     dashboard: { title: 'Projects', section: 'Dashboard' },
     repository: { title: 'Select repository', section: 'New Project' },
@@ -724,14 +766,12 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     if (marketing) {
       return `<header class="app-header"><div class="header-inner">
         ${brand()}
-        <nav class="header-nav" aria-label="Primary"><button type="button" data-scroll-target="product">Product</button><button type="button" data-scroll-target="demo">Deep Audit</button><button type="button" data-scroll-target="how">Capabilities</button><button type="button" data-scroll-target="workflow">How It Works</button><button type="button" data-scroll-target="security">Security</button><button type="button" data-scroll-target="developers">Developers</button></nav>
-        <div class="header-actions"><button class="btn ghost" data-nav="login">Sign In</button>${button('Start Verification','login','primary')}</div>
+        <div class="header-actions" style="margin-left:auto"><span class="muted small">Local only</span></div>
       </div></header>`;
     }
     return `<header class="app-header"><div class="header-inner">
       ${brand()}
-      <div class="muted small mono">${C.DEMO_DATA.project.repo}</div>
-      <div class="header-actions" style="margin-left:auto"><button class="btn sm" data-action="toast" data-message="Notifications are clear — no action needed.">Notifications</button><button class="btn sm ghost" data-action="toast" data-message="Prototype account menu opened.">AD</button></div>
+      <div class="muted small mono">Local repository check</div>
     </div></header>`;
   }
 
@@ -766,6 +806,449 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     </div>`;
   }
 
+  function localRepositoryFormMarkup() {
+    return `<form id="localRepositoryForm" class="card pad-lg" aria-describedby="localRepositoryHelp">
+      <label class="label" for="localRepoUrl">Public GitHub repository URL</label>
+      <input id="localRepoUrl" name="url" class="input" type="url" required autocomplete="url" placeholder="https://github.com/owner/repository" />
+      <p id="localRepositoryHelp" class="help">VERIFAI clones the public repository, one API-backed AI model reviews its files, and one bounded read-only command runs in an on-demand Docker sandbox. The finding includes actual executed evidence. This limited check is not full verification.</p>
+      <div class="actions"><button id="startLocalAudit" class="btn primary" type="submit">Start local check</button></div>
+      <div id="localRepoResult" role="status" aria-live="polite"></div>
+    </form>`;
+  }
+
+  function renderLocalLanding() {
+    return `${appHeader(true)}
+      <div class="page narrow compact">
+        <section class="card pad-lg" style="margin-top:8vh">
+          <div class="eyebrow">Local repository check</div>
+          <h1>Inspect a public GitHub repository.</h1>
+          <p class="lede">Paste a URL. VERIFAI clones it to a temporary directory, reads its tracked files, and shows what it found.</p>
+          ${localRepositoryFormMarkup()}
+          <p class="tiny muted" style="margin:16px 0 0">Base check: clone, one safe command and one AI call. No installs, repair or pull requests in that base check. Optional security, browser, repair, proof and human-approved PR actions are separately gated.</p>
+        </section>
+      </div>`;
+  }
+
+  async function startLocalRepositoryCheck(form) {
+    const buttonEl = form.querySelector('#startLocalAudit');
+    const resultEl = form.querySelector('#localRepoResult');
+    buttonEl.disabled = true;
+    buttonEl.textContent = 'Audit running…';
+    delete form.dataset.auditId;
+    resultEl.innerHTML = '<p class="muted small">Repository accepted for local audit. Cloning…</p>';
+    try {
+      const response = await fetch('/api/local/audits', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: form.querySelector('#localRepoUrl').value.trim() }),
+      });
+      const accepted = await response.json();
+      if (!response.ok) throw new Error(accepted.error || `HTTP ${response.status}`);
+      form.dataset.auditId = accepted.id;
+      const deadline = Date.now() + 150000;
+      while (Date.now() < deadline) {
+        const progress = await fetch(`/api/local/audits/${encodeURIComponent(accepted.id)}`);
+        const run = await progress.json();
+        if (!progress.ok) throw new Error(run.error || `HTTP ${progress.status}`);
+        renderMasterAudit(run, resultEl);
+        if (run.status !== 'Running') return;
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      throw new Error('Audit deadline exceeded; status and cleanup are unknown. Check API health.');
+    } catch (error) {
+      resultEl.innerHTML = `<p class="status failed">Incomplete: ${escapeHtml(error?.message || error)}</p>`;
+    } finally {
+      buttonEl.disabled = false;
+      buttonEl.textContent = 'Start local check';
+    }
+  }
+
+  function resultTone(value) {
+    return { Completed: 'verified', VerifiedRepair: 'verified', Running: 'running', Failed: 'failed', Incomplete: 'failed', RejectedRepair: 'failed' }[value] || 'unknown';
+  }
+
+  function factTone(value) {
+    return { verified: 'good', failed: 'bad', running: 'warn' }[resultTone(value)] || '';
+  }
+
+  function resultBadge(value, label) {
+    return `<span class="status ${resultTone(value)}">${escapeHtml(label || value || 'Unknown')}</span>`;
+  }
+
+  function chip(label, value) {
+    if (value === undefined || value === null || value === '') return '';
+    return `<span class="chip">${escapeHtml(label)} <b>${escapeHtml(value)}</b></span>`;
+  }
+
+  function monoChip(label, value) {
+    if (!value) return '';
+    return `<span class="chip mono">${escapeHtml(label)} <b>${escapeHtml(value)}</b></span>`;
+  }
+
+  function fact(label, value, tone, mono) {
+    const shown = value === undefined || value === null || value === '' ? 'Missing' : value;
+    return `<div class="fact${tone ? ` ${tone}` : ''}"><dt>${escapeHtml(label)}</dt><dd${mono ? ' class="mono"' : ''}>${escapeHtml(shown)}</dd></div>`;
+  }
+
+  function factGrid(facts) {
+    const cells = facts.filter(Boolean);
+    return cells.length ? `<dl class="fact-grid">${cells.join('')}</dl>` : '';
+  }
+
+  function evidenceCard(id, title, badge, body) {
+    return `<section${id ? ` id="${escapeHtml(id)}"` : ''} class="card pad section evidence-card"><h4>${escapeHtml(title)}${badge || ''}</h4>${body}</section>`;
+  }
+
+  function sandboxDisplay(value) {
+    if (value === true) return 'yes';
+    if (value === false) return 'no';
+    return 'Not reported';
+  }
+
+  function hashChip(label, full) {
+    if (!full) return '';
+    const prefix = String(full).slice(0, 12);
+    return `${monoChip(label, prefix)}<code class="wrap-anywhere">${escapeHtml(String(full))}</code>`;
+  }
+
+  function renderMasterAudit(run, host) {
+    const statusText = run.status === 'Completed' ? 'Completed limited check' : run.status;
+    const stages = Object.entries(run.stages || {}).map(([name, stage]) => `<li class="fact ${factTone(stage.status)}"><strong>${escapeHtml(name)}: ${escapeHtml(stage.status)}</strong>${stage.detail ? `<p class="evidence-note">${escapeHtml(stage.detail)}${Number.isFinite(stage.durationMs) ? ` · ${escapeHtml(String(stage.durationMs))} ms` : ''}</p>` : ''}</li>`).join('');
+    const finding = run.finding;
+    const execution = run.execution;
+    const specialist = run.specialists?.results?.find(item => item.id === 'security');
+    const proof = run.proof;
+    const browser = run.browser;
+    const repair = run.repair;
+    const stdoutText = execution?.stdout || '';
+    const stderrText = execution?.stderr || '';
+    const stdoutLines = stdoutText ? stdoutText.split('\n').length : 0;
+    const stderrLines = stderrText ? stderrText.split('\n').length : 0;
+    const scopeText = finding?.assessment?.scope || finding?.executedCheck?.scope || 'limited-check: single bounded command — not a test suite, not security verification';
+    const coverageText = repair?.coverage?.label || '';
+    const findingState = finding?.assessment?.findingState || 'Unconfirmed';
+    const repairFiles = Array.isArray(repair?.changedFiles) ? repair.changedFiles : [];
+    const repairFilesMarkup = repairFiles.length ? `<p class="evidence-sub">Changed files (${repairFiles.length})</p><ul class="artifact-list">${repairFiles.map(file => `<li><span class="artifact-name">${escapeHtml(file.path || 'missing')}</span>${file.beforeHash ? hashChip('before',file.beforeHash) : '<span class="evidence-note">before hash Missing</span>'}${file.afterHash ? hashChip('after',file.afterHash) : '<span class="evidence-note">after hash Missing</span>'}</li>`).join('')}</ul>` : '<p class="evidence-note">No changed file was recorded.</p>';
+    const repairDiffMarkup = repair?.diff ? `<details><summary>Diff · ${escapeHtml(String(repair.diff.length))} chars</summary><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(repair.diff.slice(0, 4000))}${repair.diff.length > 4000 ? '\n...[truncated]' : ''}</pre></details>` : '';
+    const repairMarkup = repair?.verdict === 'VerifiedRepair' ? `<section id="localRepairAction" class="card pad section">
+      <h4>Verified repair</h4>
+      <p class="status verified">VerifiedRepair · before exit ${escapeHtml(String(repair.before?.exitCode))} · after exit ${escapeHtml(String(repair.after?.exitCode))}</p>
+      <p class="tiny muted wrap-anywhere">Verified target: <code class="wrap-anywhere">${escapeHtml(repair.verifiedTarget?.command || repair.before?.command || run.selectedCommand || '')}</code> · exit ${escapeHtml(String(repair.verifiedTarget?.exitCode ?? repair.before?.exitCode ?? ''))}</p>
+      ${repair.verifiedBaseCommitSha ? `<p class="tiny muted wrap-anywhere">Verified base: <code class="wrap-anywhere">${escapeHtml(repair.verifiedBaseCommitSha)}</code></p>` : '<p class="tiny muted wrap-anywhere">Verified base: Missing</p>'}
+      <p class="tiny muted wrap-anywhere">Original unchanged: ${repair.originalUnchanged === true ? 'yes' : repair.originalUnchanged === false ? 'no' : 'Not reported'}</p>
+      ${coverageText ? `<p class="tiny muted wrap-anywhere">${escapeHtml(coverageText)}</p>` : `<p class="tiny muted wrap-anywhere">Regressions run: ${escapeHtml(String(repair.regressions?.length ?? 0))} · coverage Not reported (not assumed SAME-COMMAND)</p>`}
+      ${repair.error ? `<p class="status failed wrap-anywhere">${escapeHtml(repair.error)}</p>` : ''}
+      ${repairFilesMarkup}
+      ${repairDiffMarkup}
+      <p class="tiny muted">Review proof first. Creating a PR requires this explicit human action and revalidates the immutable repair, proof manifest, and remote base.</p>
+      <div class="actions"><button class="btn primary sm" data-action="create-local-pr" data-audit-id="${escapeHtml(run.id)}">Create PR</button></div>
+      <div id="localPrResult" role="status" aria-live="polite">${run.pullRequest?.pullRequest?.url ? `<a class="wrap-anywhere" href="${escapeHtml(run.pullRequest.pullRequest.url)}" target="_blank" rel="noopener">Open created PR</a>` : ''}</div>
+    </section>` : execution?.status === 'Failed' && execution?.sandbox?.started === true && execution.executed !== false && execution.timedOut !== true && execution.aborted !== true && Number.isInteger(execution?.exitCode) && execution.exitCode !== 0 ? `<section id="localRepairAction" class="card pad section">
+      <h4>Repair candidate</h4>
+      <p class="tiny muted">Deliberate action only. Paste one bounded candidate patch; VERIFAI tests it in an isolated copy and never edits the original checkout.</p>
+      <textarea id="localRepairPatch" rows="5" class="input" spellcheck="false" placeholder='{"files":[{"path":"file.js","expected":"old","replacement":"new"}]}'></textarea>
+      <div class="actions"><button class="btn primary sm" data-action="repair-local-audit" data-audit-id="${escapeHtml(run.id)}">Verify repair</button></div>
+      <div id="localRepairResult" role="status" aria-live="polite"></div>
+    </section>` : '';
+    const proofPresent = proof?.artifacts ? proof.artifacts.filter(item => item.status === 'Present').length : 0;
+    const proofMissing = proof?.artifacts ? proof.artifacts.filter(item => item.status === 'Missing').length : 0;
+    const proofBadge = !proof?.artifacts ? '' : proofPresent > 0 && proofMissing === 0 ? ' <span class="status verified">Complete</span>' : proofPresent === 0 ? ' <span class="status failed">Missing</span>' : ' <span class="status warning">Partial</span>';
+    const proofMarkup = proof?.artifacts ? `<section id="localProofArtifacts" class="card pad section">
+      <h4>Proof artifacts${proofBadge}</h4>
+      <p class="tiny muted wrap-anywhere">Proof manifest <code class="wrap-anywhere">${escapeHtml(proof.manifest?.id || 'missing')}</code></p>
+      <p class="tiny muted wrap-anywhere">SHA-256 <code class="wrap-anywhere">${escapeHtml(proof.manifest?.sha256 || 'missing')}</code> · ${proofPresent} present · ${proofMissing} missing</p>
+      <p class="tiny muted">Materialized server-owned report data is downloadable; this includes unconfirmed hypotheses, not independent proof of their claims. Missing steps stay labelled Missing.</p>
+      <ul>${proof.artifacts.map(item => item.status === 'Present'
+        ? `<li><span class="status verified">Present</span> ${escapeHtml(item.name)} · ${escapeHtml(item.path || '')} · <span>SHA-256</span> <code class="wrap-anywhere">${escapeHtml(item.sha256 || '')}</code> · <a class="wrap-anywhere" href="/api/local/audits/${encodeURIComponent(run.id)}/artifacts/${encodeURIComponent(item.path)}" target="_blank" rel="noopener">Download ${escapeHtml(item.name)}</a></li>`
+        : `<li><span class="status unknown">Missing</span> ${escapeHtml(item.name)}${item.reason ? ` — ${escapeHtml(item.reason)}` : ''}</li>`).join('')}</ul>
+    </section>` : proof ? `<section id="localProofArtifacts" class="card pad section">
+      <h4>Proof artifacts <span class="status failed">Incomplete</span></h4>
+      <p class="status failed wrap-anywhere">Incomplete: ${escapeHtml(proof.error || 'proof bundle not published')}</p>
+    </section>` : '';
+    const cleanup = run.cleanup || {};
+    const repairCleanup = repair?.cleanup || {};
+    const cleanupRow = (label, value) => `<div><span class="tiny muted">${escapeHtml(label)}</span><br><strong>${value === true ? 'true' : value === false ? 'false' : 'missing'}</strong></div>`;
+    const MAX_BROWSER_ROWS = 20;
+    const browserConsole = browser?.consoleErrors || browser?.console || [];
+    const browserNetwork = browser?.networkEvidence || browser?.network || [];
+    const KNOWN_CONSOLE_KEYS = ['method', 'level', 'text', 'message', 'url', 'location'];
+    const consoleShown = browserConsole.slice(0, MAX_BROWSER_ROWS);
+    const consoleMarkup = consoleShown.map((entry, i) => {
+      const log = entry?.params?.entry;
+      const args = entry?.params?.args;
+      const argumentText = Array.isArray(args) ? args.map(arg => arg?.value ?? arg?.description ?? '').join(' ') : undefined;
+      const text = entry?.text ?? entry?.message ?? log?.text ?? argumentText ?? (typeof entry === 'string' ? entry : 'Missing text');
+      const location = entry?.url ?? entry?.location ?? log?.url ?? entry?.params?.stackTrace?.callFrames?.[0]?.url ?? 'Missing location';
+      const level = entry?.level ?? log?.level ?? entry?.params?.type ?? entry?.method ?? 'Missing level';
+      const rest = entry && typeof entry === 'object' ? Object.fromEntries(Object.entries(entry).filter(([k]) => !KNOWN_CONSOLE_KEYS.includes(k))) : null;
+      const fullPretty = rest && Object.keys(rest).length ? JSON.stringify(rest, null, 2) : '';
+      const pretty = fullPretty.slice(0, 2000);
+      return `<div><p class="tiny muted wrap-anywhere">Row ${i + 1} · ${escapeHtml(String(level))}</p><p class="wrap-anywhere">${escapeHtml(String(text))}</p><p class="tiny muted wrap-anywhere">${escapeHtml(String(location))}</p>${pretty ? `<details><summary>Row ${i + 1} full fields</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(pretty)}${fullPretty.length > 2000 ? '\n...[truncated]' : ''}</pre></details>` : ''}</div>`;
+    }).join('');
+    const consoleExtra = browserConsole.length > consoleShown.length ? `<p class="tiny muted">${browserConsole.length - consoleShown.length} more console rows not shown (showing ${consoleShown.length} of ${browserConsole.length}).</p>` : '';
+    const networkShown = browserNetwork.slice(0, MAX_BROWSER_ROWS);
+    const networkMarkup = networkShown.map((row, i) => {
+      const status = row?.status ?? row?.params?.response?.status ?? row?.response?.status;
+      const url = row?.url ?? row?.params?.request?.url ?? row?.params?.response?.url ?? row?.request?.url;
+      const method = row?.method ?? row?.params?.request?.method ?? row?.request?.method;
+      const fullPretty = JSON.stringify(row ?? null, null, 2);
+      const pretty = fullPretty.slice(0, 2000);
+      return `<div><p class="wrap-anywhere">${escapeHtml(url != null ? String(url) : 'Missing')}</p><p class="tiny muted wrap-anywhere">Status: ${escapeHtml(status != null ? String(status) : 'not-reported')}${method ? ` · ${escapeHtml(String(method))}` : ''}</p><details><summary>Row ${i + 1} full fields</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(pretty)}${fullPretty.length > 2000 ? '\n...[truncated]' : ''}</pre></details></div>`;
+    }).join('');
+    const networkExtra = browserNetwork.length > networkShown.length ? `<p class="tiny muted">${browserNetwork.length - networkShown.length} more network rows not shown (showing ${networkShown.length} of ${browserNetwork.length}).</p>` : '';
+    const browserCleanup = browser?.cleanup && typeof browser.cleanup === 'object' ? browser.cleanup : null;
+    const cleanupFact = (label, value) => `<div><span class="tiny muted">${escapeHtml(label)}</span><br><strong>${value === true ? 'true' : value === false ? 'false' : 'missing'}</strong></div>`;
+    const browserAssertion = browser?.assertion || (Array.isArray(browser?.assertions) ? browser.assertions[0] : null);
+    host.innerHTML = `<section class="card pad section result-root" data-audit-id="${escapeHtml(run.id)}">
+      <h3 class="wrap-anywhere">${escapeHtml(run.repository?.fullName || 'Public GitHub repository')}</h3>
+      <p id="localAuditStatus" class="status ${run.status === 'Running' ? 'running' : run.status === 'Completed' ? 'unknown' : 'failed'}">${escapeHtml(statusText)}</p>
+      <section id="localSummary" class="card pad section result-summary evidence-card" aria-label="Result summary">
+        <h4>Summary ${resultBadge(run.status,statusText)} ${repair?.verdict ? resultBadge(repair.verdict,`Repair ${repair.verdict}`) : ''}</h4>
+        <div class="result-chips">
+          ${chip('Audit id',run.id || 'Missing')}
+          ${chip('Commit',run.repository?.commit || 'Missing')}
+          ${chip('Tracked files',String(run.files?.count ?? 'Missing'))}
+          ${chip('Model',run.model ? `${run.model.provider} · ${run.model.model}` : 'Missing')}
+          ${chip('Duration',run.durationMs != null ? `${run.durationMs} ms` : 'Missing')}
+        </div>
+      </section>
+      ${run.clone?.success ? `<p id="localCloneStatus">Clone succeeded · ${run.files.count} tracked files${run.stages?.cleanup?.status === 'Completed' ? ' · temporary repository cleaned' : ''}</p>` : ''}
+      ${evidenceCard('localAuditStagesCard','Stages',resultBadge(run.status),`<ol id="localAuditStages" class="fact-grid stage-facts">${stages}</ol>`)}
+      ${run.error ? `<p class="status failed wrap-anywhere">${escapeHtml(run.failedStage)}: ${escapeHtml(run.error)}</p>` : ''}
+      <div id="localFinding" role="status" aria-live="polite">
+        ${finding ? `<section id="localHypothesis" class="card pad section">
+          <h4>Model hypothesis · Unconfirmed (opinion, not verification)</h4>
+          <h3 id="localFindingTitle" class="wrap-anywhere">${escapeHtml(finding.title)}</h3>
+          <span id="localFindingSeverity" class="status warning">${escapeHtml(finding.severity)}</span>
+          <p class="tiny muted">Confidence: Unconfirmed · finding state: ${escapeHtml(findingState)}</p>
+          <p id="localFindingDescription" class="wrap-anywhere" style="white-space:pre-wrap">${escapeHtml(finding.description)}</p>
+          <p id="localFindingEvidence">Evidence file: <code class="wrap-anywhere">${escapeHtml(finding.evidence?.file || 'missing')}</code></p>
+          ${finding?.assessment?.reason ? `<p class="tiny muted wrap-anywhere">${escapeHtml(finding.assessment.reason)}</p>` : ''}
+        </section>` : ''}
+        ${run.model ? `<p class="wrap-anywhere">Base model · ${escapeHtml(run.model.provider)} · ${escapeHtml(run.model.model)}</p>` : ''}
+      </div>
+      ${specialist ? `<section id="localSecuritySpecialist" class="card pad section">
+        <h4>Security specialist</h4>
+        <p class="status ${specialist.status === 'Completed' ? 'unknown' : 'failed'}">${escapeHtml(specialist.status)}</p>
+        ${specialist.model ? `<p class="wrap-anywhere">${escapeHtml(specialist.model.provider)} · ${escapeHtml(specialist.model.model)}</p>` : ''}
+        ${specialist.error ? `<p class="status failed wrap-anywhere">${escapeHtml(specialist.error)}</p>` : ''}
+        <p>${specialist.findings?.length || 0} persisted finding(s) · ${specialist.evidenceRefs?.length || 0} evidence ref(s)</p>
+      </section>` : ''}
+      ${execution ? `<section id="localExecutionEvidence" class="card pad section">
+        <h4>Executed check (server-owned)</h4>
+        <p class="tiny muted wrap-anywhere">${escapeHtml(scopeText)}</p>
+        <p id="localExecutionSource" class="tiny muted wrap-anywhere">Source: ${escapeHtml(execution.source || 'Missing')}</p>
+        <p><span class="tiny muted">Command</span></p><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere"><code class="wrap-anywhere">${escapeHtml(execution.command || 'missing')}</code></pre>
+        <p>Exit: ${escapeHtml(String(execution.exitCode))} · ${execution.durationMs} ms · ${escapeHtml(execution.status)}</p>
+        <p id="localSandboxEvidence" class="wrap-anywhere">Docker sandbox ${execution.sandbox?.started === true ? 'started' : execution.sandbox?.started === false ? 'not started' : 'status Not reported'} · ${execution.sandbox?.removed === true ? 'Removed after execution' : execution.sandbox?.removed === false ? 'Incomplete cleanup' : 'Cleanup Not reported'}</p>
+        ${factGrid([
+          fact('container',execution.sandbox?.name,undefined,true),
+          fact('started',sandboxDisplay(execution.sandbox?.started)),
+          fact('removed',sandboxDisplay(execution.sandbox?.removed)),
+          fact('memory',execution.sandbox?.memoryBytes ? `${execution.sandbox.memoryBytes / 1048576} MiB limit` : 'Not reported'),
+          fact('CPU',execution.sandbox?.nanoCpus ? `${execution.sandbox.nanoCpus / 1e9} CPUs` : 'Not reported'),
+          fact('privileged',sandboxDisplay(execution.sandbox?.privileged)),
+          fact('network',execution.sandbox?.network || 'Not reported'),
+        ])}
+        <details><summary>stdout · ${stdoutText.length} chars · ${stdoutLines} lines</summary><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stdout || '(empty)')}</pre></details>
+        <details><summary>stderr · ${stderrText.length} chars · ${stderrLines} lines</summary><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stderr || '(empty)')}</pre></details>
+        ${execution.truncated ? '<p>Output capped: showing tail only.</p>' : ''}
+        <p class="wrap-anywhere">Executed-output SHA-256: <code class="wrap-anywhere">${escapeHtml(run.outputHash || 'missing')}</code></p>
+      </section>` : ''}
+      ${coverageText && !repair ? `<p class="tiny muted wrap-anywhere">${escapeHtml(coverageText)}</p>` : ''}
+      ${browser ? `<section id="localBrowserJourney" class="card pad section"><h4>Browser journey <span class="status unknown">Fixture only</span></h4><p class="wrap-anywhere">${escapeHtml(browser.status)} · Local integration fixture; not verification of the cloned application</p>${browser.error ? `<p class="status failed wrap-anywhere">${escapeHtml(browser.error)}</p>` : ''}${browserAssertion ? `<p class="wrap-anywhere">Click assertion: expected ${escapeHtml(String(browserAssertion.expected ?? 'Missing'))} · observed ${escapeHtml(String(browserAssertion.observed ?? 'Missing'))} · ${browserAssertion.passed === true ? 'Passed' : 'Incomplete'}</p>` : '<p class="tiny muted">Click assertion: Missing (not reported)</p>'}${browser.screenshotRefs?.[0] ? `<a class="btn sm wrap-anywhere" href="${escapeHtml(browser.screenshotRefs[0])}" target="_blank" rel="noopener">Open server screenshot (fixture scope only)</a>` : '<p>Screenshot: Missing (not captured)</p>'}<details><summary>Console rows (${browserConsole.length})</summary>${consoleMarkup || '<p class="tiny muted">No console rows reported.</p>'}${consoleExtra}</details><details><summary>Network rows (${browserNetwork.length})</summary>${networkMarkup || '<p class="tiny muted">No network rows reported.</p>'}${networkExtra}</details><div class="local-summary-grid">${cleanupFact('browserClosed', browserCleanup?.browserClosed)}${cleanupFact('profileRemoved', browserCleanup?.profileRemoved)}${cleanupFact('fixtureStopped', browserCleanup?.fixtureStopped)}</div>${browserCleanup?.error ? `<p class="status failed wrap-anywhere">${escapeHtml(browserCleanup.error)}</p>` : ''}</section>` : ''}
+      ${repairMarkup}
+      ${proofMarkup}
+      <section id="localCleanup" class="card pad section" aria-label="Cleanup facts">
+        <h4>Cleanup</h4>
+        <div class="local-summary-grid">
+          ${cleanupRow('repositoryRemoved', cleanup.repositoryRemoved)}
+          ${cleanupRow('sandboxRemoved', cleanup.sandboxRemoved)}
+          ${cleanupRow('candidateRemoved', repairCleanup.candidateRemoved ?? cleanup.candidateRemoved)}
+          ${cleanupRow('originalUnchanged', repair?.originalUnchanged ?? cleanup.originalUnchanged)}
+        </div>
+      </section>
+      <p class="tiny muted">A completed limited check is not a full test-suite or security verification. Cleanup is automatic.</p>
+      ${run.status === 'Completed' ? `<section class="card pad section">
+        <button class="btn" type="button" data-action="run-fixture-browser" data-audit-id="${escapeHtml(run.id)}">Run fixture browser journey</button>
+        <p class="tiny muted">One button-click integration fixture, not verification of the cloned application. Chrome starts on demand and closes after evidence capture.</p>
+        <div id="localBrowserEvidence" role="status" aria-live="polite"></div>
+      </section>` : ''}
+    </section>`;
+
+  }
+
+  function renderProofSummary(proof) {
+    if (!proof?.manifest) return '<p class="status failed">Proof bundle incomplete.</p>';
+    const present = proof.artifacts?.filter(item => item.status === 'Present').length || 0;
+    const missing = proof.artifacts?.filter(item => item.status === 'Missing').length || 0;
+    return `<p>Proof manifest <code>${escapeHtml(proof.manifest.id)}</code></p><p>SHA-256 <code>${escapeHtml(proof.manifest.sha256)}</code></p><p>${present} present · ${missing} missing</p>`;
+  }
+
+  async function refreshLocalProof(id, host) {
+    const out = host.querySelector('#localPostAudit');
+    try {
+      const response = await fetch(`/api/local/audits/${encodeURIComponent(id)}/artifacts`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      if (out) out.innerHTML = `<h4>Proof refreshed</h4>${renderProofSummary(payload)}`;
+    } catch (error) {
+      if (out) out.innerHTML = `<p class="status failed">Proof Incomplete: ${escapeHtml(error?.message || error)}</p>`;
+    }
+  }
+
+  async function runLocalRepair(id, host) {
+    const out = host.querySelector('#localPostAudit');
+    const path = host.querySelector('[data-repair-path]')?.value.trim();
+    const expected = host.querySelector('[data-repair-expected]')?.value;
+    const replacement = host.querySelector('[data-repair-replacement]')?.value;
+    if (!path || !expected) {
+      if (out) out.innerHTML = '<p class="status failed">Repair needs a relative file and exact text to replace.</p>';
+      return;
+    }
+    if (out) out.innerHTML = '<p class="muted small">Verifying repair in an isolated candidate…</p>';
+    try {
+      const response = await fetch(`/api/local/audits/${encodeURIComponent(id)}/repair`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ patch: { files: [{ path, expected, replacement }] } }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      const before = payload.before ? `${escapeHtml(payload.before.status)} / exit ${escapeHtml(String(payload.before.exitCode))}` : 'Missing';
+      const after = payload.after ? `${escapeHtml(payload.after.status)} / exit ${escapeHtml(String(payload.after.exitCode))}` : 'Missing';
+      if (out) {
+        out.innerHTML = `<h4>Repair verdict: ${escapeHtml(payload.verdict)}</h4><p>Before: ${before}</p><p>After: ${after}</p><p>Original unchanged: ${escapeHtml(String(payload.originalUnchanged))}</p>${renderProofSummary(payload.proof)}${payload.verdict === 'VerifiedRepair' ? '<button class="btn primary sm" type="button" data-local-create-pr>Create PR</button>' : ''}`;
+        out.querySelector('[data-local-create-pr]')?.addEventListener('click', () => createLocalRepairPr(id, out));
+      }
+    } catch (error) {
+      if (out) out.innerHTML = `<p class="status failed">Repair Incomplete: ${escapeHtml(error?.message || error)}</p>`;
+    }
+  }
+
+  async function createLocalRepairPr(id, out) {
+    if (out) out.insertAdjacentHTML('beforeend', '<p class="muted small">Creating reviewable PR from the exact verified repair…</p>');
+    try {
+      const response = await fetch(`/api/local/audits/${encodeURIComponent(id)}/pr`, { method: 'POST' });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      if (out) out.innerHTML = `<h4>Pull request created</h4><p>Branch <code>${escapeHtml(payload.branch)}</code></p><a href="${escapeHtml(payload.pullRequest.url)}" target="_blank" rel="noopener">Open PR #${escapeHtml(String(payload.pullRequest.number))}</a><p class="tiny muted">Merge remains manual.</p>`;
+    } catch (error) {
+      if (out) out.innerHTML = `<p class="status failed">PR creation blocked: ${escapeHtml(error?.message || error)}</p>`;
+    }
+  }
+
+  async function runFixtureBrowser(button) {
+    let host = document.getElementById('localBrowserEvidence');
+    const masterButton = document.getElementById('startLocalAudit');
+    button.disabled = true;
+    if (masterButton) masterButton.disabled = true;
+    host.textContent = 'Running isolated fixture browser journey…';
+    try {
+      const response = await fetch(`/api/local/audits/${encodeURIComponent(button.dataset.auditId)}/browser`, { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      const latestResponse = await fetch(`/api/local/audits/${encodeURIComponent(button.dataset.auditId)}`);
+      if (!latestResponse.ok) throw new Error('Evidence refresh incomplete');
+      renderMasterAudit(await latestResponse.json(), document.getElementById('localRepoResult'));
+      host = document.getElementById('localBrowserEvidence');
+      if (host) host.innerHTML = `<p id="localBrowserStatus" class="status ${result.status === 'Completed' ? 'unknown' : 'failed'}">${escapeHtml(result.status)} fixture journey recorded above</p><p class="tiny muted">Full fixture evidence is in the Browser journey card above (server-owned record).</p>`;
+    } catch (error) { host.textContent = `Incomplete: ${error.message}`; }
+    finally { button.disabled = false; if (masterButton) masterButton.disabled = false; }
+  }
+
+  async function verifyLocalRepair(auditId, buttonEl) {
+    const host=document.getElementById('localRepairResult');
+    const input=document.getElementById('localRepairPatch');
+    buttonEl.disabled=true;
+    try {
+      const patch=JSON.parse(input?.value || '{}');
+      const response=await fetch(`/api/local/audits/${encodeURIComponent(auditId)}/repair`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({patch})});
+      const result=await response.json();
+      if(!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      host.innerHTML=`<p class="status ${result.verdict==='VerifiedRepair'?'verified':result.verdict==='RejectedRepair'?'failed':'unknown'}">${escapeHtml(result.verdict)}</p><p class="tiny muted">Before exit ${escapeHtml(String(result.before?.exitCode))} · After exit ${escapeHtml(String(result.after?.exitCode))} · Original unchanged: ${escapeHtml(String(result.originalUnchanged))}</p>`;
+      const latest=await fetch(`/api/local/audits/${encodeURIComponent(auditId)}`);
+      if(!latest.ok) throw new Error('Repair evidence refresh incomplete');
+      renderMasterAudit(await latest.json(),document.getElementById('localRepoResult'));
+    } catch(error) {
+      host.innerHTML=`<p class="status failed">Incomplete: ${escapeHtml(error?.message || error)}</p>`;
+    } finally { buttonEl.disabled=false; }
+  }
+
+  async function createLocalPullRequest(auditId, buttonEl) {
+    const host=document.getElementById('localPrResult');
+    buttonEl.disabled=true;
+    try {
+      const response=await fetch(`/api/local/audits/${encodeURIComponent(auditId)}/pr`,{method:'POST'});
+      const result=await response.json();
+      if(!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      const url=result.pullRequest?.url;
+      host.innerHTML=url?`<p class="status verified">PR created</p><a href="${escapeHtml(url)}" target="_blank" rel="noopener">Open pull request</a>`:'<p class="status verified">PR created</p>';
+    } catch(error) {
+      host.innerHTML=`<p class="status failed">Incomplete: ${escapeHtml(error?.message || error)}</p>`;
+      buttonEl.disabled=false;
+    }
+  }
+
+  async function renderLocalFinding(id) {
+    const host = document.getElementById('localFinding');
+    if (!host) return;
+    try {
+      const response = await fetch(`/api/local/repositories/${encodeURIComponent(id)}/audit`, { method: 'POST' });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      const execution = payload.execution;
+      const executionMarkup = execution ? `<section id="localExecutionEvidence" class="card pad section">
+        <h4>Real executed evidence</h4>
+        <p><strong>Command</strong> <code>${escapeHtml(execution.command)}</code></p>
+        <p>${escapeHtml(execution.source)} · ${escapeHtml(execution.status)} · Exit: ${escapeHtml(String(execution.exitCode))} · ${execution.durationMs} ms</p>
+        ${execution.sandbox ? `<p id="localSandboxEvidence"><strong>Docker sandbox started</strong> <code>${escapeHtml(execution.sandbox.name)}</code> · ${execution.sandbox.removed ? 'Removed after execution' : 'Incomplete cleanup'} · ${Math.round(execution.sandbox.memoryBytes / 1048576)} MiB limit · ${execution.sandbox.nanoCpus / 1e9} CPU · privileged: ${execution.sandbox.privileged} · network: ${escapeHtml(execution.sandbox.network)}</p>` : ''}
+        <p>stdout</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stdout || '(empty)')}</pre>
+        <p>stderr</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stderr || '(empty)')}</pre>
+        ${execution.truncated ? '<p>Output capped: showing tail only.</p>' : ''}
+      </section>` : '';
+      if (!payload.finding) {
+        host.innerHTML = `<p class="status failed">Incomplete · ${escapeHtml(payload.failedStage || 'audit')}: ${escapeHtml(payload.error || 'Command timed out')}</p>${executionMarkup}`;
+        return;
+      }
+      const finding = payload.finding;
+      host.innerHTML = `<section class="card pad section">
+        <div class="actions" style="justify-content:space-between;align-items:center">
+          <h3 id="localFindingTitle">${escapeHtml(finding.title)}</h3>
+          <span id="localFindingSeverity" class="status warning">${escapeHtml(finding.severity)}</span>
+        </div>
+        <p id="localFindingDescription">${escapeHtml(finding.description)}</p>
+        <p id="localFindingEvidence"><strong>Evidence</strong> <code>${escapeHtml(finding.evidence.file)}</code></p>
+        <p class="tiny muted">${escapeHtml(payload.status)} limited check · One API call · ${escapeHtml(payload.model.provider)} · ${escapeHtml(payload.model.model)}</p>
+        ${executionMarkup}
+      </section>`;
+    } catch (error) {
+      host.innerHTML = `<p class="status failed">Incomplete: ${escapeHtml(error?.message || error)}</p>`;
+    }
+  }
+
+  async function cleanupLocalRepository(id, buttonEl) {
+    buttonEl.disabled = true;
+    try {
+      const response = await fetch(`/api/local/repositories/${encodeURIComponent(id)}/cleanup`, { method: 'POST' });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      const resultEl = document.getElementById('localRepoResult');
+      resultEl.querySelector('#localCloneStatus').textContent = 'Temporary clone cleaned up';
+      resultEl.querySelector('#localCloneStatus').className = 'status unknown';
+      resultEl.querySelector('#localWorkspacePath')?.remove();
+      buttonEl.remove();
+      const form = document.getElementById('localRepositoryForm');
+      if (form) {
+        delete form.dataset.repositoryId;
+        const startButton = form.querySelector('#startLocalAudit');
+        startButton.disabled = false;
+        startButton.textContent = 'Start local check';
+      }
+    } catch (error) {
+      buttonEl.disabled = false;
+      showToast(`Cleanup failed: ${String(error?.message || error)}`);
+    }
+  }
+
   function landingFlowMarkup() {
     return `<div class="flow-shell" aria-label="Animated verification workflow">
       <div class="flow-topbar"><div class="flow-title"><span class="brand-mark" style="width:24px;height:24px;border-radius:7px;font-size:10px">V</span> Verification flow</div><div class="flow-live"><span class="flow-live-dot"></span> LIVE LAB</div></div>
@@ -792,9 +1275,10 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
       <div class="page marketing-page">
         <section class="marketing-hero" id="product">
           <div class="eyebrow">Autonomous Software Verification Lab</div>
-          <h1>Know if your software actually works.</h1>
-          <p class="lede">Connect a repository. VERIFAI runs the real product, simulates users, breaks dependencies safely, investigates failures, and proves whether the fix survives the same experiment.</p>
-          <div class="hero-actions">${button('Start Verification','login','primary')}<button class="btn" data-action="scroll-demo">Watch Deep Audit</button></div>
+          <h1>Inspect a public GitHub repository locally.</h1>
+          <p class="lede">Paste a repository URL. VERIFAI clones it to a temporary directory, reads the tracked file list, and shows the repository information it found.</p>
+          <div class="hero-actions"><button class="btn primary" type="button" data-scroll-target="local-repository-check">Start local check</button></div>
+          <div id="local-repository-check" class="section" style="max-width:760px;margin-inline:auto;text-align:left">${localRepositoryFormMarkup()}</div>
           <div class="hero-proof"><span><i></i>Evidence-backed findings</span><span><i></i>Isolated verification</span><span><i></i>No silent merges</span></div>
           <div class="particle-band"><div id="particleText" class="particle-text" aria-label="VERIFAI"><canvas class="particle-text__canvas" aria-hidden="true"></canvas><span class="particle-text__sr">VERIFAI</span></div></div>
         </section>
@@ -847,7 +1331,7 @@ reverify: 10 / 10 PASS
 regressions: 0</code></pre>
         </section>
 
-        <section class="landing-cta"><h2>Your users should not be your first real-world test.</h2><p>Connect your repo and find out what happens before you ship.</p><div class="hero-actions">${button('Audit your repo','login','primary')}<button class="btn" data-nav="live">Open Live Lab</button></div></section>
+        <section class="landing-cta"><h2>Check another repository.</h2><p>Clone a public GitHub repository and inspect its tracked files on this machine.</p><div class="hero-actions"><button class="btn primary" type="button" data-scroll-target="local-repository-check">Start local check</button></div></section>
         <div class="landing-footer"><strong>VERIFAI — Real-world verification for AI-built software.</strong><span>Evidence over AI opinion · You keep control.</span></div>
       </div>
       <div class="kicker-strip"><div class="kicker-inner"><strong>90-second product flow</strong><div class="demo-steps"><span class="demo-step">Connect repo</span><span class="demo-step">Define requirements</span><span class="demo-step">Run experiments</span><span class="demo-step">Find failure</span><span class="demo-step">Repair</span><span class="demo-step">Prove fix</span></div><button class="btn sm" data-action="scroll-demo">Play demo</button></div></div>`;
@@ -872,10 +1356,7 @@ regressions: 0</code></pre>
   }
 
   function renderRepository() {
-    const content = `<div class="card flat" style="overflow:hidden"><div style="padding:16px"><input id="repositorySearch" class="search" aria-label="Search repositories" placeholder="Search repositories" /></div>
-      <div id="repositoryList"><div class="repo-row"><div><div class="repo-name">Loading GitHub repositories…</div><div class="repo-meta"><span>Your OAuth session stays server-side.</span></div></div></div></div>
-    </div><div class="section card pad"><h3>GitHub permissions</h3><p class="muted small">VERIFAI needs repository contents, branches and commits, plus permission to create branches or pull requests only after you approve a repair.</p><div class="tags"><span class="tag">Read contents</span><span class="tag">Read branches</span><span class="tag">Create repair branches</span><span class="tag">Optional PRs</span></div></div>`;
-    return setupPage('Select a repository','Import the application you want VERIFAI to run and verify.',1,content,`<button class="btn ghost" data-nav="dashboard">Back</button>`);
+    return setupPage('Check a public repository','Paste its GitHub URL. The local backend clones the repository and reads its tracked files. No sign-in is required.',1,localRepositoryFormMarkup());
   }
 
   function renderAnalysis() {
@@ -1026,7 +1507,7 @@ regressions: 0</code></pre>
   }
 
   const renderers = {
-    landing: renderLanding,
+    landing: renderLocalLanding,
     login: renderLogin,
     dashboard: renderDashboard,
     repository: renderRepository,
@@ -1294,7 +1775,34 @@ regressions: 0</code></pre>
     if (state.screen === 'repository') requestAnimationFrame(hydrateRepositoryScreen);
   }
 
+  document.addEventListener('submit', (event) => {
+    const repositoryForm = event.target.closest('#localRepositoryForm');
+    if (repositoryForm) {
+      event.preventDefault();
+      startLocalRepositoryCheck(repositoryForm);
+    }
+  });
+
   document.addEventListener('click', (event) => {
+    const fixtureBrowser = event.target.closest('[data-action="run-fixture-browser"]');
+    if (fixtureBrowser) { event.preventDefault(); runFixtureBrowser(fixtureBrowser); return; }
+    const createPr = event.target.closest('[data-action="create-local-pr"]');
+    if (createPr) {
+      event.preventDefault();
+      createLocalPullRequest(createPr.dataset.auditId, createPr);
+      return;
+    }
+    const repairAudit = event.target.closest('[data-action="repair-local-audit"]');
+    if (repairAudit) {
+      event.preventDefault();
+      verifyLocalRepair(repairAudit.dataset.auditId, repairAudit);
+      return;
+    }
+    const cleanupRepository = event.target.closest('[data-action="cleanup-local-repository"]');
+    if (cleanupRepository) {
+      cleanupLocalRepository(cleanupRepository.dataset.repositoryId, cleanupRepository);
+      return;
+    }
     const importRepo = event.target.closest('[data-import-repo]');
     if (importRepo) {
       event.preventDefault();
@@ -1372,20 +1880,5 @@ regressions: 0</code></pre>
 })();
 </script>
 
-<div hidden aria-hidden="true" id="deepAuditCompatibility">
-  <button data-audit-trigger type="button">Audit your repo</button>
-  <div id="drawer">
-    <button id="closeDrawer" type="button">Close</button>
-    <button id="backdrop" type="button">Backdrop</button>
-    <input id="repoInput" value="github.com/aditya-zig/AWS-wemakedevs">
-    <input id="deployedUrlInput">
-    <input id="installableAppInput">
-    <input id="tempTokenInput">
-    <button id="drawerRun" type="button">Run Deep Audit</button>
-    <div id="progress"><div></div><div></div><div></div><div></div></div>
-    <div id="drawerResult"></div>
-  </div>
-</div>
-<script type="module" src="./app.js"></script>
 </body>
 </html>

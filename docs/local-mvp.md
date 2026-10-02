@@ -20,6 +20,23 @@ Supply `XKIRO_API_KEY` in the backend's launching environment; default provider
 provider key variable. Never commit, paste into logs or send these keys to a
 container/browser. No credential value belongs in this document.
 
+Seek AI uses `VERIFIAI_MODEL_PROVIDER=seek_ai`, an explicit
+`VERIFIAI_MODEL_ID` (for example `glm-5.3-flash` when listed by the provider), and
+`SEEK_AI_API_KEY` in the backend environment. Its default API base URL is
+`https://seekai.cc/v1`; this labels findings as Seek AI rather than xkiro.
+Configuration support is not proof of model compatibility: a real
+`jonschlinkert/is-number` trial returned invalid JSON at the existing 500-token
+cap, and a second trial at 1500 tokens hit the 60-second model timeout. Both
+ended Incomplete with cleanup completed; the speculative cap increase was not
+retained. Provider-specific GLM response/reasoning compatibility remains unverified.
+A subsequent tiny JSON diagnostic with documented `reasoning_effort: low`
+reported `MiniMaxAI/MiniMax-M2.7`, not the requested GLM, and included inline
+reasoning instead of pure JSON. The Seek AI GLM path now fails closed if the
+response omits or differs from the requested model identity (case-insensitive).
+Do not silently accept another model or strip reasoning to label it GLM.
+Seek AI's routing/model mapping must be corrected before real GLM acceptance
+can be retried. See `docs/evidence/seek-ai-glm53-trial.md`.
+
 ## Prepare once, then start
 
 Run from the checkout. With >=20 GiB free and Docker ready:
@@ -41,8 +58,12 @@ Open http://127.0.0.1:4173, paste the target URL, click Start local check. Actua
 stages: clone → analysis → sandbox → execution → finding → cleanup. The model
 reviews bounded real source context once before execution. The server attaches
 actual command output/exit/duration to that finding afterward; it does **not**
-claim the model predicted/interpreted future output. There is no repair, PR
-creation, video, browser agent, specialist or automatic merge feature here.
+claim the model predicted/interpreted future output. Optional sequential security
+source review, a local fixture browser journey, repair replay, proof downloads and
+explicit human PR creation are separately gated. The browser journey tests the
+fixture, not the cloned application. Repair reruns the same bounded command; it
+is not independent regression coverage. No automatic merge or video evidence is
+provided. See the [evidence ownership glossary](../CONTEXT.md).
 
 Each API call carries a unique audit identity/no-cache request. Response identity
 and token usage, where provided, are recorded for traceability. Execution is
@@ -105,8 +126,13 @@ never broad Docker prune, `/tmp` deletion, or application-data cleanup.
 ## Known limits
 
 Only small public repositories and the narrow supported check policy are suitable.
-No dependency installation, full app execution, browser journey or complete test
-coverage. Git clone/context/model run in the backend; only the selected command
+No dependency installation, full app execution, cloned-application browser journey
+or complete test coverage. Git clone/context/model run in the backend; only the selected command
 runs in Docker. Network or provider availability can make a run Incomplete. A
 completed README/runtime check is not proof of security, test-suite correctness,
-or patch readiness. Humans merge the stacked milestone PRs; M6+ remains deferred.
+or patch readiness. The model hypothesis remains Unconfirmed even after a
+successful check or repair replay. Only an admitted failed executed check can
+enter repair, and only VerifiedRepair can offer the explicit PR action. Terminal
+proof bytes and manifests are stable and tamper-checked; Missing evidence remains
+explicit. Humans merge the stacked PRs. The locally verified integration is not
+permission to merge upstream PR #66 as-is or start deferred cloud stacks.

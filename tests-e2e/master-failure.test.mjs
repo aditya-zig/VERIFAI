@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn,execFileSync} from 'node:child_process';
 import {once} from 'node:events';
+import {createServer} from 'node:http';
 import {access,readdir} from 'node:fs/promises';
 import {createDemoServer} from '../scripts/serve-web.mjs';
 import {recoverRepositoryWorkspaces,repositoryWorkspaceRoot} from '../services/repository-workspaces.mjs';
@@ -19,6 +20,38 @@ test('missing model capability is Incomplete with stage-specific error and actua
   assert.match(result.error,/not configured|not configured/i);
   assert.equal(result.stages.clone.status,'Completed');assert.equal(result.stages.analysis.status,'Incomplete');
   assert.equal(result.stages.sandbox.status,'Skipped');assert.equal(result.stages.cleanup.status,'Completed');
+  assert.equal(result.finding,undefined);assert.equal(result.execution,undefined);
+  await assert.rejects(access(result.clone.workspacePath));
+  assert.equal(execFileSync('docker',['ps','-aq','--filter',`label=dev.verifiai.local-agent.owner=${sandboxOwner}`],{encoding:'utf8'}).trim(),'');
+});
+
+test('model substitution is Incomplete before execution with actual clone cleanup (controlled negative fixture, no provider call)',async(t)=>{
+  let calls=0;
+  const fixture=createServer(async(request,response)=>{
+    assert.equal(request.url,'/v1/chat/completions');
+    const chunks=[];for await(const chunk of request)chunks.push(chunk);
+    const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    assert.equal(body.model,'glm-5.3-flash');calls++;
+    response.writeHead(200,{'content-type':'application/json'});
+    response.end(JSON.stringify({model:'MiniMaxAI/MiniMax-M2.7',choices:[]}));
+  });
+  await new Promise(resolve=>fixture.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>fixture.close(resolve)));
+  const server=createDemoServer({env:{
+    VERIFIAI_MODEL_PROVIDER:'seek_ai',VERIFIAI_MODEL_ID:'glm-5.3-flash',
+    VERIFIAI_MODEL_BASE_URL:`http://127.0.0.1:${fixture.address().port}/v1`,
+    SEEK_AI_API_KEY:'unit-test-key',
+  }});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.shutdown());
+  const base=`http://127.0.0.1:${server.address().port}`;
+  const response=await fetch(`${base}/api/local/audits`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:'https://github.com/octocat/Hello-World'})});
+  assert.equal(response.status,202);const {id}=await response.json();
+  let result;for(let i=0;i<600;i++){result=await(await fetch(`${base}/api/local/audits/${id}`)).json();if(result.status!=='Running')break;await delay(50);}
+  assert.equal(result.status,'Incomplete');assert.equal(result.failedStage,'analysis');
+  assert.match(result.error,/Seek AI did not report the requested glm-5.3-flash model/);
+  assert.equal(calls,1,'no retry or fallback');
+  assert.equal(result.stages.clone.status,'Completed');assert.equal(result.stages.sandbox.status,'Skipped');
+  assert.equal(result.stages.execution.status,'Skipped');assert.equal(result.stages.cleanup.status,'Completed');
   assert.equal(result.finding,undefined);assert.equal(result.execution,undefined);
   await assert.rejects(access(result.clone.workspacePath));
   assert.equal(execFileSync('docker',['ps','-aq','--filter',`label=dev.verifiai.local-agent.owner=${sandboxOwner}`],{encoding:'utf8'}).trim(),'');

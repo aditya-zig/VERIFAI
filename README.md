@@ -25,13 +25,19 @@ VERIFAI turns a repository into a controlled verification run: specialist agents
 
 ---
 
-## Current local MVP (M1–M5)
+## Current local path
 
 The supported local path is **public GitHub URL → real clone → one API model
 review → one bounded Docker command → finding with captured execution evidence
 → automatic cleanup**. It is a limited check, not full security verification.
+The model hypothesis remains **Unconfirmed**, separate from executed evidence.
+Optional sequential security review, a fixture-only browser journey, same-command
+repair replay, stable proof downloads and explicit human PR creation are gated
+separately. A verified repair proves that bounded command, not the allegation or
+a complete regression suite. The old synthetic verdict screens are removed.
 
 See [local MVP startup and reliability checks](docs/local-mvp.md),
+[settled evidence terms](CONTEXT.md),
 [M4 evidence](docs/evidence/M4.md), and [M5 evidence](docs/evidence/M5.md).
 The specialist/cloud descriptions below are migration-era roadmap context, not
 permission to run those stacks or a claim that the local MVP includes them.
@@ -81,7 +87,8 @@ Human-controlled PR gate
 
 ## Deep Audit
 
-Deep Audit is the default verification path.
+The larger Deep Audit described here is migration-era design and roadmap context,
+not the coverage of the delivered local check.
 
 One run can coordinate up to **10 verification engines** across areas such as:
 
@@ -233,32 +240,24 @@ VERIFAI deliberately fails toward uncertainty instead of manufacturing confidenc
 
 - Node.js 22+
 - npm
-- Docker for local sandbox/external-engine flows
-- GitHub / Google OAuth credentials for sign-in flows
-- model-provider credentials only for the real agent lanes you enable
+- Docker for the bounded local command
+- one API-backed model credential in the backend environment (see [configuration](docs/local-mvp.md#configuration-names-only))
+- no OAuth, external-engine stack or cloud credentials for the local path
 
 ```bash
 git clone https://github.com/aditya-zig/VERIFAI.git
 cd VERIFAI
 
 npm install
-cp .env.example .env
-# Fill the OAuth / provider values you actually use.
-
+# Supply model configuration in your backend launching environment; never commit keys.
 npm run check
-npm run build
 ```
 
-Start the API:
+Follow the [local preparation steps](docs/local-mvp.md#prepare-once-then-start), then
+start the two existing lightweight roles:
 
 ```bash
-npm run start:api
-```
-
-Start the web app in another shell:
-
-```bash
-npm run start:web
+./ops/local-agent/scripts/start-local.sh
 ```
 
 Default local endpoints:
@@ -267,7 +266,10 @@ Default local endpoints:
 - API: `http://localhost:8787`
 - Health: `http://localhost:8787/health`
 
-### Local verification workers
+### Migration-era worker/cloud tooling (explicit opt-in)
+
+These are not required for the local path. Do not start additional stacks merely
+to make a check pass.
 
 ```bash
 npm run verify:local-worker
@@ -337,7 +339,16 @@ tests*/                    core, P0 and P1 verification suites
 
 ---
 
-## Main API
+## Local HTTP interface
+
+- `POST /api/local/master` — bounded audit
+- `GET /api/local/audits/:id` — server-owned result
+- `POST /api/local/audits/:id/browser` — explicit fixture journey
+- `POST /api/local/audits/:id/repair` — admitted repair replay
+- `GET /api/local/audits/:id/proof` — proof snapshot
+- `POST /api/local/audits/:id/pr` — explicit verified-repair PR action
+
+## Migration-era API (not the delivered local UI)
 
 Authentication and repository onboarding:
 

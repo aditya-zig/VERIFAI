@@ -1,60 +1,70 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
+import { createDemoServer } from '../scripts/serve-web.mjs';
 
-const html = await readFile(new URL('../apps/web/index.html', import.meta.url), 'utf8').catch(() => '');
-const css = await readFile(new URL('../apps/web/styles.css', import.meta.url), 'utf8').catch(() => '');
-const js = await readFile(new URL('../apps/web/app.js', import.meta.url), 'utf8').catch(() => '');
+// Execute the delivered page, rather than asserting text in unused source files.
+const html = await readFile(new URL('../apps/web/index.html', import.meta.url), 'utf8');
 
-test('public landing describes the supported limited local check without verification claims', () => {
-  // M1/M2 replaced the marketing/swarm entry with the real local product.
-  const landing = html.match(/function renderLocalLanding\(\) \{([\s\S]*?)\n  \}/)?.[1];
-  assert.ok(landing, 'local landing renderer exists');
-  assert.match(landing, /Inspect a public GitHub repository/);
-  assert.match(landing, /localRepositoryFormMarkup\(\)/);
-  assert.match(landing, /one safe command/);
-  assert.match(landing, /one AI call/);
-  assert.match(landing, /No installs, repair or pull requests/);
-  assert.doesNotMatch(landing, /Start Verification|Fix verified|10 \/ 10/);
-  assert.match(html, /This limited check is not full verification/);
+function openPage(hash = '') {
+  const app = { innerHTML: '', classList: { add() {}, remove() {} }, offsetWidth: 0 };
+  const toast = { textContent: '', classList: { add() {}, remove() {} } };
+  const context = vm.createContext({
+    location: { hash, hostname: '127.0.0.1', origin: 'http://127.0.0.1:4173' },
+    document: {
+      getElementById: id => ({ app, toast })[id] || null,
+      addEventListener() {},
+      title: '',
+    },
+    requestAnimationFrame() {},
+    addEventListener() {},
+    scrollTo() {},
+    setTimeout,
+    clearTimeout,
+    clearInterval,
+  });
+  context.window = context;
+  for (const script of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)) {
+    vm.runInContext(script[1], context);
+  }
+  return { app, context };
+}
+
+test('the delivered landing renders the bounded real local check', () => {
+  const { app, context } = openPage();
+  assert.equal(context.document.title, 'Local repository check — VERIFAI');
+  assert.match(app.innerHTML, /Inspect a public GitHub repository/);
+  assert.match(app.innerHTML, /id="localRepositoryForm"/);
+  assert.match(app.innerHTML, /This limited check is not full verification/);
+  assert.match(app.innerHTML, /id="startLocalAudit"/);
+  assert.doesNotMatch(app.innerHTML, /10 \/ 10 passed|Fix Verified/);
 });
 
-test('frontend is wired to the real Deep Audit endpoint and live run state', () => {
-  assert.match(js, /\/api\/audits/);
-  assert.match(js, /fetchSwarm/);
-  assert.match(js, /applySwarm/);
-  assert.match(js, /\/swarm/);
-  assert.match(js, /\/steer/);
-  assert.match(js, /runFlagshipAudit/);
-  assert.match(js, /runResult/);
-  assert.match(js, /REAL SWARM/);
+test('legacy prototype hashes cannot display a verdict without executed evidence', () => {
+  for (const hash of ['#/verified', '#/repair', '#/results', '#/live', '#/project']) {
+    const { app, context } = openPage(hash);
+    assert.equal(context.document.title, 'Local repository check — VERIFAI', hash);
+    assert.match(app.innerHTML, /id="localRepositoryForm"/, hash);
+    assert.doesNotMatch(app.innerHTML, /10 \/ 10 passed|Fix Verified|3 \/ 3 failed/, hash);
+  }
 });
 
-test('motion system includes scroll, connector, counter, typing, sticky and reduced-motion behavior', () => {
-  assert.match(js, /IntersectionObserver/);
-  assert.match(js, /requestAnimationFrame/);
-  assert.match(js, /data-counter/);
-  assert.match(js, /typeStatus/);
-  assert.match(css, /stroke-dasharray/);
-  assert.match(css, /position:\s*sticky/);
-  assert.match(css, /prefers-reduced-motion/);
-  assert.match(css, /@keyframes\s+cursorMove/);
+test('programmatic navigation cannot resurrect retired prototype screens', () => {
+  const { app, context } = openPage();
+  const landing = app.innerHTML;
+  context.VERIFAI.navigate('verified');
+  assert.equal(app.innerHTML, landing);
+  assert.equal(context.VERIFAI.state.screen, 'landing');
 });
 
-test('responsive rules explicitly redesign mobile workflow layouts', () => {
-  assert.match(css, /@media\s*\(max-width:\s*760px\)/);
-  assert.match(css, /\.hero-graph/);
-  assert.match(css, /grid-template-columns:\s*1fr/);
-  assert.match(css, /overflow-x:\s*hidden/);
-});
-
-
-test('live audit UI never turns worker completion or prototype controls into fake verification', () => {
-  assert.doesNotMatch(js, /task\.state==='completed'\?'Verified'/);
-  assert.doesNotMatch(js, /Payment-timeout experiment replayed\./);
-  assert.match(js, /report\?\.findingState\|\|'Completed'/);
-  assert.match(js, /Preview only — run Deep Audit for executed payment-timeout evidence\./);
-  assert.doesNotMatch(html, /Pull request #82 created from verifiai\/fix-payment-timeout/);
-  assert.match(html, /Prototype control only — a real PR unlocks only after independent verification\./);
-  assert.match(html, /Illustrative product preview — run Deep Audit for executed evidence\./);
+test('unused frontend assets are not served as alternate implementations', async t => {
+  const server = createDemoServer({ apiOnly: false });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.shutdown());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  assert.equal((await fetch(base)).status, 200);
+  for (const file of ['app.js', 'styles.css']) {
+    assert.equal((await fetch(`${base}/${file}`)).status, 404, file);
+  }
 });

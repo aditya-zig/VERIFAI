@@ -14,11 +14,15 @@ model-generated shell, installs and unsupported commands are not executed.
 
 ## Configuration (names only)
 
-Supply `XKIRO_API_KEY` in the backend's launching environment; default provider
-`xkiro`, model `mistralai/ministral-8b`. Other existing provider configurations use
-`VERIFIAI_MODEL_PROVIDER`, `VERIFIAI_MODEL_ID`, `VERIFIAI_MODEL_BASE_URL` and their
-provider key variable. Never commit, paste into logs or send these keys to a
-container/browser. No credential value belongs in this document.
+Edit `config/local-models.json` for the ordered hosted provider/model list.
+Defaults: xkiro Qwen3.8 Max free → xkiro Qwen Coder Plus free → Token Harbor
+DeepSeek V4 Flash free. Supply each provider's referenced key in the backend
+launching environment or protected, ignored `.env.local` (API role only).
+See [swapping models/providers, bounds and privacy](local-model-routing.md).
+Explicit `VERIFIAI_MODEL_PROVIDER`, `VERIFIAI_MODEL_ID`, `VERIFIAI_MODEL_BASE_URL`
+retain the legacy single-provider behavior when no custom JSON path is set;
+its historical xkiro default remains `mistralai/ministral-8b`. Never commit,
+paste into logs or send keys to a container/browser. No key value belongs here.
 
 Seek AI uses `VERIFIAI_MODEL_PROVIDER=seek_ai`, an explicit
 `VERIFIAI_MODEL_ID` (for example `glm-5.3-flash` when listed by the provider), and
@@ -51,10 +55,10 @@ Run from the checkout. With >=20 GiB free and Docker ready:
 `npm start` is the same launcher. You can also invoke `/path/to/VERIFAI/start.sh`
 from outside the checkout; it selects its own repository directory. The existing
 `ops/local-agent/scripts/start-local.sh` command remains supported. The launcher
-inherits your backend configuration; it does not automatically load `.env` files,
-install packages, start an audit or restart an already-running service. To load
-new backend code/configuration, use the safe stop command below before starting
-again. Restart clears in-memory audit history.
+inherits backend environment values; the API role additionally loads optional
+`.env.local`, without overriding existing values. The web proxy never loads it.
+The launcher does not install packages, start an audit or restart an already-running
+service. JSON routes reload per review; restart safely after backend code/key changes. Restart clears in-memory audit history.
 
 Start launches only the existing lightweight web/API roles, using ports **4173**
 and **8787**, each with a 256 MiB Node old-space heap cap. The local API replaces the old
@@ -109,7 +113,8 @@ successes. A failed full run stops the loop; diagnose it instead of skipping it.
 
 ## Bounded lifecycle
 
-One audit admitted at a time, one model call, one 1 GiB / 2 CPU nonprivileged,
+One audit admitted at a time, one logical base review (up to three configured
+API attempts by default), one 1 GiB / 2 CPU nonprivileged,
 non-root, network-none container. No host bind/socket mounts or credentials.
 A copied clone lives in a disposable writable layer (Docker Desktop cannot copy
 into a read-only rootfs). Output <=8 KiB/stream; command default 10 s; model 60 s;

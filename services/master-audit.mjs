@@ -76,10 +76,11 @@ export class MasterAuditService {
       record=await this.repositories.clone(url,{signal:lease.signal});
       Object.assign(run,{repository:record.repository,clone:record.clone,files:record.files});
       stage('clone','Completed',`${record.files.count} tracked files cloned`);
-      // Exactly one real base model call BEFORE command execution.
+      // One logical source review BEFORE execution; configured failures may
+      // consume additional bounded API attempts, recorded in model.calls.
       stage('analysis','Running');
       const analysis=await this.analyze(record,{env:this.env,signal:lease.signal,auditId:run.id});
-      run.model={...analysis.model,calls:1};
+      run.model={...analysis.model,calls:analysis.model.calls ?? 1};
       stage('analysis','Completed',`${run.model.provider} / ${run.model.model}`);
       stage('sandbox','Running');
       const command=await this.select(record.clone.workspacePath,record.files.items);
@@ -152,6 +153,7 @@ export class MasterAuditService {
         }
       }
     } catch(error) {
+      if(active==='analysis' && error.model) run.model=error.model;
       if(/cleanup failed/i.test(error.message)){active='cleanup';cleanupBroken=true;}
       stage(active,'Incomplete',String(error.message));
       terminalStatus='Incomplete';run.failedStage=active;run.error=String(error.message);

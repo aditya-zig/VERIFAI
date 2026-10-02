@@ -101,7 +101,7 @@ test('both reviewers preserve bounded requests, compatible envelopes and trace m
   t.after(() => rm(workspacePath, { recursive: true, force: true }));
   await writeFile(join(workspacePath, 'README'), 'Unit-only context.');
   const record = { repository: { fullName: 'unit/policy' }, clone: { workspacePath }, files: { items: ['README'] } };
-  const env = { XKIRO_API_KEY: 'unit-test-key' };
+  const env = { VERIFIAI_MODEL_PROVIDER: 'xkiro', XKIRO_API_KEY: 'unit-test-key' };
   const finding = { title: ' Observation ', severity: 'minor', description: ' Source observation ', evidence: { file: 'README' } };
   for (const review of [analyzeRepository, reviewSecurityRepository]) {
     const security = review === reviewSecurityRepository;
@@ -135,7 +135,7 @@ test('both reviewers cancel rejected HTTP bodies without retrying or leaking cre
   for (const review of [analyzeRepository, reviewSecurityRepository]) {
     let calls = 0;
     let cancellations = 0;
-    await assert.rejects(review(record, { env: { XKIRO_API_KEY: 'unit-test-key' }, fetchImpl: async () => {
+    await assert.rejects(review(record, { env: { VERIFIAI_MODEL_PROVIDER: 'xkiro', XKIRO_API_KEY: 'unit-test-key' }, fetchImpl: async () => {
       calls += 1;
       return { ok: false, status: 503, body: { cancel: async () => { cancellations += 1; } } };
     } }), error => error.message === 'Model call failed: HTTP 503');
@@ -144,7 +144,7 @@ test('both reviewers cancel rejected HTTP bodies without retrying or leaking cre
   }
 });
 
-test('the existing default provider remains unchanged', () => {
+test('legacy single-provider resolution preserves its historical default', () => {
   const config = resolveModelConfig({ XKIRO_API_KEY: 'unit-test-key' });
   assert.equal(config.provider, 'xkiro');
   assert.equal(config.model, 'mistralai/ministral-8b');

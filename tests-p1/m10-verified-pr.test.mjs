@@ -79,6 +79,7 @@ test('approval is bound to proof manifest digest',async()=>{
 test('invalid verification facts block approval and all GitHub calls',async t=>{
   const cases=[
     ['missing regressions',r=>{r.regressions=[];}],
+    ['sparse regressions',r=>{r.regressions=Array(1);}],
     ['different after command',r=>{r.after.command='node --version';}],
     ['missing regression command',r=>{delete r.regressions[0].command;}],
     ['timeout despite pass',r=>{r.after.timedOut=true;}],

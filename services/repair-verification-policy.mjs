@@ -15,12 +15,12 @@ export function repairVerificationGate(repair){
   if(!executedCheck(repair?.after,'Completed',exit=>exit===0))return deny('AFTER verification requires an uninterrupted executed success and command');
   if(repair.before.command!==repair.after.command)return deny('Verification command changed between BEFORE and AFTER');
   if(!Array.isArray(repair.regressions)||repair.regressions.length<1||repair.regressions.length>8)return deny('At least one regression check is required (maximum 8)');
-  if(repair.regressions.some(value=>!executedCheck(value,'Completed',exit=>exit===0)))return deny('Every regression requires an uninterrupted executed success and command');
+  if(Array.from(repair.regressions).some(value=>!executedCheck(value,'Completed',exit=>exit===0)))return deny('Every regression requires an uninterrupted executed success and command');
   if(repair.originalUnchanged!==true)return deny('Original workspace integrity is not verified');
   if(repair.cleanup?.candidateRemoved!==true)return deny('Candidate cleanup is not verified');
   const files=repair.patch?.files;
   if(!Array.isArray(files)||files.length<1||files.length>8)return deny('Verified patch files are required');
-  if(files.some(file=>typeof file?.path!=='string'||!file.path||file.path.startsWith('/')
+  if(Array.from(files).some(file=>typeof file?.path!=='string'||!file.path||file.path.startsWith('/')
     ||file.path.split(/[\\/]+/).includes('..')||typeof file.expected!=='string'||typeof file.replacement!=='string'))return deny('Invalid verified patch file');
   const paths=files.map(file=>file.path);
   if(new Set(paths).size!==paths.length)return deny('Duplicate verified patch file');

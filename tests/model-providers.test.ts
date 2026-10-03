@@ -1,82 +1,80 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  AwsSecretsManagerCredentialSource,
-  EnvironmentCredentialSource,
   MODEL_PROVIDER_PROFILES,
-  SecretValue,
-  publicModelRunSelection,
   redactProviderSecrets,
   resolveModelRunSelection,
-  type CredentialSource,
 } from '../services/agent-runtime/providers.js';
 
-test('A02 exposes all approved OpenAI-compatible provider profiles', () => {
-  assert.deepEqual(Object.keys(MODEL_PROVIDER_PROFILES).sort(), ['nvidia', 'ollama-cloud', 'openrouter']);
-  assert.equal(MODEL_PROVIDER_PROFILES.openrouter.baseUrl, 'https://openrouter.ai/api/v1');
-  assert.equal(MODEL_PROVIDER_PROFILES.nvidia.baseUrl, 'https://integrate.api.nvidia.com/v1');
-  assert.equal(MODEL_PROVIDER_PROFILES['ollama-cloud'].baseUrl, 'https://ollama.com/v1');
+test('the only model provider is AWS Bedrock', () => {
+  assert.deepEqual(Object.keys(MODEL_PROVIDER_PROFILES), ['bedrock']);
 });
 
-test('one explicit provider/model is resolved per run without serializing its secret', async () => {
-  const env = {
-    VERIFIAI_MODEL_PROVIDER: 'nvidia',
-    VERIFIAI_MODEL_ID: 'openai/gpt-oss-120b',
-    NVIDIA_API_KEY: 'nv-secret-demo',
-  };
-  const selection = await resolveModelRunSelection({}, { env, environmentSource: new EnvironmentCredentialSource(env) });
-  assert.equal(selection.profileId, 'nvidia:openai/gpt-oss-120b');
-  assert.equal(selection.credential.reveal(), 'nv-secret-demo');
-  assert.equal(JSON.stringify(selection).includes('nv-secret-demo'), false);
-  assert.deepEqual(publicModelRunSelection(selection).credential, '[REDACTED]');
+test('Bedrock selection uses the AWS credential chain without model API keys', async () => {
+  const selection = await resolveModelRunSelection({}, { env: {
+    VERIFIAI_BEDROCK_MODEL_ID: 'amazon.nova-pro-v1:0',
+    AWS_REGION: 'ap-south-1',
+  } });
+  assert.equal(selection.provider, 'bedrock');
+  assert.equal(selection.modelId, 'amazon.nova-pro-v1:0');
+  assert.equal(selection.profileId, 'bedrock:amazon.nova-pro-v1:0');
+  assert.equal((selection as any).region, 'ap-south-1');
+  assert.equal(selection.credentialSource, 'aws-default-chain');
+  assert.equal('credential' in selection, false);
 });
 
-test('AWS Secrets Manager source uses injected SDK client and supports JSON fields', async () => {
-  let requested = '';
-  const source = new AwsSecretsManagerCredentialSource({
-    client: {
-      async send(command: any) {
-        requested = command.input.SecretId;
-        return { SecretString: JSON.stringify({ OPENROUTER_API_KEY: 'aws-managed-secret' }) };
-      },
-    },
-  });
-  const secret = await source.resolve({
-    provider: 'openrouter',
-    envName: 'OPENROUTER_API_KEY',
-    awsSecretId: 'verifiai/demo/providers',
-    awsSecretField: 'OPENROUTER_API_KEY',
-  });
-  assert.equal(requested, 'verifiai/demo/providers');
-  assert.equal(secret.reveal(), 'aws-managed-secret');
-  assert.equal(String(secret), '[REDACTED]');
+test('explicit Bedrock model input wins and generic model environment remains supported', async () => {
+  const selection = await resolveModelRunSelection({ modelId: 'explicit-model' }, { env: {
+    VERIFIAI_BEDROCK_MODEL_ID: 'bedrock-model', VERIFIAI_MODEL_ID: 'generic-model', AWS_DEFAULT_REGION: 'us-west-2',
+  } });
+  assert.equal(selection.modelId, 'explicit-model');
+  assert.equal((selection as any).region, 'us-west-2');
+  const generic = await resolveModelRunSelection({}, { env: { VERIFIAI_MODEL_ID: 'generic-model', AWS_REGION: 'us-east-1' } });
+  assert.equal(generic.modelId, 'generic-model');
 });
 
-test('run selection prefers AWS-managed secret when a secret id is configured', async () => {
-  const fake: CredentialSource = {
-    async resolve(request) {
-      assert.equal(request.awsSecretId, 'verifiai/model-key');
-      return new SecretValue('managed-key');
-    },
-  };
-  const selection = await resolveModelRunSelection({
-    provider: 'ollama-cloud',
-    modelId: 'gpt-oss:120b-cloud',
-    awsSecretId: 'verifiai/model-key',
-  }, { env: {}, awsSource: fake });
-  assert.equal(selection.credentialSource, 'aws-secrets-manager');
-  assert.equal(selection.credential.reveal(), 'managed-key');
+test('legacy third-party providers and missing model IDs fail closed', async () => {
+  await assert.rejects(resolveModelRunSelection({}, { env: { VERIFIAI_MODEL_PROVIDER: 'openrouter', VERIFIAI_MODEL_ID: 'legacy' } }), /Unsupported model provider/);
+  await assert.rejects(resolveModelRunSelection({}, { env: {} }), /VERIFIAI_BEDROCK_MODEL_ID or VERIFIAI_MODEL_ID is required/);
 });
 
 test('provider secret redaction is recursive and fail-closed', () => {
-  const redacted = redactProviderSecrets({
-    apiKey: 'raw-key',
+  assert.deepEqual(redactProviderSecrets({
+    accessKeyId: 'access-id', secretAccessKey: 'raw-secret', sessionToken: 'token',
     nested: { authorization: 'Bearer top-secret', note: 'safe top-secret' },
-    wrapped: new SecretValue('wrapped-secret'),
-  }, ['top-secret']);
-  assert.deepEqual(redacted, {
-    apiKey: '[REDACTED]',
+  }, ['top-secret']), {
+    accessKeyId: '[REDACTED]', secretAccessKey: '[REDACTED]', sessionToken: '[REDACTED]',
     nested: { authorization: '[REDACTED]', note: 'safe [REDACTED]' },
-    wrapped: '[REDACTED]',
   });
+});
+
+
+test('Bedrock selection requires an explicit AWS region', async () => {
+  await assert.rejects(resolveModelRunSelection({}, { env: { VERIFIAI_MODEL_ID: 'model' } }), /AWS_REGION or AWS_DEFAULT_REGION is required/);
+});
+
+test('retired model endpoint, secret, and harness overrides are rejected', async () => {
+  for (const name of ['VERIFIAI_MODEL_BASE_URL', 'VERIFIAI_MODEL_SECRET_ID', 'VERIFIAI_MODEL_SECRET_FIELD', 'VERIFIAI_AGENT_HARNESS']) {
+    await assert.rejects(resolveModelRunSelection({}, { env: {
+      VERIFIAI_MODEL_ID: 'amazon.nova-pro-v1:0', AWS_REGION: 'ap-south-1', [name]: 'retired-configuration',
+    } }), /remove retired model configuration/);
+  }
+});
+
+test('Bedrock model and region metadata reject malformed and credential-bearing values without echoing them', async () => {
+  for (const modelId of ['model with whitespace', ' model', 'https://external.example/model']) {
+    await assert.rejects(resolveModelRunSelection({ modelId }, { env: { AWS_REGION: 'ap-south-1' } }), /Invalid Bedrock model configuration/);
+  }
+  for (const region of ['ap-south-1.attacker.example', ' ap-south-1', 'localhost', 'us-east-1/token']) {
+    await assert.rejects(resolveModelRunSelection({ modelId: 'model', region }, { env: {} }), /Invalid Bedrock model configuration/);
+  }
+  for (const name of ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_BEARER_TOKEN_BEDROCK']) {
+    for (const values of [{ modelId: 'secret-bearing-model', region: 'ap-south-1', secret: 'secret-bearing' }, { modelId: 'model', region: 'us-east-1', secret: 'us-east' }]) {
+      await assert.rejects(resolveModelRunSelection(values, { env: { [name]: values.secret } }), (error: any) => {
+        assert.equal(error.message, 'Invalid Bedrock model configuration');
+        assert.ok(!error.message.includes(values.secret));
+        return true;
+      });
+    }
+  }
 });

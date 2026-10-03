@@ -152,39 +152,54 @@ if [ "${stage}" = "M1" ]; then
   exit 0
 fi
 
-# --- M2: one API-backed provider, presence only ----------------------------
-# Canonical logic mirrors services/local-analysis.mjs resolveModelConfig (PR #21):
-# provider = VERIFIAI_MODEL_PROVIDER || 'xkiro'; key env per provider profile.
-provider="${VERIFIAI_MODEL_PROVIDER:-xkiro}"
-case "${provider}" in
-  xkiro) key_env="XKIRO_API_KEY"; base_url="https://api.xkiro.com/v1" ;;
-  openrouter) key_env="OPENROUTER_API_KEY"; base_url="https://openrouter.ai/api/v1" ;;
-  nvidia) key_env="NVIDIA_API_KEY"; base_url="https://integrate.api.nvidia.com/v1" ;;
-  ollama-cloud) key_env="OLLAMA_API_KEY"; base_url="https://ollama.com/v1" ;;
-  *)
-    say "model provider: FAIL unsupported provider '${provider}'"
-    say "result: FAIL"
-    exit 1
-    ;;
-esac
-
-if [ "${provider}" = "ollama-cloud" ]; then
-  say "model provider: WARN '${provider}' is an API service, not local Ollama; local Ollama is forbidden"
+# --- M2: AWS Bedrock configuration, presence only --------------------------
+# AWS SDK resolves credentials (profile/SSO, temporary environment keys, or
+# execution role). This read-only check never calls AWS or proves model access.
+present() { [ -n "${1//[[:space:]]/}" ]; }
+provider="${VERIFIAI_MODEL_PROVIDER:-bedrock}"
+if [ "${provider}" != "bedrock" ]; then
+  say "model provider: FAIL unsupported provider (only bedrock is supported)"
+  say "result: FAIL"
+  exit 1
 fi
-
-say "model provider: ${provider} (base ${base_url})"
-if [ -n "${VERIFIAI_MODEL_ID:-}" ]; then
-  say "model id: ${VERIFIAI_MODEL_ID}"
+say "model provider: bedrock"
+ready=1
+if present "${VERIFIAI_BEDROCK_MODEL_ID:-${VERIFIAI_MODEL_ID:-}}"; then
+  say "VERIFIAI_BEDROCK_MODEL_ID / VERIFIAI_MODEL_ID: present"
 else
-  say "model id: provider default"
+  say "VERIFIAI_BEDROCK_MODEL_ID / VERIFIAI_MODEL_ID: missing (set a model or inference profile ID)"
+  ready=0
+fi
+if present "${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"; then
+  say "AWS_REGION / AWS_DEFAULT_REGION: present"
+else
+  say "AWS_REGION / AWS_DEFAULT_REGION: missing"
+  ready=0
 fi
 
-if [ -n "$(printenv "${key_env}" 2>/dev/null || true)" ]; then
-  say "${key_env}: present"
-  say "result: PASS"
+# Check configured credential sources without reading or printing their values.
+if present "${AWS_BEARER_TOKEN_BEDROCK:-}"; then
+  say "AWS_BEARER_TOKEN_BEDROCK: present"
+elif present "${AWS_ACCESS_KEY_ID:-}" && present "${AWS_SECRET_ACCESS_KEY:-}"; then
+  say "AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY: present"
+  if present "${AWS_SESSION_TOKEN:-}"; then say "AWS_SESSION_TOKEN: present"; fi
+elif present "${AWS_PROFILE:-}"; then
+  say "AWS_PROFILE: present (profile/SSO resolution is delegated to the AWS SDK)"
+elif [ -r "${AWS_SHARED_CREDENTIALS_FILE:-${HOME:-}/.aws/credentials}" ] || \
+     [ -r "${AWS_CONFIG_FILE:-${HOME:-}/.aws/config}" ]; then
+  say "AWS shared credentials/config file: present"
+elif present "${AWS_CONTAINER_CREDENTIALS_RELATIVE_URI:-}" || present "${AWS_CONTAINER_CREDENTIALS_FULL_URI:-}"; then
+  say "AWS container execution-role credential source: present"
+elif present "${AWS_WEB_IDENTITY_TOKEN_FILE:-}" && present "${AWS_ROLE_ARN:-}"; then
+  say "AWS web-identity credential source: present"
+else
+  say "AWS credentials: missing (configure a profile/SSO, shared AWS file, temporary access-key pair, Bedrock bearer token, or execution-role source)"
+  ready=0
+fi
+say "readiness: presence only; not proof of live AWS access, model permission, or unexpired credentials"
+if [ "${ready}" -eq 1 ]; then
+  say "result: PASS (configuration presence only)"
   exit 0
 fi
-
-say "${key_env}: missing (set ${key_env} for provider ${provider})"
 say "result: FAIL"
 exit 1

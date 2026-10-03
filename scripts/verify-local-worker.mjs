@@ -3,19 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { DockerWorkerLauncher } from '../dist/services/agent-runtime/docker-launcher.js';
 import { AGENT_WORKER_CONTRACT_VERSION } from '../dist/packages/contracts/src/index.js';
 
-const provider = process.env.VERIFIAI_MODEL_PROVIDER ?? 'openrouter';
-const modelId = process.env.VERIFIAI_MODEL_ID;
-if (!modelId) throw new Error('VERIFIAI_MODEL_ID is required');
-
-const credentialNames = {
-  openrouter: 'OPENROUTER_API_KEY',
-  nvidia: 'NVIDIA_API_KEY',
-  'ollama-cloud': 'OLLAMA_API_KEY',
-};
-const credentialName = credentialNames[provider];
-if (!credentialName) throw new Error(`Unsupported VERIFIAI_MODEL_PROVIDER: ${provider}`);
-if (!process.env[credentialName] && !process.env.VERIFIAI_MODEL_SECRET_ID) {
-  throw new Error(`${credentialName} or VERIFIAI_MODEL_SECRET_ID is required`);
+const provider = process.env.VERIFIAI_MODEL_PROVIDER ?? 'bedrock';
+const modelId = process.env.VERIFIAI_BEDROCK_MODEL_ID ?? process.env.VERIFIAI_MODEL_ID;
+if (provider !== 'bedrock') throw new Error('VERIFIAI_MODEL_PROVIDER must be bedrock');
+if (!modelId) throw new Error('VERIFIAI_BEDROCK_MODEL_ID or VERIFIAI_MODEL_ID is required');
+if (!process.env.AWS_REGION && !process.env.AWS_DEFAULT_REGION) throw new Error('AWS_REGION or AWS_DEFAULT_REGION is required');
+if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
+  throw new Error('Local Docker worker requires AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY (and AWS_SESSION_TOKEN for temporary credentials)');
 }
 
 const network = process.env.VERIFIAI_LOCAL_WORKER_NETWORK ?? 'verifiai-agent-local';

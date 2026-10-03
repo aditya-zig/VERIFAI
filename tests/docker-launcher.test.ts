@@ -23,7 +23,7 @@ function brief(): AgentWorkerLaunchBrief {
     target: null,
     tools: [],
     evidenceRefs: [],
-    modelProfileId: 'openrouter:test-model',
+    modelProfileId: 'bedrock:amazon.nova-pro-v1:0',
     constraints: {
       timeoutMs: 60_000,
       maxToolCalls: 8,
@@ -39,7 +39,11 @@ test('A04 local Docker worker enforces resource and privilege limits without emb
   const secret = 'unit-test-secret-never-in-args';
   const spec = buildDockerRunSpec(brief(), {
     env: {
-      OPENROUTER_API_KEY: secret,
+      AWS_ACCESS_KEY_ID: 'test-access-key',
+      AWS_SECRET_ACCESS_KEY: secret,
+      AWS_SESSION_TOKEN: 'test-session-token',
+      AWS_REGION: 'ap-south-1',
+      OPENROUTER_API_KEY: 'legacy-unused-key',
       VERIFIAI_LOCAL_WORKER_IMAGE: 'verifiai-agent-worker:test',
     },
     cpus: 0.75,
@@ -57,7 +61,12 @@ test('A04 local Docker worker enforces resource and privilege limits without emb
   assert.match(joined, /--security-opt no-new-privileges:true/);
   assert.match(joined, /--tmpfs \/tmp:rw,noexec,nosuid,size=64m/);
   assert.match(joined, /--network verifiai-local/);
-  assert.ok(spec.forwardedEnvNames.includes('OPENROUTER_API_KEY'));
+  assert.ok(spec.forwardedEnvNames.includes('AWS_ACCESS_KEY_ID'));
+  assert.ok(spec.forwardedEnvNames.includes('AWS_SECRET_ACCESS_KEY'));
+  assert.ok(spec.forwardedEnvNames.includes('AWS_SESSION_TOKEN'));
+  assert.ok(!spec.forwardedEnvNames.includes('OPENROUTER_API_KEY'));
+  assert.ok(!joined.includes('test-access-key'));
+  assert.ok(!joined.includes('test-session-token'));
   assert.ok(!joined.includes(secret));
   assert.equal(spec.containerName, 'verifiai-AUD-LOCAL-A04-W-SEC-LOCAL');
 });
@@ -65,6 +74,17 @@ test('A04 local Docker worker enforces resource and privilege limits without emb
 test('A04 local Docker worker refuses to launch without model credentials', () => {
   assert.throws(
     () => buildDockerRunSpec(brief(), { env: {} }),
-    /OPENROUTER_API_KEY or VERIFIAI_MODEL_SECRET_ID/,
+    /AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY/,
   );
+});
+
+
+test('local Docker refuses host profiles and partial AWS credentials that are inaccessible inside the container', () => {
+  for (const env of [{ AWS_PROFILE: 'production' }, { AWS_ACCESS_KEY_ID: 'partial' }, { VERIFIAI_MODEL_SECRET_ID: 'legacy-secret' }]) {
+    assert.throws(() => buildDockerRunSpec(brief(), { env }), /AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY/);
+  }
+});
+
+test('local Docker refuses legacy model profile providers', () => {
+  assert.throws(() => buildDockerRunSpec({ ...brief(), modelProfileId: 'openrouter:legacy' }, { env: { AWS_ACCESS_KEY_ID: 'id', AWS_SECRET_ACCESS_KEY: 'secret' } }), /Unsupported local model provider/);
 });

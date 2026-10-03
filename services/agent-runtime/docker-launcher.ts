@@ -35,13 +35,6 @@ function safeName(value: string): string {
   return value.replace(/[^A-Za-z0-9_.-]/g, '-').slice(0, 120);
 }
 
-function providerEnvName(modelProfileId: string): string {
-  const provider = modelProfileId.split(':', 1)[0];
-  if (provider === 'openrouter') return 'OPENROUTER_API_KEY';
-  if (provider === 'nvidia') return 'NVIDIA_API_KEY';
-  if (provider === 'ollama-cloud') return 'OLLAMA_API_KEY';
-  throw new Error(`Unsupported local model provider: ${provider}`);
-}
 
 export function buildDockerRunSpec(
   brief: AgentWorkerLaunchBrief,
@@ -54,17 +47,20 @@ export function buildDockerRunSpec(
   const memory = options.memory ?? env.VERIFIAI_LOCAL_WORKER_MEMORY ?? '1024m';
   const pidsLimit = Math.max(32, Math.min(options.pidsLimit ?? Number(env.VERIFIAI_LOCAL_WORKER_PIDS ?? 256), 2048));
   const network = options.network ?? env.VERIFIAI_LOCAL_WORKER_NETWORK ?? 'bridge';
-  const credentialEnv = providerEnvName(brief.modelProfileId);
+  const provider = brief.modelProfileId.split(':', 1)[0];
+  if (provider !== 'bedrock') throw new Error(`Unsupported local model provider: ${provider}`);
 
-  if (!env[credentialEnv] && !env.VERIFIAI_MODEL_SECRET_ID) {
-    throw new Error(`Local Docker worker requires ${credentialEnv} or VERIFIAI_MODEL_SECRET_ID`);
+  if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) {
+    throw new Error('Local Docker worker requires AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY (and AWS_SESSION_TOKEN for temporary credentials); host AWS profiles and role credentials are not forwarded');
   }
+  if (!env.AWS_REGION && !env.AWS_DEFAULT_REGION) throw new Error('AWS_REGION or AWS_DEFAULT_REGION is required');
 
   const forwarded = new Set<string>([
     'AWS_REGION',
     'AWS_DEFAULT_REGION',
-    'VERIFIAI_MODEL_SECRET_ID',
-    'VERIFIAI_MODEL_SECRET_FIELD',
+    'AWS_ACCESS_KEY_ID',
+    'AWS_SECRET_ACCESS_KEY',
+    'AWS_SESSION_TOKEN',
     'VERIFIAI_EXTERNAL_ENGINE_URL',
     'VERIFIAI_EXTERNAL_ENGINE_TOKEN',
     'VERIFIAI_COMPUTER_USE_URL',
@@ -73,7 +69,6 @@ export function buildDockerRunSpec(
     'VERIFIAI_CUA_URL',
     'VERIFIAI_MUTATION_SERVICE_URL',
     'VERIFIAI_MUTATION_SERVICE_TOKEN',
-    credentialEnv,
   ]);
   for (const name of [...forwarded]) if (!env[name]) forwarded.delete(name);
 

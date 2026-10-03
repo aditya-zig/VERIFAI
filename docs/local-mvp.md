@@ -1,9 +1,9 @@
 # Local MVP: one bounded audit
 
-Linux, Node 22+, installed npm dependencies, Docker CLI/daemon access, and one
-API-backed model configuration are prerequisites. Acceptance also requires an
+Linux, Node 22+, installed npm dependencies, Docker CLI/daemon access, and an
+AWS Bedrock model configuration are prerequisites. Acceptance also requires an
 already-installed Chrome (`VERIFIAI_CHROME` may identify its executable).
-Do not download a browser, start Ollama, start cloud/TrueForge/engine stacks,
+Do not download a browser, start Ollama, deploy AWS or start legacy engine stacks,
 or prune unrelated resources to make tests pass.
 
 The tested target is https://github.com/octocat/Hello-World, a tiny public
@@ -14,32 +14,16 @@ model-generated shell, installs and unsupported commands are not executed.
 
 ## Configuration (names only)
 
-Edit `config/local-models.json` for the ordered hosted provider/model list.
-Defaults: xkiro Qwen3.8 Max free → xkiro Qwen Coder Plus free → Token Harbor
-DeepSeek V4 Flash free. Supply each provider's referenced key in the backend
-launching environment or protected, ignored `.env.local` (API role only).
-See [swapping models/providers, bounds and privacy](local-model-routing.md).
-Explicit `VERIFIAI_MODEL_PROVIDER`, `VERIFIAI_MODEL_ID`, `VERIFIAI_MODEL_BASE_URL`
-retain the legacy single-provider behavior when no custom JSON path is set;
-its historical xkiro default remains `mistralai/ministral-8b`. Never commit,
-paste into logs or send keys to a container/browser. No key value belongs here.
-
-Seek AI uses `VERIFIAI_MODEL_PROVIDER=seek_ai`, an explicit
-`VERIFIAI_MODEL_ID` (for example `glm-5.3-flash` when listed by the provider), and
-`SEEK_AI_API_KEY` in the backend environment. Its default API base URL is
-`https://seekai.cc/v1`; this labels findings as Seek AI rather than xkiro.
-Configuration support is not proof of model compatibility: a real
-`jonschlinkert/is-number` trial returned invalid JSON at the existing 500-token
-cap, and a second trial at 1500 tokens hit the 60-second model timeout. Both
-ended Incomplete with cleanup completed; the speculative cap increase was not
-retained. Provider-specific GLM response/reasoning compatibility remains unverified.
-A subsequent tiny JSON diagnostic with documented `reasoning_effort: low`
-reported `MiniMaxAI/MiniMax-M2.7`, not the requested GLM, and included inline
-reasoning instead of pure JSON. The Seek AI GLM path now fails closed if the
-response omits or differs from the requested model identity (case-insensitive).
-Do not silently accept another model or strip reasoning to label it GLM.
-Seek AI's routing/model mapping must be corrected before real GLM acceptance
-can be retried. See `docs/evidence/seek-ai-glm53-trial.md`.
+Use Amazon Bedrock via Strands. Set `AWS_REGION` and
+`VERIFIAI_BEDROCK_MODEL_ID` (or `VERIFIAI_MODEL_ID`) in the backend environment
+or protected `.env.local`. The AWS SDK uses the normal credential chain:
+local AWS profile/SSO, temporary environment credentials, or a runtime IAM role.
+`config/local-models.json` controls the bounded 60-second deadline and 500-token
+cap; a custom version-2 file may supply region/model. External provider catalogs,
+endpoint overrides and harness selection are rejected. No provider fallback.
+See [AWS runtime](aws-runtime.md) and [Bedrock model settings](local-model-routing.md).
+A missing model, denied access, invalid output or missing AWS credentials becomes
+Incomplete with actual clone cleanup; it never becomes a fake PASS.
 
 ## Prepare once, then start
 
@@ -58,7 +42,7 @@ from outside the checkout; it selects its own repository directory. The existing
 inherits backend environment values; the API role additionally loads optional
 `.env.local`, without overriding existing values. The web proxy never loads it.
 The launcher does not install packages, start an audit or restart an already-running
-service. JSON routes reload per review; restart safely after backend code/key changes. Restart clears in-memory audit history.
+service. Bedrock settings reload per review; restart safely after backend code/key changes. Restart clears in-memory audit history.
 
 Start launches only the existing lightweight web/API roles, using ports **4173**
 and **8787**, each with a 256 MiB Node old-space heap cap. The local API replaces the old

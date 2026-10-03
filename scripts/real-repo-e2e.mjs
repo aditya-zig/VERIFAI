@@ -45,14 +45,15 @@ async function main() {
     'VERIFIAI_TARGET_SECURITY_GROUP_IDS',
     'VERIFIAI_HEALTH_PROBE_FUNCTION',
     'VERIFIAI_AGENTCORE_RUNTIME_ARN',
-    'VERIFIAI_MODEL_PROVIDER',
-    'VERIFIAI_MODEL_ID',
   ]) required(name);
+
+  const {resolveModelRunSelection} = await import('../dist/services/agent-runtime/providers.js');
+  const selection = await resolveModelRunSelection();
 
   const commitSha = await resolveCommit(candidate.fullName, candidate.branch);
   const auditTag = `e2e-${candidate.id}-${commitSha.slice(0, 10)}-${Date.now()}`;
   const lifecycle = new AwsTargetLifecycle({
-    region: process.env.AWS_REGION || 'ap-south-1',
+    region: selection.region,
     codeBuildProject: required('VERIFIAI_CODEBUILD_PROJECT'),
     ecrRepository: required('VERIFIAI_ECR_REPOSITORY'),
     ecrRegistry: required('VERIFIAI_ECR_REGISTRY'),

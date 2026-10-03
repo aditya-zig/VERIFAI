@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Agent } from '@strands-agents/sdk';
-import { OpenAIModel } from '@strands-agents/sdk/models/openai';
+import { Agent, BedrockModel } from '@strands-agents/sdk';
 import {
   AGENT_WORKER_CONTRACT_VERSION,
   type AgentToolGrant,
@@ -159,14 +158,10 @@ export class StrandsAuditPlanningAgent implements AuditPlanningAgent {
 
 export async function createStrandsPlanningAgent(
   selectionInput: ModelRunSelectionInput = {},
+  options: { env?: Record<string, string | undefined> } = {},
 ): Promise<{ planner: StrandsAuditPlanningAgent; modelProfileId: string }> {
-  const selection = await resolveModelRunSelection(selectionInput);
-  const model = new OpenAIModel({
-    api: 'chat',
-    apiKey: selection.credential.reveal(),
-    clientConfig: { baseURL: selection.baseUrl },
-    modelId: selection.modelId,
-  });
+  const selection = await resolveModelRunSelection(selectionInput, options);
+  const model = new BedrockModel({ modelId: selection.modelId, region: selection.region });
   const agent = new Agent({
     model,
     printer: false,

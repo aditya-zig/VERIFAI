@@ -36,16 +36,12 @@ jobs:
     timeout-minutes: 180
     env:
       AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+      VERIFIAI_MODEL_PROVIDER: bedrock
+      VERIFIAI_BEDROCK_MODEL_ID: ${{ vars.VERIFIAI_BEDROCK_MODEL_ID }}
       AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
       VERIFIAI_TARGET_STACK: ${{ vars.VERIFIAI_TARGET_STACK || 'verifiai-real-target' }}
       VERIFIAI_AGENTCORE_STACK: ${{ vars.VERIFIAI_AGENTCORE_STACK || 'verifiai-agentcore' }}
       VERIFIAI_ENGINE_STACK: ${{ vars.VERIFIAI_ENGINE_STACK || 'verifiai-external-engines' }}
-      VERIFIAI_MODEL_PROVIDER: ${{ vars.VERIFIAI_MODEL_PROVIDER }}
-      VERIFIAI_MODEL_ID: ${{ vars.VERIFIAI_MODEL_ID }}
-      VERIFIAI_MODEL_BASE_URL: ${{ vars.VERIFIAI_MODEL_BASE_URL }}
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
       VERIFIAI_COMPUTER_USE_URL: ${{ vars.VERIFIAI_COMPUTER_USE_URL }}
       VERIFIAI_BROWSER_USE_URL: ${{ vars.VERIFIAI_BROWSER_USE_URL }}
       VERIFIAI_CUA_URL: ${{ vars.VERIFIAI_CUA_URL }}
@@ -62,16 +58,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in AWS_ROLE_ARN VERIFIAI_MODEL_PROVIDER VERIFIAI_MODEL_ID; do
+          for name in AWS_ROLE_ARN VERIFIAI_MODEL_PROVIDER VERIFIAI_BEDROCK_MODEL_ID; do
             if [ -z "${!name:-}" ]; then
               echo "::error::Missing required configuration: $name"
               exit 1
             fi
           done
           case "$VERIFIAI_MODEL_PROVIDER" in
-            openrouter) [ -n "${OPENROUTER_API_KEY:-}" ] || { echo "::error::OPENROUTER_API_KEY is missing"; exit 1; } ;;
-            nvidia) [ -n "${NVIDIA_API_KEY:-}" ] || { echo "::error::NVIDIA_API_KEY is missing"; exit 1; } ;;
-            ollama-cloud) [ -n "${OLLAMA_API_KEY:-}" ] || { echo "::error::OLLAMA_API_KEY is missing"; exit 1; } ;;
+            bedrock) ;;
             *) echo "::error::Unsupported VERIFIAI_MODEL_PROVIDER=$VERIFIAI_MODEL_PROVIDER"; exit 1 ;;
           esac
 

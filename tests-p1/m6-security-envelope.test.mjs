@@ -4,20 +4,17 @@ import {mkdtemp,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {reviewSecurityRepository} from '../services/local-security-specialist.mjs';
+import {bedrockFixture} from './bedrock-fixture.mjs';
 
 test('M6 accepts the observed evidence_file alias but still binds it to a tracked file',async(t)=>{
   const root=await mkdtemp(join(tmpdir(),'verifiai-m6-envelope-'));
   t.after(()=>rm(root,{recursive:true,force:true}));
   await writeFile(join(root,'README'),'hello');
   const record={repository:{fullName:'octocat/Hello-World'},clone:{workspacePath:root},files:{items:['README'],count:1}};
-  const fetchImpl=async()=>new Response(JSON.stringify({
-    id:'provider-response',
-    choices:[{message:{content:JSON.stringify({title:'Observation',severity:'info',description:'Concrete security observation',evidence_file:'README'})}}],
-    usage:{prompt_tokens:10,completion_tokens:8},
-  }),{status:200,headers:{'content-type':'application/json'}});
+  const modelFactory=bedrockFixture(JSON.stringify({title:'Observation',severity:'info',description:'Concrete security observation',evidence_file:'README'}));
   const result=await reviewSecurityRepository(record,{
-    env:{VERIFIAI_MODEL_PROVIDER:'xkiro',XKIRO_API_KEY:'sentinel'},
-    fetchImpl,
+    env:{AWS_REGION:'ap-south-1',VERIFIAI_BEDROCK_MODEL_ID:'amazon.nova-lite-v1:0'},
+    modelFactory,
     auditId:'audit-1',
   });
   assert.equal(result.status,'Completed');
@@ -30,10 +27,8 @@ test('M6 evidence_file alias still rejects files outside the tracked clone',asyn
   t.after(()=>rm(root,{recursive:true,force:true}));
   await writeFile(join(root,'README'),'hello');
   const record={repository:{fullName:'octocat/Hello-World'},clone:{workspacePath:root},files:{items:['README'],count:1}};
-  const fetchImpl=async()=>new Response(JSON.stringify({
-    choices:[{message:{content:JSON.stringify({title:'Bad',severity:'info',description:'bad citation',evidence_file:'../../etc/passwd'})}}],
-  }),{status:200,headers:{'content-type':'application/json'}});
+  const modelFactory=bedrockFixture(JSON.stringify({title:'Bad',severity:'info',description:'bad citation',evidence_file:'../../etc/passwd'}));
   await assert.rejects(reviewSecurityRepository(record,{
-    env:{VERIFIAI_MODEL_PROVIDER:'xkiro',XKIRO_API_KEY:'sentinel'},fetchImpl,
+    env:{AWS_REGION:'ap-south-1',VERIFIAI_BEDROCK_MODEL_ID:'amazon.nova-lite-v1:0'},modelFactory,
   }),/outside the clone/i);
 });

@@ -12,12 +12,13 @@ Parameters:
   WorkerRepositoryArn:
     Type: String
     Description: ARN of the ECR repository containing WorkerImageUri
-  ModelSecretArn:
+  BedrockModelId:
     Type: String
-    Description: Secrets Manager ARN containing the selected external model provider API key
-  ModelSecretField:
-    Type: String
-    Default: ''
+    Description: Explicit Bedrock model ID or inference profile ID used by workers
+  BedrockModelArns:
+    Type: CommaDelimitedList
+    AllowedPattern: '^arn:[a-z0-9-]+:bedrock:[a-z]{2}(-[a-z]+)+-[0-9]+:([0-9]{12})?:[^*?\s]+$'
+    Description: Exact Bedrock model ARNs; include the inference profile and each backing destination model ARN for cross-region inference
   WorkerSubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
   WorkerSecurityGroupIds:
@@ -76,10 +77,12 @@ Resources:
                   - ecr:GetDownloadUrlForLayer
                   - ecr:BatchCheckLayerAvailability
                 Resource: !Ref WorkerRepositoryArn
-              - Sid: ModelSecretRead
+              - Sid: BedrockModelInvoke
                 Effect: Allow
-                Action: secretsmanager:GetSecretValue
-                Resource: !Ref ModelSecretArn
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: !Ref BedrockModelArns
               - Sid: RuntimeLogs
                 Effect: Allow
                 Action:
@@ -101,8 +104,8 @@ Resources:
       ProtocolConfiguration: HTTP
       EnvironmentVariables:
         AWS_REGION: !Ref AWS::Region
-        VERIFIAI_MODEL_SECRET_ID: !Ref ModelSecretArn
-        VERIFIAI_MODEL_SECRET_FIELD: !Ref ModelSecretField
+        VERIFIAI_MODEL_PROVIDER: bedrock
+        VERIFIAI_BEDROCK_MODEL_ID: !Ref BedrockModelId
         VERIFIAI_EXTERNAL_ENGINE_URL: !Ref ExternalEngineUrl
         VERIFIAI_BROWSER_USE_URL: !Ref BrowserUseUrl
         VERIFIAI_CUA_URL: !Ref CuaUrl

@@ -2,11 +2,14 @@ import { AgentCoreWorkerLauncher } from '../dist/services/agent-runtime/agentcor
 import { AGENT_WORKER_CONTRACT_VERSION } from '../dist/packages/contracts/src/index.js';
 
 const runtimeArn = process.env.VERIFIAI_AGENTCORE_RUNTIME_ARN;
-const modelProfileId = process.env.VERIFIAI_AGENTCORE_MODEL_PROFILE;
+const modelId = process.env.VERIFIAI_BEDROCK_MODEL_ID ?? process.env.VERIFIAI_MODEL_ID;
+const modelProfileId = modelId ? `bedrock:${modelId}` : undefined;
 if (!runtimeArn) throw new Error('VERIFIAI_AGENTCORE_RUNTIME_ARN is required');
-if (!modelProfileId) throw new Error('VERIFIAI_AGENTCORE_MODEL_PROFILE is required');
+if (!modelProfileId) throw new Error('VERIFIAI_BEDROCK_MODEL_ID or VERIFIAI_MODEL_ID is required');
 
-const region = process.env.AWS_REGION || 'ap-south-1';
+const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
+if (!region) throw new Error('AWS_REGION or AWS_DEFAULT_REGION is required');
+if (process.env.VERIFIAI_MODEL_PROVIDER && process.env.VERIFIAI_MODEL_PROVIDER !== 'bedrock') throw new Error('VERIFIAI_MODEL_PROVIDER must be bedrock');
 const auditId = `AUD-LIVE-${Date.now()}`;
 const workerId = `security-secrets-live-${Date.now()}`;
 const events = [];

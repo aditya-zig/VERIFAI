@@ -13,7 +13,7 @@ Operational rules for every coding agent working on VERIFAI.
 9. **Never expose secrets.** Never print, commit, paste, or log API keys or other secret values.
 10. **8 GB machine:** one heavy process/model/agent at a time; keep the laptop responsive.
 11. **No Ollama.** API-backed models only.
-12. **No Docker before M4** (#10) unless the assigned issue explicitly changes that rule.
-13. **No AWS, TrueForge, or software-factory expansion ahead of the roadmap** (software factory blocked behind reliable M5, #11).
+12. **Bounded local Docker only** for the documented command sandbox; no unrelated Docker expansion.
+13. **AWS-only model/runtime direction:** use Strands, AgentCore, and Bedrock under #74. Local tests remain bounded; do not deploy without authorization. Software factory expansion remains blocked behind reliable M5 (#11).
 14. **After two evidence-backed attempts at the same blocker:** stop retrying and report — attempted, exact failure, evidence, likely cause, smallest next action.
 15. **If the master E2E breaks:** stop feature work until it is fixed.

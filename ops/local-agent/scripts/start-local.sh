@@ -165,7 +165,7 @@ launch_service() { # $1=service $2=port $3...=command
   say "${svc}: healthy on port ${port}"
 }
 
-# M5: prefer the lightweight local API, not the cloud-era OAuth/AWS API.
+# Use the lightweight local API with AWS Bedrock-backed analysis.
 # Check BOTH ports before starting either service. Legacy fixture/repo behavior
 # below stays intact when start:local-api does not exist.
 if node -e 'process.exit(require(process.argv[1]).scripts?.["start:local-api"] ? 0 : 1)' "${repo_root}/package.json" 2>/dev/null; then
@@ -175,7 +175,7 @@ if node -e 'process.exit(require(process.argv[1]).scripts?.["start:local-api"] ?
     launch_service api "${api_port}" env PORT="${api_port}" NODE_OPTIONS=--max-old-space-size=256 npm run start:local-api
   fi
   if [ "${web_rc}" -eq 0 ]; then
-    # The proxy needs no provider/GitHub credentials. Keep all model keys in
+    # The proxy needs no AWS/GitHub credentials. Keep AWS credentials in
     # the API process; a clean web environment also protects browser children.
     launch_service web "${web_port}" env -i PATH="${PATH}" HOME="${HOME}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" WEB_PORT="${web_port}" VERIFIAI_LOCAL_API_URL="http://127.0.0.1:${api_port}" NODE_OPTIONS=--max-old-space-size=256 npm run start:web
   fi

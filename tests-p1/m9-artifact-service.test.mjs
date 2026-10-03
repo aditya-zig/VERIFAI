@@ -8,7 +8,7 @@ import {LocalArtifactService} from '../services/local-artifact-service.mjs';
 test('artifact lifecycle writes terminal audit with exact commit and server repair evidence',async(t)=>{
   const root=await mkdtemp(join(tmpdir(),'verifiai-artifact-service-'));t.after(()=>rm(root,{recursive:true,force:true}));
   const secret='sentinel-no-prefix-secret-987';
-  const service=new LocalArtifactService({env:{VERIFIAI_ARTIFACT_DIR:root,XKIRO_API_KEY:secret}});
+  const service=new LocalArtifactService({env:{VERIFIAI_ARTIFACT_DIR:root,AWS_SECRET_ACCESS_KEY:secret}});
   const audit={id:'run-service',status:'Completed',startedAt:'a',finishedAt:'b',durationMs:1,
     stages:{},repository:{fullName:'owner/repo',commit:'abc123'},finding:{title:'f',description:secret},
     execution:{status:'Completed',executed:true,exitCode:0,command:'check',stdout:secret,stderr:''},

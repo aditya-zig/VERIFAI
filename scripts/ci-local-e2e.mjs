@@ -24,9 +24,17 @@ function run(label,files){
 
 run('credential-independent structural E2E',structural);
 
-if(!process.env.XKIRO_API_KEY){
-  console.log('Real provider E2E: SKIPPED — credential unavailable');
+// Live Bedrock requests can incur AWS charges. Credentials alone never opt in.
+if(process.env.VERIFIAI_RUN_AWS_E2E!=='1'){
+  console.log('Real AWS Bedrock E2E: SKIPPED — set VERIFIAI_RUN_AWS_E2E=1 to opt in');
   process.exit(0);
 }
-
-run('credential-required real provider E2E',provider);
+const providerName=process.env.VERIFIAI_MODEL_PROVIDER || 'bedrock';
+const modelId=(process.env.VERIFIAI_BEDROCK_MODEL_ID || process.env.VERIFIAI_MODEL_ID || '').trim();
+const region=(process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || '').trim();
+if(providerName!=='bedrock' || !modelId || !region){
+  console.log('Real AWS Bedrock E2E: SKIPPED — requires bedrock, VERIFIAI_BEDROCK_MODEL_ID/VERIFIAI_MODEL_ID, and AWS_REGION/AWS_DEFAULT_REGION');
+  process.exit(0);
+}
+// Credentials are resolved by the standard AWS SDK chain, including IAM roles.
+run('explicitly opted-in real AWS Bedrock E2E',provider);

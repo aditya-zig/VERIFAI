@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto';
 import {cp,lstat,mkdtemp,readFile,readdir,realpath,readlink,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {isAbsolute,join,relative,resolve,sep} from 'node:path';
+import {repairVerificationGate} from './repair-verification-policy.mjs';
 
 const MAX_PATCH_BYTES=64*1024;
 const MAX_DIFF_BYTES=16*1024;
@@ -48,8 +49,10 @@ async function hashTree(root){
 function normalizeEvidence(value){
   const raw=value&&typeof value==='object'?value:{};
   return {
-    status:['Completed','Failed','Incomplete'].includes(raw.status)?raw.status:'Incomplete',
+    status:raw.timedOut===true||raw.aborted===true?'Incomplete':['Completed','Failed','Incomplete'].includes(raw.status)?raw.status:'Incomplete',
     executed:raw.executed===true,
+    ...(typeof raw.timedOut==='boolean'?{timedOut:raw.timedOut}:{}),
+    ...(typeof raw.aborted==='boolean'?{aborted:raw.aborted}:{}),
     ...(Number.isInteger(raw.exitCode)||raw.exitCode===null?{exitCode:raw.exitCode}:{}),
     ...(typeof raw.command==='string'?{command:raw.command}:{}),
     ...(typeof raw.stdout==='string'?{stdout:raw.stdout.slice(-8192)}:{}),
@@ -154,6 +157,10 @@ export async function runRepairVerification({workspacePath,finding,patch,verify,
       try{const treeAfter=await hashTree(workspacePath);result.originalTreeBefore=treeBefore;result.originalTreeAfter=treeAfter;result.originalUnchanged=treeBefore===treeAfter;
         if(!result.originalUnchanged){result.verdict='Incomplete';result.error='Original workspace changed during repair verification';}}
       catch(error){result.verdict='Incomplete';result.error='Could not verify original workspace integrity: '+String(error?.message||error);}
+    }
+    if(result.verdict==='VerifiedRepair'){
+      const gate=repairVerificationGate(result);
+      if(!gate.eligible){result.verdict='Incomplete';result.error=gate.reason;}
     }
     repairBusy=false;
   }

@@ -6,8 +6,8 @@ test('LocalPrService publishes only server-owned repair/proof after explicit cre
   const audit={id:'run',repository:{fullName:'owner/repo'},finding:{title:'Bug'}};
   const repair={verdict:'VerifiedRepair',verifiedBaseCommitSha:'abcdef1234567890',
     patch:{files:[{path:'x',expected:'a',replacement:'b'}]},
-    patchDigest:'x',changedFiles:[],before:{status:'Failed',executed:true,exitCode:1},after:{status:'Completed',executed:true,exitCode:0},
-    regressions:[],originalUnchanged:true,cleanup:{candidateRemoved:true}};
+    patchDigest:'x',changedFiles:[],before:{status:'Failed',executed:true,exitCode:1,command:'check'},after:{status:'Completed',executed:true,exitCode:0,command:'check'},
+    regressions:[{status:'Completed',executed:true,exitCode:0,command:'regression'}],originalUnchanged:true,cleanup:{candidateRemoved:true}};
   const proof={manifest:{id:'proof:run:manifest',sha256:'a'.repeat(64)},artifacts:[]};
   const audits={get:()=>audit},repairs={get:()=>repair},artifacts={get:()=>proof};
   let factoryInput;
@@ -33,8 +33,8 @@ test('LocalPrService explicit create uses stored repair/proof and never caller p
   const patch={files:[{path:'x',expected:'a',replacement:'b'}]};
   const repair={verdict:'VerifiedRepair',verifiedBaseCommitSha:'abcdef1234567890',patch,patchDigest:hash(JSON.stringify(patch)),
     changedFiles:[{path:'x',beforeHash:'1'.repeat(64),afterHash:'2'.repeat(64)}],
-    before:{status:'Failed',executed:true,exitCode:1},after:{status:'Completed',executed:true,exitCode:0},
-    regressions:[{status:'Completed',executed:true,exitCode:0}],originalUnchanged:true,cleanup:{candidateRemoved:true}};
+    before:{status:'Failed',executed:true,exitCode:1,command:'check'},after:{status:'Completed',executed:true,exitCode:0,command:'check'},
+    regressions:[{status:'Completed',executed:true,exitCode:0,command:'regression'}],originalUnchanged:true,cleanup:{candidateRemoved:true}};
   const names=['run','repository','repair','repair-diff','before-verification','after-verification','regressions'];
   const proof={manifest:{id:'proof:run:manifest',sha256:'a'.repeat(64)},artifacts:names.map((name,i)=>({name,status:'Present',path:name+'.json',sha256:String(i+1).repeat(64).slice(0,64)}))};
   const calls=[];
@@ -52,5 +52,5 @@ test('LocalPrService explicit create uses stored repair/proof and never caller p
   const result=await service.create('run');
   assert.equal(result.pullRequest.number,1);
   assert.deepEqual(calls.map(x=>x[0]),['verify','branch','commit','push','pr']);
-  assert.equal(calls.find(x=>x[0]==='commit')[1].patch,patch);
+  assert.deepEqual(calls.find(x=>x[0]==='commit')[1].patch,patch);
 });

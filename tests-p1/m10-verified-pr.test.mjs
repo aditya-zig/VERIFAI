@@ -8,7 +8,7 @@ const hash=(s)=>createHash('sha256').update(s).digest('hex');
 const patchA={files:[{path:'src/example.js',expected:'false',replacement:'true'}]};
 const beforeText='export const value = false;\n',afterText='export const value = true;\n';
 function repair(){
-  return {verdict:'VerifiedRepair',verifiedBaseCommitSha:'abcdef1234567890',patch:patchA,patchDigest:hash(JSON.stringify(patchA)),
+  return {verdict:'VerifiedRepair',verifiedBaseCommitSha:'abcdef1234567890',patch:structuredClone(patchA),patchDigest:hash(JSON.stringify(patchA)),
     changedFiles:[{path:'src/example.js',beforeHash:hash(beforeText),afterHash:hash(afterText)}],
     before:{status:'Failed',executed:true,exitCode:1,command:'check',stderr:'before failed'},
     after:{status:'Completed',executed:true,exitCode:0,command:'check',stdout:'after passed'},
@@ -64,7 +64,7 @@ test('verified immutable repair + proof + explicit bound approval writes in orde
   const result=await createVerifiedRepairPullRequest({...args(r,p),approvalToken:token,transport:s.transport});
   assert.deepEqual(s.calls.map(x=>x[0]),['verifyRemoteBase','createBranch','commitVerifiedPatch','pushBranch','openPullRequest']);
   assert.equal(result.pullRequest.number,123);
-  assert.equal(s.calls[2][1].patch,r.patch);
+  assert.deepEqual(s.calls[2][1].patch,r.patch);
   assert.match(s.calls.at(-1)[1].body,/Human approval was bound/);
 });
 
@@ -74,4 +74,56 @@ test('approval is bound to proof manifest digest',async()=>{
   const s=spy();
   await assert.rejects(createVerifiedRepairPullRequest({...args(r,changed),approvalToken:token,transport:s.transport}),/stale/i);
   assert.deepEqual(s.calls,[]);
+});
+
+test('invalid verification facts block approval and all GitHub calls',async t=>{
+  const cases=[
+    ['missing regressions',r=>{r.regressions=[];}],
+    ['sparse regressions',r=>{r.regressions=Array(1);}],
+    ['different after command',r=>{r.after.command='node --version';}],
+    ['missing regression command',r=>{delete r.regressions[0].command;}],
+    ['timeout despite pass',r=>{r.after.timedOut=true;}],
+    ['cancelled despite pass',r=>{r.regressions[0].aborted=true;}],
+    ['wrong verified file',r=>{r.changedFiles[0].path='src/other.js';}],
+  ];
+  for(const [name,mutate]of cases)await t.test(name,async()=>{
+    const r=repair(),p=proof(),s=spy();
+    const token=issuePrApproval({secret,...args(r,p)});
+    mutate(r);
+    assert.throws(()=>issuePrApproval({secret,...args(r,p)}),/verification|regression|command|file/i);
+    await assert.rejects(createVerifiedRepairPullRequest({...args(r,p),approvalToken:token,transport:s.transport}));
+    assert.deepEqual(s.calls,[]);
+  });
+});
+
+test('changing passing evidence or proof metadata invalidates approval',async t=>{
+  for(const [name,mutate]of [
+    ['output',(r,p)=>{r.after.stdout='different check output';}],
+    ['provenance',(r,p)=>{r.after.provenance={commit:'different-revision'};}],
+    ['file hash',(r,p)=>{r.changedFiles[0].afterHash='f'.repeat(64);}],
+    ['artifact path',(r,p)=>{p.artifacts[0].path='other-run.json';}],
+  ])await t.test(name,async()=>{
+    const r=repair(),p=proof(),s=spy();
+    const token=issuePrApproval({secret,...args(r,p)});
+    mutate(r,p);
+    await assert.rejects(createVerifiedRepairPullRequest({...args(r,p),approvalToken:token,transport:s.transport}),/stale/i);
+    assert.deepEqual(s.calls,[]);
+  });
+});
+
+test('caller mutation during a GitHub read cannot swap the approved candidate',async()=>{
+  const r=repair(),p=proof(),s=spy();
+  const token=issuePrApproval({secret,...args(r,p)});
+  const read=s.transport.verifyRemoteBase;
+  s.transport.verifyRemoteBase=async input=>{
+    await read(input);
+    r.patch.files[0].replacement='unverified';
+    r.after.stdout='unverified evidence';
+    p.artifacts[0].path='unapproved artifact';
+  };
+  await createVerifiedRepairPullRequest({...args(r,p),approvalToken:token,transport:s.transport});
+  assert.equal(s.calls.find(x=>x[0]==='commitVerifiedPatch')[1].patch.files[0].replacement,'true');
+  const body=s.calls.at(-1)[1].body;
+  assert.match(body,/after passed/);
+  assert.doesNotMatch(body,/unverified|unapproved/);
 });

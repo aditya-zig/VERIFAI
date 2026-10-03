@@ -1,4 +1,5 @@
 import {createHash,createHmac,timingSafeEqual} from 'node:crypto';
+import {repairVerificationGate} from './repair-verification-policy.mjs';
 
 const REQUIRED_PROOF=['run','repository','repair','repair-diff','before-verification','after-verification','regressions'];
 
@@ -8,7 +9,6 @@ function canonical(value){
   return value;
 }
 function digest(value){return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');}
-function repairPatchDigest(value){return createHash('sha256').update(JSON.stringify(value)).digest('hex');}
 function clip(value,limit=4000){const text=String(value??'');return text.length<=limit?text:text.slice(0,limit)+'...[truncated]';}
 function requireTransport(t){for(const m of ['verifyRemoteBase','createBranch','commitVerifiedPatch','pushBranch','openPullRequest'])if(typeof t?.[m]!=='function')throw new Error('GitHub transport missing '+m+'()');}
 function assertRepository(repository){if(typeof repository!=='string'||!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository))throw new Error('repository must be owner/name');}
@@ -16,18 +16,9 @@ function safeBranch(runId){const slug=String(runId??'').toLowerCase().replace(/[
 
 function assertExecutedRepair(repair){
   if(repair?.verdict!=='VerifiedRepair')throw new Error('PR creation requires repair.verdict == VerifiedRepair');
-  if(repair?.before?.status!=='Failed'||repair?.before?.executed!==true||!Number.isInteger(repair.before.exitCode)||repair.before.exitCode===0)throw new Error('PR creation requires executed BEFORE failure with status Failed');
-  if(repair?.after?.status!=='Completed'||repair?.after?.executed!==true||repair.after.exitCode!==0)throw new Error('PR creation requires executed AFTER verification with status Completed and exitCode 0');
-  if(!Array.isArray(repair?.regressions)||repair.regressions.some(x=>x?.status!=='Completed'||x?.executed!==true||x?.exitCode!==0))throw new Error('PR creation requires every regression executed with status Completed and exitCode 0');
-  if(repair?.originalUnchanged!==true)throw new Error('PR creation requires original workspace unchanged');
-  if(repair?.cleanup?.candidateRemoved!==true)throw new Error('PR creation requires candidate cleanup');
+  const gate=repairVerificationGate(repair);
+  if(!gate.eligible)throw new Error('PR creation requires verification: '+gate.reason);
   if(!repair?.verifiedBaseCommitSha||!/^[0-9a-f]{7,64}$/i.test(repair.verifiedBaseCommitSha))throw new Error('PR creation requires verified base commit SHA');
-  if(!repair?.patch||!Array.isArray(repair.patch.files)||!repair.patch.files.length)throw new Error('PR creation requires verified patch');
-  if(repair.patchDigest!==repairPatchDigest(repair.patch))throw new Error('repair patch digest mismatch; re-verification required');
-  if(!Array.isArray(repair.changedFiles)||repair.changedFiles.length!==repair.patch.files.length)throw new Error('PR creation requires verified file hashes');
-  for(const file of repair.changedFiles){
-    if(typeof file?.path!=='string'||!/^[0-9a-f]{64}$/i.test(file.beforeHash??'')||!/^[0-9a-f]{64}$/i.test(file.afterHash??''))throw new Error('PR creation requires verified before/after file hashes');
-  }
 }
 function assertProof(proof){
   if(!proof?.manifest?.id||!/^[0-9a-f]{64}$/i.test(proof?.manifest?.sha256??''))throw new Error('proof artifact manifest is required');
@@ -44,6 +35,8 @@ function binding({runId,repository,baseBranch,repair,proof}){
     patchDigest:repair.patchDigest,
     proofManifestId:proof.manifest.id,
     proofManifestSha256:proof.manifest.sha256,
+    repairDigest:digest(repair),
+    proofDigest:digest(proof),
   };
 }
 function encode(v){return Buffer.from(JSON.stringify(v),'utf8').toString('base64url');}
@@ -53,7 +46,7 @@ export function issuePrApproval({secret,runId,repository,baseBranch='main',repai
   if(typeof secret!=='string'||secret.length<32)throw new Error('PR approval secret must be at least 32 characters');
   assertRepository(repository);assertExecutedRepair(repair);assertProof(proof);
   const b=binding({runId,repository,baseBranch,repair,proof});
-  const envelope={v:1,aud:'verifiai-create-pr',iat:now,exp:now+Math.min(Math.max(ttlMs,60000),30*60*1000),binding:b};
+  const envelope={v:2,aud:'verifiai-create-pr',iat:now,exp:now+Math.min(Math.max(ttlMs,60000),30*60*1000),binding:b};
   const payload=encode(envelope);return payload+'.'+sign(payload,secret);
 }
 export function verifyPrApproval({token,secret,runId,repository,baseBranch='main',repair,proof,now=Date.now()}={}){
@@ -63,7 +56,7 @@ export function verifyPrApproval({token,secret,runId,repository,baseBranch='main
   const expected=Buffer.from(sign(payload,secret)),provided=Buffer.from(sig);
   if(expected.length!==provided.length||!timingSafeEqual(expected,provided))throw new Error('invalid PR approval signature');
   let env;try{env=JSON.parse(Buffer.from(payload,'base64url').toString('utf8'));}catch{throw new Error('invalid PR approval payload');}
-  if(env?.v!==1||env?.aud!=='verifiai-create-pr'||env.exp<now||env.iat>now+30000)throw new Error('expired or invalid PR approval');
+  if(env?.v!==2||env?.aud!=='verifiai-create-pr'||env.exp<now||env.iat>now+30000)throw new Error('expired or invalid PR approval');
   const current=binding({runId,repository,baseBranch,repair,proof});
   if(digest(env.binding)!==digest(current))throw new Error('PR approval is stale: verified repair/proof changed');
   return current;
@@ -107,6 +100,9 @@ function buildBody({finding,repair,proof}){
 export async function createVerifiedRepairPullRequest({
   transport,repository,baseBranch='main',runId,finding,repair,proof,approvalToken,approvalSecret,
 }={}){
+  // Caller-owned objects may change while GitHub reads await. Use only the
+  // snapshot that was checked and approved for every subsequent side effect.
+  ({finding,repair,proof}=structuredClone({finding,repair,proof}));
   // Every structural gate happens before even a read from GitHub.
   requireTransport(transport);assertRepository(repository);assertExecutedRepair(repair);assertProof(proof);
   verifyPrApproval({token:approvalToken,secret:approvalSecret,runId,repository,baseBranch,repair,proof});

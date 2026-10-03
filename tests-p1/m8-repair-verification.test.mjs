@@ -128,3 +128,35 @@ test('timeout reaps an owned verification process before candidate cleanup retur
   assert.ok(Number.isInteger(pid)&&pid>1);
   assert.throws(()=>process.kill(pid,0),error=>error?.code==='ESRCH');
 });
+
+test('a repaired candidate without a regression check stays Incomplete',async t=>{
+  const root=await fixture();t.after(()=>rm(root,{recursive:true,force:true}));
+  const result=await runRepairVerification({workspacePath:root,finding:{status:'Confirmed'},
+    patch:{files:[{path:'broken.js',expected:'false',replacement:'true'}]},verify:verifyValue,timeoutMs:500});
+  assert.equal(result.verdict,'Incomplete');
+  assert.match(result.error,/regression/i);
+  assert.equal(result.originalUnchanged,true);
+  assert.equal(result.cleanup.candidateRemoved,true);
+});
+
+test('switching the verification command cannot verify a candidate',async t=>{
+  const root=await fixture();t.after(()=>rm(root,{recursive:true,force:true}));
+  const result=await runRepairVerification({workspacePath:root,finding:{status:'Confirmed'},
+    patch:{files:[{path:'broken.js',expected:'false',replacement:'true'}]},
+    verify:async input=>({...await verifyValue(input),command:input.label==='before verification'?'node check':'node --version'}),
+    regressions:[verifyValue],timeoutMs:500});
+  assert.equal(result.verdict,'Incomplete');
+  assert.match(result.error,/command/i);
+});
+
+test('a timed-out or cancelled passing check cannot verify a candidate',async t=>{
+  for(const flag of ['timedOut','aborted'])await t.test(flag,async t=>{
+    const root=await fixture();t.after(()=>rm(root,{recursive:true,force:true}));
+    const result=await runRepairVerification({workspacePath:root,finding:{status:'Confirmed'},
+      patch:{files:[{path:'broken.js',expected:'false',replacement:'true'}]},
+      verify:async input=>({...await verifyValue(input),...(input.label==='after verification'?{[flag]:true}:{})}),
+      regressions:[verifyValue],timeoutMs:500});
+    assert.equal(result.verdict,'Incomplete');
+    assert.equal(result.after[flag],true,'interruption evidence is preserved');
+  });
+});

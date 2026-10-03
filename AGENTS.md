@@ -10,6 +10,7 @@ Operating rules:
 - GitHub is the implementation source of truth. Current issue/PR/CI state must be checked live — never from memory or an old chat.
 - Work one issue at a time: issue → branch → RED → smallest GREEN → verification → PR.
 - Evidence over AI opinion. Missing capability = Incomplete/Unknown; never invent PASS.
+- Factory/repair progression is enforced by code, not prompt compliance. Read `docs/factory-gates.md`; do not bypass the shared verification policy or its evidence-bound approval.
 - Humans approve merges. Never auto-merge.
 - Use Bedrock with the AWS credential chain; AgentCore workers use an execution IAM role.
 - Deployment, paid live smoke tests, and resource creation need an explicit assigned task.
@@ -17,4 +18,3 @@ Operating rules:
 - Development machine has 8 GB RAM: API-backed models only, one heavy process at a time.
 
 Kit index: [`ops/local-agent/README.md`](ops/local-agent/README.md). Historical evidence remains as history. Current AWS setup: `docs/aws-runtime.md`.
-

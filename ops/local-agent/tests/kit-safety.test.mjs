@@ -572,10 +572,11 @@ test('la4: cleanup removes kit state dir but preserves unrelated files and dirs'
 test('la4: cleanup deletes only recorded paths inside kit temp roots', () => {
   const tmp = mkdtempSync(path.join(tmpdir(), 'verifai-la4-paths-'));
   const dir = stateDirIn(tmp);
+  let outside;
   try {
     const owned = path.join(tmp, 'verifai-repository-owned');
     const recorded = path.join(tmp, 'recorded-external');
-    const outside = mkdtempSync(path.join(tmpdir(), 'verifai-la4-outside-'));
+    outside = mkdtempSync(path.join(tmpdir(), 'verifai-la4-outside-'));
     mkdirSync(owned, { recursive: true });
     writeFileSync(path.join(owned, 'data.txt'), 'owned');
     mkdirSync(outside, { recursive: true });
@@ -589,11 +590,14 @@ test('la4: cleanup deletes only recorded paths inside kit temp roots', () => {
     assert.equal(r.status, 0, `cleanup failed:\n${r.stdout}${r.stderr}`);
     assert.ok(!existsSync(owned), 'recorded kit-owned temp path should be removed');
     assert.ok(!existsSync(recorded), 'recorded path inside the kit temp root should be removed');
-    // outside the kit temp root → must survive and be reported
     assert.ok(existsSync(outside), 'path outside kit temp root must NOT be deleted');
     assert.equal(readFileSync(path.join(outside, 'data.txt'), 'utf8'), 'outside');
     assert.match(r.stdout, /refus|skip|outside|bounded/i, 'out-of-bounds path should be reported');
   } finally {
+    if (outside) rmSync(outside, { recursive: true, force: true });
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
 test('la4: cleanup aborts when stop refuses identity verification', () => {
   const tmp = mkdtempSync(path.join(tmpdir(), 'verifai-la4-refuse-'));
@@ -627,10 +631,6 @@ test('la4: cleanup is safe with no state and never prints the sentinel', () => {
     assert.ok(!`${r.stdout}\n${r.stderr}`.includes(SENTINEL), 'cleanup leaked sentinel');
     assert.match(`${r.stdout}\n${r.stderr}`, /docker/i, 'cleanup should report docker status informationally');
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
-});
-
     rmSync(tmp, { recursive: true, force: true });
   }
 });

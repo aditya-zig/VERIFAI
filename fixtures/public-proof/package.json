@@ -1,0 +1,6 @@
+{
+  "name": "verifai-public-proof-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {"test": "node --check broken.mjs"}
+}

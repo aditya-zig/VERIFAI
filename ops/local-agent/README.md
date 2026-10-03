@@ -14,7 +14,7 @@ Start with [`START-HERE.md`](START-HERE.md).
 | [`scripts/preflight.sh`](scripts/preflight.sh) | read-only machine/repo report (LA1) |
 | [`scripts/check-docker.sh`](scripts/check-docker.sh) | read-only, label-scoped Docker inspection (LA1) |
 | [`tests/kit-safety.test.mjs`](tests/kit-safety.test.mjs) | safety harness; run with `npm run ops:test` (LA1) |
-| [`ENVIRONMENT.md`](ENVIRONMENT.md) | variable categories + provider/key rules (LA2) |
+| [`ENVIRONMENT.md`](ENVIRONMENT.md) | variable categories + AWS Bedrock credential rules (LA2) |
 | [`env/local.env.example`](env/local.env.example) | placeholders only (LA2) |
 | [`scripts/doctor.sh`](scripts/doctor.sh) | staged readiness: `--stage M1\|M2` (LA2) |
 | [`scripts/start-local.sh`](scripts/start-local.sh) | starts owned services via repo npm scripts (LA3) |

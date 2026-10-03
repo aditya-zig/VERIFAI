@@ -29,7 +29,7 @@ test('hackathon AWS cost and lifetime guardrails stay hard-coded', async () => {
   assert.match(swarms, /Math\.min\(0\.4, Math\.max\(0, Number\(this\.env\.VERIFIAI_MAX_WORKER_SPEND_USD \?\? 0\.4\)\)\)/);
   assert.match(swarms, /Math\.min\(2\.5, Math\.max\(0, Number\(this\.env\.VERIFIAI_HARD_RUN_SPEND_USD \?\? 2\.5\)\)\)/);
   assert.match(swarms, /Math\.min\(20 \* 60_000, Math\.max\(1_000, Number\(this\.env\.VERIFIAI_MAX_AUDIT_MS/);
-  assert.match(swarms, /AWS_REGION \?\? 'ap-south-1'/);
+  assert.match(swarms, /region: selection.region/);
 
   assert.match(e2e, /Math\.min\(Number\(process\.env\.VERIFIAI_E2E_TIMEOUT_MS \|\| 20 \* 60_000\), 20 \* 60_000\)/);
   assert.match(workflow, /group: verifiai-fargate-target/);

@@ -12,7 +12,7 @@ function snapshotInput(value){
 }
 
 function secretsFromEnv(env){
-  const names=['XKIRO_API_KEY','SEEK_AI_API_KEY','OPENROUTER_API_KEY','NVIDIA_API_KEY','OLLAMA_API_KEY','GITHUB_TOKEN','GH_TOKEN','VERIFIAI_GITHUB_TOKEN'];
+  const names=['AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY','AWS_SESSION_TOKEN','AWS_BEARER_TOKEN_BEDROCK','XKIRO_API_KEY','SEEK_AI_API_KEY','OPENROUTER_API_KEY','NVIDIA_API_KEY','OLLAMA_API_KEY','GITHUB_TOKEN','GH_TOKEN','VERIFIAI_GITHUB_TOKEN'];
   return names.map(name=>env[name]).filter(value=>typeof value==='string'&&value.length>=4);
 }
 function publicDescriptor(bundle){

@@ -1,7 +1,7 @@
 import { buildAnalysisContext, requestModel, extractJson, normalizeFinding } from './local-analysis.mjs';
 import { ModelCallError, runModelRoutes } from './local-model-routing.mjs';
 
-export async function reviewSecurityRepository(record, { env = process.env, fetchImpl = fetch, signal, auditId } = {}) {
+export async function reviewSecurityRepository(record, { env = process.env, modelFactory, signal, auditId } = {}) {
   const context = await buildAnalysisContext(record.clone.workspacePath, record.files);
   if (!context.length) throw new Error('No readable files found for security review');
   const excerpts = context.map(item => `--- ${item.path} ---\n${item.content}`).join('\n\n');
@@ -16,7 +16,7 @@ export async function reviewSecurityRepository(record, { env = process.env, fetc
     },
   ];
   return runModelRoutes(env, async (config, options = {}) => {
-    const { text, model } = await requestModel(config, messages, { fetchImpl, signal,
+    const { text, model } = await requestModel(config, messages, { modelFactory, signal,
       requestId: auditId ? `${auditId}:security` : undefined, temperature: 0.1, ...options });
     try {
       const value = extractJson(text);

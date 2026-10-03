@@ -47,7 +47,7 @@ for (const script of ALL_SCRIPTS) {
 test('safety: secret values never appear in output', () => {
   for (const script of ALL_SCRIPTS) {
     const r = runScript(script, {
-      env: { OPENROUTER_API_KEY: SENTINEL, VERIFIAI_STATE_SECRET: SENTINEL },
+      env: { AWS_SECRET_ACCESS_KEY: SENTINEL, VERIFIAI_STATE_SECRET: SENTINEL },
     });
     assert.ok(
       !`${r.stdout}\n${r.stderr}`.includes(SENTINEL),
@@ -60,18 +60,18 @@ test('safety: secret values never appear in output', () => {
 // 3. Environment presence is still detected (name + present/absent only).
 // ---------------------------------------------------------------------------
 test('safety: env presence is reported without values', () => {
-  const present = runScript(PREFLIGHT, { env: { OPENROUTER_API_KEY: SENTINEL } });
+  const present = runScript(PREFLIGHT, { env: { AWS_SECRET_ACCESS_KEY: SENTINEL } });
   assert.equal(present.status, 0, present.stderr);
-  assert.match(present.stdout, /^OPENROUTER_API_KEY: present$/m);
+  assert.match(present.stdout, /^AWS_SECRET_ACCESS_KEY: present$/m);
   assert.doesNotMatch(
     present.stdout,
-    /^OPENROUTER_API_KEY: (?!present$|absent$)\S/m,
+    /^AWS_SECRET_ACCESS_KEY: (?!present$|absent$)\S/m,
     'presence line must be exactly present/absent',
   );
 
   const absent = runScript(PREFLIGHT, { env: {} });
   assert.equal(absent.status, 0, absent.stderr);
-  assert.match(absent.stdout, /^OPENROUTER_API_KEY: absent$/m);
+  assert.match(absent.stdout, /^AWS_SECRET_ACCESS_KEY: absent$/m);
 });
 
 // ---------------------------------------------------------------------------
@@ -312,31 +312,66 @@ test('la2: doctor --stage M1 works without model keys', () => {
   assert.doesNotMatch(`${r.stdout}\n${r.stderr}`, /parameter not set|unbound variable/i);
 });
 
-test('la2: doctor --stage M2 detects missing provider key by name', () => {
-  const r = runBash([DOCTOR, '--stage', 'M2'], { env: {} });
-  assert.equal(r.status, 1, `M2 without key should fail clearly:\n${r.stdout}${r.stderr}`);
-  assert.match(r.stdout, /stage: M2/);
-  assert.match(`${r.stdout}\n${r.stderr}`, /XKIRO_API_KEY/);
-  assert.match(`${r.stdout}\n${r.stderr}`, /missing|absent/i);
+const bedrockEnv = { VERIFIAI_BEDROCK_MODEL_ID: 'test-model', AWS_REGION: 'us-east-1' };
+
+test('la2: doctor requires a Bedrock model, region, and AWS credential source', () => {
+  for (const [env, expected] of [
+    [{ AWS_PROFILE: 'test-profile' }, /VERIFIAI_BEDROCK_MODEL_ID|VERIFIAI_MODEL_ID/],
+    [{ VERIFIAI_MODEL_ID: 'test-model', AWS_PROFILE: 'test-profile' }, /AWS_REGION|AWS_DEFAULT_REGION/],
+    [bedrockEnv, /AWS credentials: missing/],
+    [{ ...bedrockEnv, AWS_ACCESS_KEY_ID: SENTINEL }, /AWS credentials: missing/],
+  ]) {
+    const r = runBash([DOCTOR, '--stage', 'M2'], { env: { HOME: '/nonexistent-verifai-home', ...env } });
+    assert.equal(r.status, 1, `M2 without required configuration should fail: ${r.stdout}${r.stderr}`);
+    assert.match(r.stdout, expected);
+    assert.doesNotMatch(`${r.stdout}\n${r.stderr}`, new RegExp(SENTINEL));
+  }
 });
 
-test('la2: doctor --stage M2 reports configured provider without revealing key', () => {
+test('la2: doctor accepts AWS credential-chain sources without revealing configuration values', () => {
+  for (const credentials of [
+    { AWS_ACCESS_KEY_ID: SENTINEL, AWS_SECRET_ACCESS_KEY: SENTINEL, AWS_SESSION_TOKEN: SENTINEL },
+    { AWS_PROFILE: SENTINEL },
+    { AWS_BEARER_TOKEN_BEDROCK: SENTINEL },
+    { AWS_CONTAINER_CREDENTIALS_RELATIVE_URI: SENTINEL },
+    { AWS_WEB_IDENTITY_TOKEN_FILE: SENTINEL, AWS_ROLE_ARN: SENTINEL },
+  ]) {
+    const r = runBash([DOCTOR, '--stage', 'M2'], {
+      env: { ...bedrockEnv, ...credentials, VERIFIAI_BEDROCK_MODEL_ID: SENTINEL, AWS_REGION: SENTINEL },
+    });
+    assert.equal(r.status, 0, `M2 AWS configuration should pass readiness: ${r.stdout}${r.stderr}`);
+    assert.match(r.stdout, /model provider: bedrock/);
+    assert.match(r.stdout, /presence only|not.*live.*access/i);
+    assert.doesNotMatch(`${r.stdout}\n${r.stderr}`, new RegExp(SENTINEL));
+  }
+});
+
+test('la2: doctor accepts model/region aliases and readable shared AWS files', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'verifai-aws-files-'));
+  try {
+    const file = path.join(dir, 'config');
+    writeFileSync(file, SENTINEL);
+    const r = runBash([DOCTOR, '--stage', 'M2'], {
+      env: { VERIFIAI_MODEL_ID: SENTINEL, AWS_DEFAULT_REGION: SENTINEL, AWS_CONFIG_FILE: file },
+    });
+    assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+    assert.doesNotMatch(`${r.stdout}\n${r.stderr}`, new RegExp(SENTINEL));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('la2: doctor rejects third-party providers even with AWS credentials', () => {
   const r = runBash([DOCTOR, '--stage', 'M2'], {
-    env: { XKIRO_API_KEY: SENTINEL, VERIFIAI_MODEL_PROVIDER: 'xkiro' },
+    env: { ...bedrockEnv, AWS_PROFILE: SENTINEL, VERIFIAI_MODEL_PROVIDER: 'openrouter' },
   });
-  assert.equal(r.status, 0, `M2 with key should pass:\n${r.stdout}${r.stderr}`);
-  assert.match(r.stdout, /stage: M2/);
-  assert.match(r.stdout, /xkiro/);
-  assert.doesNotMatch(`${r.stdout}\n${r.stderr}`, new RegExp(SENTINEL));
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /unsupported provider/);
 });
 
 test('la2: doctor never prints the sentinel on any stage', () => {
-  const runs = [
-    runBash([DOCTOR, '--stage', 'M1'], { env: { XKIRO_API_KEY: SENTINEL, OPENROUTER_API_KEY: SENTINEL } }),
-    runBash([DOCTOR, '--stage', 'M2'], { env: { XKIRO_API_KEY: SENTINEL, OPENROUTER_API_KEY: SENTINEL } }),
-    runBash([DOCTOR, '--stage', 'M2'], { env: { OPENROUTER_API_KEY: SENTINEL, VERIFIAI_MODEL_PROVIDER: 'openrouter' } }),
-  ];
-  for (const r of runs) {
+  for (const stage of ['M1', 'M2']) {
+    const r = runBash([DOCTOR, '--stage', stage], {
+      env: { ...bedrockEnv, AWS_ACCESS_KEY_ID: SENTINEL, AWS_SECRET_ACCESS_KEY: SENTINEL, AWS_SESSION_TOKEN: SENTINEL },
+    });
     assert.ok(!`${r.stdout}\n${r.stderr}`.includes(SENTINEL), 'doctor leaked the sentinel');
   }
 });
@@ -386,7 +421,7 @@ test('la2: environment docs exist and categorize', () => {
   for (const section of ['REQUIRED NOW', 'OPTIONAL LOCAL', 'REQUIRED LATER', 'LEGACY']) {
     assert.ok(envDoc.includes(section), `ENVIRONMENT.md missing section: ${section}`);
   }
-  assert.match(envDoc, /XKIRO_API_KEY/);
+  assert.match(envDoc, /AWS_PROFILE/);
   assert.match(envDoc, /M1/i);
   assert.match(envDoc, /no Ollama|without.*Ollama|Ollama/i);
   const example = readFileSync(ENV_EXAMPLE, 'utf8');
@@ -495,9 +530,9 @@ test('la3: full start/stop cycle stops owned npm parent + node child; idempotent
 test('la3: lifecycle scripts never print the sentinel secret', () => {
   const tmp = mkdtempSync(path.join(tmpdir(), 'verifai-la3-secret-'));
   try {
-    const r = runBash([START], { env: { TMPDIR: tmp, WEB_PORT: '14176', PORT: '14178', XKIRO_API_KEY: SENTINEL } });
+    const r = runBash([START], { env: { TMPDIR: tmp, WEB_PORT: '14176', PORT: '14178', AWS_SECRET_ACCESS_KEY: SENTINEL } });
     assert.ok(!`${r.stdout}\n${r.stderr}`.includes(SENTINEL), 'start leaked sentinel');
-    const s = runBash([STOP], { env: { TMPDIR: tmp, XKIRO_API_KEY: SENTINEL } });
+    const s = runBash([STOP], { env: { TMPDIR: tmp, AWS_SECRET_ACCESS_KEY: SENTINEL } });
     assert.ok(!`${s.stdout}\n${s.stderr}`.includes(SENTINEL), 'stop leaked sentinel');
   } finally {
     runBash([STOP], { env: { TMPDIR: tmp } });
@@ -626,7 +661,7 @@ test('la4: cleanup aborts when stop refuses identity verification', () => {
 test('la4: cleanup is safe with no state and never prints the sentinel', () => {
   const tmp = mkdtempSync(path.join(tmpdir(), 'verifai-la4-empty-'));
   try {
-    const r = runBash([CLEANUP], { env: { TMPDIR: tmp, XKIRO_API_KEY: SENTINEL } });
+    const r = runBash([CLEANUP], { env: { TMPDIR: tmp, AWS_SECRET_ACCESS_KEY: SENTINEL } });
     assert.equal(r.status, 0, `cleanup with no state should be safe: ${r.stdout}${r.stderr}`);
     assert.ok(!`${r.stdout}\n${r.stderr}`.includes(SENTINEL), 'cleanup leaked sentinel');
     assert.match(`${r.stdout}\n${r.stderr}`, /docker/i, 'cleanup should report docker status informationally');
@@ -681,7 +716,7 @@ test('la5: verify rejects unknown check names without fake PASS', () => {
 });
 
 test('la5: verify never prints the sentinel secret', () => {
-  const r = runBash([VERIFY], { env: { VERIFY_ONLY: 'syntax', XKIRO_API_KEY: SENTINEL } });
+  const r = runBash([VERIFY], { env: { VERIFY_ONLY: 'syntax', AWS_SECRET_ACCESS_KEY: SENTINEL } });
   assert.ok(!`${r.stdout}\n${r.stderr}`.includes(SENTINEL), 'verify leaked sentinel');
 });
 

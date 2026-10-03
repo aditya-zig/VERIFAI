@@ -16,9 +16,8 @@ test('missing model capability is Incomplete with stage-specific error and actua
   assert.equal(response.status,202);const {id}=await response.json();
   let result;for(let i=0;i<600;i++){result=await (await fetch(`${base}/api/local/audits/${id}`)).json();if(result.status!=='Running')break;await delay(50);}
   assert.equal(result.status,'Incomplete');assert.equal(result.failedStage,'analysis');
-  assert.equal(result.error,'No configured model route succeeded');
-  assert.equal(result.model.calls,0);
-  assert.ok(result.model.attempts.every(attempt=>attempt.outcome==='skipped_missing_key'));
+  assert.match(result.error,/VERIFIAI_BEDROCK_MODEL_ID.*required/);
+  assert.equal(result.model,undefined);
   assert.equal(result.stages.clone.status,'Completed');assert.equal(result.stages.analysis.status,'Incomplete');
   assert.equal(result.stages.sandbox.status,'Skipped');assert.equal(result.stages.cleanup.status,'Completed');
   assert.equal(result.finding,undefined);assert.equal(result.execution,undefined);
@@ -26,7 +25,7 @@ test('missing model capability is Incomplete with stage-specific error and actua
   assert.equal(execFileSync('docker',['ps','-aq','--filter',`label=dev.verifiai.local-agent.owner=${sandboxOwner}`],{encoding:'utf8'}).trim(),'');
 });
 
-test('model substitution is Incomplete before execution with actual clone cleanup (controlled negative fixture, no provider call)',async(t)=>{
+test('retired provider is Incomplete before execution with actual clone cleanup (no provider call)',async(t)=>{
   let calls=0;
   const originalFetch=globalThis.fetch;
   t.after(()=>{globalThis.fetch=originalFetch;});
@@ -50,8 +49,8 @@ test('model substitution is Incomplete before execution with actual clone cleanu
   assert.equal(response.status,202);const {id}=await response.json();
   let result;for(let i=0;i<600;i++){result=await(await fetch(`${base}/api/local/audits/${id}`)).json();if(result.status!=='Running')break;await delay(50);}
   assert.equal(result.status,'Incomplete');assert.equal(result.failedStage,'analysis');
-  assert.match(result.error,/Seek AI did not report the requested glm-5.3-flash model/);
-  assert.equal(calls,1,'no retry or fallback');
+  assert.match(result.error,/Unsupported model provider: use AWS Bedrock/);
+  assert.equal(calls,0,'retired transport is never called');
   assert.equal(result.stages.clone.status,'Completed');assert.equal(result.stages.sandbox.status,'Skipped');
   assert.equal(result.stages.execution.status,'Skipped');assert.equal(result.stages.cleanup.status,'Completed');
   assert.equal(result.finding,undefined);assert.equal(result.execution,undefined);

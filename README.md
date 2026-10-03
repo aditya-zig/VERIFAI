@@ -27,8 +27,8 @@ VERIFAI turns a repository into a controlled verification run: specialist agents
 
 ## Current local path
 
-The supported local path is **public GitHub URL → real clone → one bounded API
-review (with ordered model/provider fallback) → one bounded Docker command → finding with captured execution evidence
+The supported local path is **public GitHub URL → real clone → one bounded Strands/Bedrock
+review → one bounded Docker command → finding with captured execution evidence
 → automatic cleanup**. It is a limited check, not full security verification.
 The model hypothesis remains **Unconfirmed**, separate from executed evidence.
 Optional sequential security review, a fixture-only browser journey, same-command
@@ -37,11 +37,13 @@ separately. A verified repair proves that bounded command, not the allegation or
 a complete regression suite. The old synthetic verdict screens are removed.
 
 See [local MVP startup and reliability checks](docs/local-mvp.md),
-[swappable hosted models/providers](docs/local-model-routing.md),
+[Bedrock model settings](docs/local-model-routing.md),
 [settled evidence terms](CONTEXT.md),
 [M4 evidence](docs/evidence/M4.md), and [M5 evidence](docs/evidence/M5.md).
-The specialist/cloud descriptions below are migration-era roadmap context, not
-permission to run those stacks or a claim that the local MVP includes them.
+The supported runtime is **Strands + AgentCore + Bedrock**. See
+[AWS runtime setup](docs/aws-runtime.md). The longer specialist/tool descriptions
+below are historical scope; unconfigured tools return Incomplete. Real AWS
+acceptance is still pending.
 
 ### Start the local app
 
@@ -320,7 +322,7 @@ After a real AgentCore runtime is deployed and the caller has the required AWS p
 
 ```bash
 VERIFIAI_AGENTCORE_RUNTIME_ARN='arn:aws:bedrock-agentcore:...' \
-VERIFIAI_AGENTCORE_MODEL_PROFILE='openrouter:<model-id>' \
+VERIFIAI_BEDROCK_MODEL_ID='<bedrock-model-id>' \
 AWS_REGION='ap-south-1' \
 npm run verify:agentcore
 ```

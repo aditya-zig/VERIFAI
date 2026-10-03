@@ -11,15 +11,17 @@ Snapshot only. Before coding, query GitHub for issue/PR/CI state.
 - No Ollama (do not install it).
 - One heavy process/model/agent at a time.
 - Docker is used only for the bounded local command; see [local scope and limits](../../docs/local-mvp.md).
-- TrueForge deferred.
-- AWS deferred (MVP is local-first; cloud comes last and must keep the same behavior).
+- AWS-only model/runtime direction: Strands, AgentCore, and Bedrock (#74). This supersedes the earlier deferred AWS direction.
+- Local development and tests remain bounded. Local AWS profiles/SSO or temporary credentials; AgentCore execution IAM role in the worker.
+- Live AWS E2E requires explicit `VERIFIAI_RUN_AWS_E2E=1`, model ID, region, and authorized AWS access; presence checks are not live proof.
 - Software factory deferred behind reliable M5 (#11).
 - Humans merge. No auto merge.
 - No fake PASS. Evidence over model claims; missing capability = Incomplete/Unknown.
 
-### Canonical roadmap structure (stable; states are live)
+### Roadmap references (states are live)
 
-- #4 — local-first master roadmap / reset map
+- #74 — current AWS-only Bedrock / Strands / AgentCore direction
+- #4 — earlier local-first master roadmap / reset map
 - #5 — M0 documentation
 - #6 — M1 local repository clone (PR #19)
 - #20 — M2 single API-backed analysis agent (PR #21)

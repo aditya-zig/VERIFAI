@@ -6,9 +6,14 @@ Use only after the human has created an authorized disposable public GitHub repo
 
 ## Required local environment
 
-Presence only; do not paste values into logs or GitHub comments:
+Do not paste values into logs or GitHub comments. Readiness checks report presence
+only; the authorized live AWS lane can incur charges and must prove real model access:
 
-- `XKIRO_API_KEY`
+- `VERIFIAI_MODEL_PROVIDER=bedrock` (or leave unset for the default)
+- `VERIFIAI_BEDROCK_MODEL_ID` (or `VERIFIAI_MODEL_ID`)
+- `AWS_REGION` (or `AWS_DEFAULT_REGION`)
+- a valid AWS profile/SSO session or temporary AWS credentials with Bedrock model access
+- `VERIFIAI_RUN_AWS_E2E=1` for the explicitly authorized live AWS run
 - `VERIFIAI_GITHUB_TOKEN` (or `GITHUB_TOKEN`) with only the fixture-repository branch/content/PR permissions M10 needs
 - `VERIFIAI_PR_APPROVAL_SECRET` (or existing `VERIFIAI_STATE_SECRET`), at least 32 characters
 - `VERIFIAI_PUBLIC_PROOF_REPO=https://github.com/<owner>/<authorized-fixture-repo>`
@@ -20,15 +25,15 @@ Do not merge any generated repair PR.
 
 ```bash
 git fetch origin
-git switch remote/final-local-landing
-git pull --ff-only
+git status --short --branch
+# Confirm the assigned #74 checkout/head before running acceptance.
 
 npm install --no-audit --no-fund
 npm run check
 npm run typecheck
 npm run test:p1
 docker build -t verifai-local-audit:m4 -f infra/local/audit.Dockerfile infra/local
-npm run test:local-e2e
+VERIFIAI_RUN_AWS_E2E=1 npm run test:local-e2e
 npm run ops:test
 
 bash ops/local-agent/scripts/reconcile-local.sh

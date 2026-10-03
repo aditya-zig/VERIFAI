@@ -1,6 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { Agent } from '@strands-agents/sdk';
-import { OpenAIModel } from '@strands-agents/sdk/models/openai';
+import { Agent, BedrockModel } from '@strands-agents/sdk';
 import {
   AGENT_WORKER_CONTRACT_VERSION,
   assertAgentWorkerLaunchBrief,
@@ -103,12 +102,7 @@ export async function executeAgentCoreWorker(
   assertAgentWorkerLaunchBrief(brief);
   const { provider, modelId } = selectionFromProfile(brief.modelProfileId);
   const selection = await resolveModelRunSelection({ provider, modelId });
-  const model = new OpenAIModel({
-    api: 'chat',
-    apiKey: selection.credential.reveal(),
-    clientConfig: { baseURL: selection.baseUrl },
-    modelId: selection.modelId,
-  });
+  const model = new BedrockModel({ modelId: selection.modelId, region: selection.region });
   const toolBundle = createWorkerTools(brief, onEvent);
   const agent = new Agent({
     model,

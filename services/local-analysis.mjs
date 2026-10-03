@@ -1,5 +1,6 @@
 import { lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Agent, BedrockModel } from '@strands-agents/sdk';
 
 import { ModelCallError, runModelRoutes } from './local-model-routing.mjs';
 export { resolveModelConfig } from './local-model-routing.mjs';
@@ -95,87 +96,46 @@ export function normalizeFinding(finding, trackedFiles) {
   return { title, severity, description, evidence: { file } };
 }
 
-async function readModelPayload(response, signal) {
-  if (!response.body?.getReader) return response.json(); // Injected unit boundary responses.
-  const reader = response.body.getReader();
-  const chunks = [];
-  let bytes = 0;
-  const cancel = () => { reader.cancel().catch(() => {}); };
-  signal.addEventListener('abort', cancel, { once: true });
+export async function requestModel(config, messages, {
+  modelFactory = options => new BedrockModel(options), signal, requestId, temperature = 0.2,
+} = {}) {
+  const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(config.timeoutMs)])
+    : AbortSignal.timeout(config.timeoutMs);
+  if (requestSignal.aborted) throw new ModelCallError('Bedrock model invocation cancelled', 'cancelled');
+  const model = modelFactory({ modelId: config.model, region: config.region,
+    maxTokens: config.maxTokens, temperature,
+    clientConfig: { maxAttempts: 1, requestHandler: { requestTimeout: config.timeoutMs } },
+  });
+  const agent = new Agent({ model, printer: false, retryStrategy: null,
+    systemPrompt: messages.filter(message => message.role === 'system').map(message => message.content).join('\n'),
+  });
+  let abort;
+  const interrupted = new Promise((_, reject) => {
+    abort = () => { agent.cancel(); reject(new ModelCallError('Bedrock model invocation interrupted', 'timeout', true)); };
+    requestSignal.addEventListener('abort', abort, { once: true });
+  });
   try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      bytes += value.byteLength;
-      if (bytes > 1024 * 1024) throw new Error('Model response bound');
-      chunks.push(Buffer.from(value));
+    const response = await Promise.race([
+      agent.invoke(messages.filter(message => message.role !== 'system').map(message => message.content).join('\n'), { cancelSignal: requestSignal, limits: { turns: 1 } }),
+      interrupted,
+    ]);
+    if (requestSignal.aborted || response.stopReason === 'cancelled') {
+      throw new ModelCallError('Bedrock model invocation interrupted', 'cancelled');
     }
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const text = response.lastMessage.content.map(block => typeof block.text === 'string' ? block.text : '').join('');
+    if (!text.trim() || Buffer.byteLength(text) > 1024 * 1024) throw new ModelCallError('Bedrock returned invalid content', 'invalid_response');
+    return { text, model: { provider: 'bedrock', model: config.model, region: config.region,
+      requestId, calls: 1, reportedModel: null, responseId: null, httpStatus: null, usage: null, cacheHeader: null } };
+  } catch (error) {
+    if (error instanceof ModelCallError) throw error;
+    // AWS errors may contain sensitive request material; publish a bounded category.
+    throw new ModelCallError('Bedrock model invocation unavailable', 'provider_unavailable', true);
   } finally {
-    signal.removeEventListener('abort', cancel);
-    await reader.cancel().catch(() => {});
-    reader.releaseLock();
+    requestSignal.removeEventListener('abort', abort);
   }
 }
 
-export async function requestModel(config, messages, { fetchImpl = fetch, signal, requestId, temperature = 0.2 } = {}) {
-  const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000);
-  const authScheme = config.authScheme ?? 'Bearer';
-  let response;
-  try {
-    response = await fetchImpl(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-    redirect: 'error',
-    method: 'POST',
-    headers: { 'content-type': 'application/json', [config.authHeader || 'authorization']: `${authScheme}${authScheme ? ' ' : ''}${config.apiKey}`, 'cache-control': 'no-cache', ...(requestId ? { 'x-request-id': requestId } : {}) },
-    body: JSON.stringify({
-      temperature,
-      ...config.parameters,
-      model: config.model,
-      max_tokens: 500,
-      ...(config.jsonMode === false ? {} : { response_format: { type: 'json_object' } }),
-      messages,
-    }),
-    signal: requestSignal,
-    });
-  } catch {
-    throw new ModelCallError('Model transport unavailable', 'network_error', true);
-  }
-  if (!response.ok) {
-    await response.body?.cancel();
-    const error = new ModelCallError(`Model call failed: HTTP ${response.status}`, 'http_error', [401, 402, 403, 429, 500, 502, 503, 504].includes(response.status));
-    error.httpStatus = response.status;
-    throw error;
-  }
-  let payload;
-  try { payload = await readModelPayload(response, requestSignal); }
-  catch { throw new ModelCallError('Model returned an invalid response', 'invalid_response'); }
-  if (config.strictIdentity && (typeof payload?.model !== 'string'
-      || !config.reportedModels.some(id => id.toLowerCase() === payload.model.toLowerCase()))) {
-    throw new ModelCallError('Model did not report an approved identity', 'identity_mismatch');
-  }
-  // A catalog alias is not proof that Seek AI served the requested GLM.
-  if (config.provider === 'seek_ai' && config.model === 'glm-5.3-flash'
-      && (typeof payload?.model !== 'string' || payload.model.toLowerCase() !== 'glm-5.3-flash')) {
-    throw new ModelCallError('Seek AI did not report the requested glm-5.3-flash model', 'identity_mismatch');
-  }
-  const text = payload?.choices?.[0]?.message?.content;
-  if (typeof text !== 'string' || !text.trim()) throw new ModelCallError('Model returned no content', 'invalid_response');
-  const secrets = config.secretValues || [config.apiKey];
-  const safeId = value => typeof value === 'string' && /^[A-Za-z0-9/_.:\-]{1,200}$/.test(value)
-    && !secrets.some(key => value.includes(key)) ? value : null;
-  const tokens = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1e9 ? value : null;
-  const cache = response.headers?.get('x-cache') || response.headers?.get('cf-cache-status');
-  return { text, model: {
-    provider: config.provider, model: config.model, reportedModel: safeId(payload.model), requestId,
-    httpStatus: Number.isInteger(response.status) ? response.status : null,
-    calls: 1,
-    responseId: safeId(payload.id),
-    usage: payload.usage ? { promptTokens: tokens(payload.usage.prompt_tokens), completionTokens: tokens(payload.usage.completion_tokens) } : null,
-    cacheHeader: typeof cache === 'string' && /^(HIT|MISS|BYPASS|DYNAMIC|EXPIRED|REVALIDATED)$/i.test(cache) ? cache.toUpperCase() : null,
-  } };
-}
-
-export async function analyzeRepository(record, { env = process.env, fetchImpl = fetch, execution, signal, auditId } = {}) {
+export async function analyzeRepository(record, { env = process.env, modelFactory, execution, signal, auditId } = {}) {
   const context = await buildAnalysisContext(record.clone.workspacePath, record.files);
   if (!context.length) throw new Error('No readable files found for analysis');
   const fileList = record.files.items.slice(0, 100).join('\n');
@@ -191,7 +151,7 @@ export async function analyzeRepository(record, { env = process.env, fetchImpl =
     },
   ];
   const result = await runModelRoutes(env, async (config, options = {}) => {
-    const { text, model } = await requestModel(config, messages, { fetchImpl, signal, requestId: auditId, ...options });
+    const { text, model } = await requestModel(config, messages, { modelFactory, signal, requestId: auditId, ...options });
     try {
       return { finding: normalizeFinding(unwrap(extractJson(text)), record.files.items), model };
     } catch (error) {
@@ -199,5 +159,5 @@ export async function analyzeRepository(record, { env = process.env, fetchImpl =
       throw new ModelCallError('Model returned an invalid finding', 'invalid_response');
     }
   }, { signal });
-  return { ...result, model: auditId || result.model.attempts ? result.model : { provider: result.model.provider, model: result.model.model } };
+  return result;
 }

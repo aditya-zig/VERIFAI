@@ -3,7 +3,6 @@ import type {
   AgentWorkerRole,
   AuditTargetRef,
 } from '../../packages/contracts/src/index.js';
-import { MODEL_PROVIDER_PROFILES, type ModelProviderName } from '../agent-runtime/providers.js';
 
 export interface SpecialistPolicy {
   approvedTools: Partial<Record<AgentWorkerRole, AgentToolGrant[]>>;
@@ -17,18 +16,19 @@ function host(url: string): string {
 
 export function buildSpecialistPolicy(input: {
   modelProfileId: string;
+  region: string;
   target: AuditTargetRef | null;
   computerUseUrl?: string;
   browserUseUrl?: string;
   cuaUrl?: string;
   externalEngineUrl?: string;
 }): SpecialistPolicy {
-  const provider = input.modelProfileId.split(':', 1)[0] as ModelProviderName;
-  const profile = MODEL_PROVIDER_PROFILES[provider];
-  if (!profile) throw new Error(`Unsupported model provider profile: ${provider}`);
-
+  const provider = input.modelProfileId.split(':', 1)[0];
+  if (provider !== 'bedrock') throw new Error(`Unsupported model provider profile: ${provider}`);
+  if (!/^[a-z]{2}(?:-[a-z]+)+-\d+$/.test(input.region)) throw new Error('Invalid AWS region for specialist policy');
+  const dnsSuffix = input.region.startsWith('cn-') ? 'amazonaws.com.cn' : 'amazonaws.com';
   const networkAllowlist = new Set<string>([
-    host(profile.baseUrl),
+    `bedrock-runtime.${input.region}.${dnsSuffix}`,
     'api.github.com',
     'raw.githubusercontent.com',
   ]);

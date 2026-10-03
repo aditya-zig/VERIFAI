@@ -17,9 +17,9 @@ jobs:
       VERIFIAI_TARGET_STACK: ${{ vars.VERIFIAI_TARGET_STACK || 'verifiai-real-target' }}
       VERIFIAI_AGENTCORE_STACK: ${{ vars.VERIFIAI_AGENTCORE_STACK || 'verifiai-agentcore' }}
       VERIFIAI_WORKER_ECR_REPOSITORY: ${{ vars.VERIFIAI_WORKER_ECR_REPOSITORY || 'verifiai-agentcore-worker' }}
-      VERIFIAI_MODEL_SECRET_ARN: ${{ vars.VERIFIAI_MODEL_SECRET_ARN }}
-      VERIFIAI_MODEL_SECRET_FIELD: ${{ vars.VERIFIAI_MODEL_SECRET_FIELD }}
-      VERIFIAI_AGENTCORE_MODEL_PROFILE: ${{ vars.VERIFIAI_AGENTCORE_MODEL_PROFILE }}
+      VERIFIAI_BEDROCK_MODEL_ARNS: ${{ vars.VERIFIAI_BEDROCK_MODEL_ARNS }}
+      VERIFIAI_BEDROCK_MODEL_ID: ${{ vars.VERIFIAI_BEDROCK_MODEL_ID }}
+      VERIFIAI_MODEL_PROVIDER: bedrock
       VERIFIAI_EXTERNAL_ENGINE_URL: ${{ vars.VERIFIAI_EXTERNAL_ENGINE_URL }}
       VERIFIAI_BROWSER_USE_URL: ${{ vars.VERIFIAI_BROWSER_USE_URL }}
       VERIFIAI_CUA_URL: ${{ vars.VERIFIAI_CUA_URL }}
@@ -31,7 +31,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in AWS_ROLE_ARN VERIFIAI_MODEL_SECRET_ARN VERIFIAI_AGENTCORE_MODEL_PROFILE; do
+          for name in AWS_ROLE_ARN VERIFIAI_BEDROCK_MODEL_ARNS VERIFIAI_BEDROCK_MODEL_ID; do
             if [ -z "${!name:-}" ]; then
               echo "::error::Missing required configuration: $name"
               exit 1
@@ -84,8 +84,8 @@ jobs:
           params=(
             "WorkerImageUri=$VERIFIAI_WORKER_IMAGE_URI"
             "WorkerRepositoryArn=$VERIFIAI_WORKER_REPOSITORY_ARN"
-            "ModelSecretArn=$VERIFIAI_MODEL_SECRET_ARN"
-            "ModelSecretField=$VERIFIAI_MODEL_SECRET_FIELD"
+            "BedrockModelArns=$VERIFIAI_BEDROCK_MODEL_ARNS"
+            "BedrockModelId=$VERIFIAI_BEDROCK_MODEL_ID"
             "WorkerSubnetIds=$VERIFIAI_WORKER_SUBNET_IDS"
             "WorkerSecurityGroupIds=$VERIFIAI_AUDITOR_SECURITY_GROUP"
           )

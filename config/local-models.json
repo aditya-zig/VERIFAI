@@ -1,22 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "timeoutMs": 60000,
-  "attemptTimeoutMs": 20000,
-  "maxAttempts": 3,
-  "providers": [
-    { "id": "xkiro", "baseUrl": "https://api.xkiro.com/v1", "apiKeyEnv": "XKIRO_API_KEY", "defaultModel": "mistralai/ministral-8b" },
-    { "id": "token_harbor", "baseUrl": "https://tokenharbor.ai/v1", "apiKeyEnv": "TOKEN_HARBOR_API_KEY" },
-    { "id": "openrouter", "baseUrl": "https://openrouter.ai/api/v1", "apiKeyEnv": "OPENROUTER_API_KEY" },
-    { "id": "nvidia", "baseUrl": "https://integrate.api.nvidia.com/v1", "apiKeyEnv": "NVIDIA_API_KEY" },
-    { "id": "seek_ai", "baseUrl": "https://seekai.cc/v1", "apiKeyEnv": "SEEK_AI_API_KEY" },
-    { "id": "ollama-cloud", "baseUrl": "https://ollama.com/v1", "apiKeyEnv": "OLLAMA_API_KEY" }
-  ],
-  "routes": [
-    { "id": "qwen-max", "provider": "xkiro", "model": "qwen/qwen3.8-max:free", "enabled": true },
-    { "id": "qwen-coder", "provider": "xkiro", "model": "qwen/qwen3-coder-plus:free", "enabled": true },
-    { "id": "deepseek-backup", "provider": "token_harbor", "model": "deepseek-v4-flash:free", "reportedModels": ["deepseek-v4-flash"], "enabled": true },
-    { "id": "gemma-experimental", "provider": "openrouter", "model": "google/gemma-4-31b-it:free", "enabled": false, "parameters": { "reasoning": { "enabled": false } } },
-    { "id": "nemotron-experimental", "provider": "nvidia", "model": "nvidia/nemotron-3-super-120b-a12b", "enabled": false, "parameters": { "temperature": 1, "top_p": 0.95, "chat_template_kwargs": { "enable_thinking": true, "low_effort": true, "force_nonempty_content": true } } },
-    { "id": "seek-unaccepted", "provider": "seek_ai", "model": "glm-5.3-flash", "enabled": false, "parameters": { "reasoning_effort": "low" } }
-  ]
+  "maxTokens": 500
 }

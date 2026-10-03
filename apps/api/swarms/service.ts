@@ -5,6 +5,7 @@ import type {
 } from '../../../packages/contracts/src/index.js';
 import { AgentCoreWorkerLauncher } from '../../../services/agent-runtime/agentcore-launcher.js';
 import { DockerWorkerLauncher } from '../../../services/agent-runtime/docker-launcher.js';
+import { resolveModelRunSelection } from '../../../services/agent-runtime/providers.js';
 import { buildSpecialistPolicy } from '../../../services/agents/specialist-policy.js';
 import {
   createStrandsPlanningAgent,
@@ -47,7 +48,7 @@ interface InternalRecord {
 }
 
 function executionMode(env: Record<string, string | undefined>): 'local' | 'agentcore' {
-  const mode = env.VERIFIAI_EXECUTION_MODE ?? 'local';
+  const mode = env.VERIFIAI_EXECUTION_MODE ?? 'agentcore';
   if (mode !== 'local' && mode !== 'agentcore') throw new Error('VERIFIAI_EXECUTION_MODE must be local or agentcore');
   return mode;
 }
@@ -64,16 +65,15 @@ export class LiveAuditService {
 
   async start(input: LiveAuditStartInput): Promise<LiveAuditRecord> {
     const mode = executionMode(this.env);
-    const { planner, modelProfileId } = await createStrandsPlanningAgent({
-      provider: this.env.VERIFIAI_MODEL_PROVIDER as any,
-      modelId: this.env.VERIFIAI_MODEL_ID,
-      baseUrl: this.env.VERIFIAI_MODEL_BASE_URL,
-      awsSecretId: this.env.VERIFIAI_MODEL_SECRET_ID,
-      awsSecretField: this.env.VERIFIAI_MODEL_SECRET_FIELD,
-    });
+    if (mode === 'agentcore' && !this.env.VERIFIAI_AGENTCORE_RUNTIME_ARN) {
+      throw new Error('VERIFIAI_AGENTCORE_RUNTIME_ARN is required in agentcore mode');
+    }
+    const selection = await resolveModelRunSelection({}, { env: this.env });
+    const { planner, modelProfileId } = await createStrandsPlanningAgent(selection, { env: this.env });
 
     const policy = buildSpecialistPolicy({
       modelProfileId,
+      region: selection.region,
       target: input.target,
       computerUseUrl: this.env.VERIFIAI_COMPUTER_USE_URL,
       browserUseUrl: this.env.VERIFIAI_BROWSER_USE_URL,
@@ -92,14 +92,10 @@ export class LiveAuditService {
         })
       : new AgentCoreWorkerLauncher({
           defaultRuntime: {
-            region: this.env.AWS_REGION ?? 'ap-south-1',
+            region: selection.region,
             runtimeArn: this.env.VERIFIAI_AGENTCORE_RUNTIME_ARN ?? '',
           },
         });
-
-    if (mode === 'agentcore' && !this.env.VERIFIAI_AGENTCORE_RUNTIME_ARN) {
-      throw new Error('VERIFIAI_AGENTCORE_RUNTIME_ARN is required in agentcore mode');
-    }
 
     const orchestrator = new EphemeralStrandsOrchestrator(planner, launcher, {
       maxConcurrency: Number(this.env.VERIFIAI_MAX_CONCURRENT_WORKERS ?? 4),

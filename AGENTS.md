@@ -1,6 +1,7 @@
 # VERIFAI — coding-agent entry point
 
-VERIFAI development is **local-first**.
+VERIFAI uses **Strands Agents SDK + Amazon Bedrock AgentCore Runtime + Amazon Bedrock**.
+Issue #74 records the AWS-only runtime decision (3 October 2026).
 
 **Fresh agents MUST read [`ops/local-agent/START-HERE.md`](ops/local-agent/START-HERE.md) before starting any task.**
 
@@ -10,8 +11,10 @@ Operating rules:
 - Work one issue at a time: issue → branch → RED → smallest GREEN → verification → PR.
 - Evidence over AI opinion. Missing capability = Incomplete/Unknown; never invent PASS.
 - Humans approve merges. Never auto-merge.
-- Do not start AWS, TrueForge, Docker, Ollama, or software-factory work unless the assigned roadmap issue explicitly requires it.
+- Use Bedrock with the AWS credential chain; AgentCore workers use an execution IAM role.
+- Deployment, paid live smoke tests, and resource creation need an explicit assigned task.
+- No local Ollama or unrelated software-factory work.
 - Development machine has 8 GB RAM: API-backed models only, one heavy process at a time.
 
-Kit index: [`ops/local-agent/README.md`](ops/local-agent/README.md). Historical/cloud docs remain elsewhere in the repo as migration debt, not as current direction.
+Kit index: [`ops/local-agent/README.md`](ops/local-agent/README.md). Historical evidence remains as history. Current AWS setup: `docs/aws-runtime.md`.
 

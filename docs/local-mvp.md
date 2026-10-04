@@ -111,6 +111,13 @@ are recovered. Live owners and unverified ownership are preserved/refused.
 Run records are bounded in-memory (30); restart loses UI history, not ownership
 records needed for recovery. Cleanup errors prevent a Completed result.
 
+The master audit also requires consistent executed evidence before publishing a
+finding. Interrupted or explicitly unexecuted commands, status/exit mismatches,
+an unstarted sandbox, and a command different from the selected command produce
+Incomplete. A returned execution record must explicitly report sandbox removal;
+missing cleanup evidence is not success. A valid failed command still retains
+its command-scoped finding, while the model allegation remains Unconfirmed.
+
 Safe stop (do not kill random port occupants):
 
 ```sh

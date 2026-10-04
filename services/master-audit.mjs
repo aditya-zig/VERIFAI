@@ -94,7 +94,6 @@ export class MasterAuditService {
       stage('execution',run.execution.status,`Exit ${run.execution.exitCode}`);
       run.outputHash=createHash('sha256').update(JSON.stringify({stdout:run.execution.stdout,stderr:run.execution.stderr,exitCode:run.execution.exitCode})).digest('hex');
       if(run.execution.status==='Incomplete')throw new Error(run.execution.timedOut?'Command timed out':'Command interrupted');
-      stage('finding','Running');
       const e=run.execution;
       const composed=composeFinding({
         modelFinding:analysis.finding,
@@ -103,6 +102,10 @@ export class MasterAuditService {
         repository:record.repository,
         auditId:run.id,
       });
+      if (['Incomplete','Unknown'].includes(composed.assessment.findingState)) {
+        throw new Error(composed.assessment.reason);
+      }
+      stage('finding','Running');
       run.finding={
         title:composed.title,
         severity:composed.severity,
@@ -165,8 +168,8 @@ export class MasterAuditService {
           const stillExists=await access(record.clone.workspacePath).then(()=>true,error=>{if(error.code==='ENOENT')return false;throw error;});
           if(stillExists)throw new Error('Temporary repository still exists');
         }
-        if(cleanupBroken)throw new Error('Docker sandbox cleanup was not proven');
-        run.cleanup={repositoryRemoved:true,sandboxRemoved:run.execution?.sandbox?.removed ?? true};
+        run.cleanup={repositoryRemoved:true,sandboxRemoved:run.execution ? run.execution.sandbox?.removed===true : !cleanupBroken};
+        if(cleanupBroken || !run.cleanup.sandboxRemoved)throw new Error('Docker sandbox cleanup was not proven');
         stage('cleanup','Completed','Temporary repository and sandbox removed');
       } catch(error) {stage('cleanup','Incomplete',String(error.message));terminalStatus='Incomplete';run.failedStage='cleanup';run.error=String(error.message);}
       for(const name of stageNames){

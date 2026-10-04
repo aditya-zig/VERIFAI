@@ -65,6 +65,9 @@ export function composeFinding({ modelFinding, execution, selectedCommand, repos
   } else if (execution.status === 'Incomplete' || execution.timedOut === true || execution.aborted === true) {
     findingState = 'Incomplete';
     reason = execution.timedOut ? 'bounded command timed out' : execution.aborted ? 'bounded command aborted' : 'bounded command did not complete';
+  } else if (execution.executed === false) {
+    findingState = 'Incomplete';
+    reason = 'command was not executed; no executed check';
   } else if (execution.sandbox?.started !== true) {
     findingState = 'Incomplete';
     reason = 'sandbox did not start; no executed check';

@@ -418,6 +418,10 @@ Deep Audit:
 - [Demo recording path](docs/demo-recording.md)
 - [Demo script](docs/demo-script.md)
 
+### PR runtime verification roadmap
+
+The [8 October progress audit](docs/audits/2026-10-08-pr-verification-audit.md) separates implemented verification features, historical evidence and pending live AWS acceptance. The proposed [hackathon design](docs/superpowers/specs/2026-10-08-pr-runtime-verification-design.md) and [implementation plan](docs/superpowers/plans/2026-10-08-pr-runtime-verification.md) describe verifying an existing PR through real execution, publishing revision-bound evidence and letting an agent repair and rerun before human merge. These are planning documents; the PR verification flow is not yet implemented.
+
 ---
 
 ## License

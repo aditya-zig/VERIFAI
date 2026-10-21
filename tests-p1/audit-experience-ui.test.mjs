@@ -68,15 +68,16 @@ function deepAuditRun() {
   };
 }
 
-test('the shell offers both modes, marks the current one and moves focus on a switch', () => {
+test('the shell offers every mode, marks the current one and moves focus on a switch', () => {
   const { doc, context } = openApp({ fetchImpl: noFetch });
   const links = navLinks(doc);
-  assert.equal(links.length, 2);
-  assert.deepEqual(links.map(link => link.attributes['data-nav']).sort(), ['deep-audit', 'landing']);
+  assert.equal(links.length, 3);
+  assert.deepEqual(links.map(link => link.attributes['data-nav']).sort(), ['deep-audit', 'landing', 'pr-verification']);
   const current = links.filter(link => link.attributes['aria-current'] === 'page');
   assert.equal(current.length, 1);
   assert.equal(current[0].attributes['data-nav'], 'landing');
   assert.ok(links.every(link => link.tagName === 'a' && link.attributes.href), 'modes are real links, so Tab and Enter reach them');
+  assert.match(doc.app.innerHTML, /Local controller/, 'the header no longer claims the analysis is local');
 
   doc.dispatch('click', { target: doc.findByAttribute('data-nav', 'deep-audit'), preventDefault() {} });
 
@@ -87,6 +88,14 @@ test('the shell offers both modes, marks the current one and moves focus on a sw
   assert.equal(context.document.title, 'Deep audit — VERIFAI');
   assert.ok(doc.app.innerHTML.includes('id="deepAuditForm"'));
   assert.equal(doc.focused && doc.focused.id, 'deepAuditTitle');
+
+  doc.dispatch('click', { target: doc.findByAttribute('data-nav', 'pr-verification'), preventDefault() {} });
+  const prCurrent = navLinks(doc).filter(link => link.attributes['aria-current'] === 'page');
+  assert.equal(prCurrent.length, 1);
+  assert.equal(prCurrent[0].attributes['data-nav'], 'pr-verification');
+  assert.equal(context.document.title, 'PR verification — VERIFAI');
+  assert.ok(doc.app.innerHTML.includes('id="prVerificationForm"'));
+  assert.equal(doc.focused && doc.focused.id, 'prVerificationTitle');
 });
 
 test('a retired or unknown hash never brings a retired screen back', () => {

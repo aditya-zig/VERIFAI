@@ -144,19 +144,30 @@ export function collectTags(markup, tagName) {
 export function openApp({ hash = '', fetchImpl } = {}) {
   const doc = new FakeDocument();
   const calls = [];
+  const storage = { touched: [], local: new Map(), session: new Map() };
+  const makeStorage = kind => ({
+    getItem: key => { storage.touched.push(`${kind}:get:${key}`); return storage[kind].get(key) ?? null; },
+    setItem: (key, value) => { storage.touched.push(`${kind}:set:${key}`); storage[kind].set(key, String(value)); },
+    removeItem: key => { storage.touched.push(`${kind}:remove:${key}`); storage[kind].delete(key); },
+    clear: () => { storage.touched.push(`${kind}:clear`); storage[kind].clear(); },
+  });
   const fetchStub = async (url, options = {}) => {
-    calls.push({ url, method: options.method || 'GET', body: options.body });
+    calls.push({ url, method: options.method || 'GET', body: options.body, headers: options.headers || {} });
     const response = await fetchImpl(url, options, calls.length);
     return response;
   };
   const location = { hash, hostname: '127.0.0.1', origin: 'http://127.0.0.1:4173' };
+  // The app's own timers must not keep the test process alive.
+  const unref = timer => (typeof timer.unref === 'function' ? timer.unref() : timer);
   const context = vm.createContext({
     document: doc,
     location,
     fetch: fetchStub,
-    setTimeout,
+    localStorage: makeStorage('local'),
+    sessionStorage: makeStorage('session'),
+    setTimeout: (handler, delay) => unref(setTimeout(handler, delay)),
     clearTimeout,
-    setInterval,
+    setInterval: (handler, delay) => unref(setInterval(handler, delay)),
     clearInterval,
     requestAnimationFrame: () => {},
     scrollTo: () => {},
@@ -164,7 +175,7 @@ export function openApp({ hash = '', fetchImpl } = {}) {
   });
   context.window = context;
   vm.runInContext(pageScript, context);
-  return { doc, context, calls, location };
+  return { doc, context, calls, location, storage };
 }
 
 export async function waitFor(predicate, { timeoutMs = 4000, stepMs = 20 } = {}) {

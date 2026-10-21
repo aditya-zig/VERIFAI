@@ -195,6 +195,7 @@ h4 { font-size: 13px; font-weight: 700; color: var(--muted-2); }
 /* Forms */
 .form { display: grid; gap: 16px; }
 .field { display: grid; gap: 6px; }
+.field-row { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
 .label { font-weight: 700; }
 .help { color: var(--muted); font-size: 13px; max-width: 78ch; }
 .input, .textarea, .select {
@@ -410,8 +411,9 @@ details > summary:hover { color: var(--text); }
   }
 
   const SCREENS = {
-    landing: { label: 'Local audit', title: 'Local repository check', render: renderLocalAuditScreen },
-    'deep-audit': { label: 'Deep audit', title: 'Deep audit', render: renderDeepAuditScreen },
+    landing: { label: 'Local audit', docTitle: 'Local repository check — VERIFAI', render: renderLocalAuditScreen },
+    'deep-audit': { label: 'Deep audit', docTitle: 'Deep audit — VERIFAI', render: renderDeepAuditScreen },
+    'pr-verification': { label: 'PR verification', docTitle: 'PR verification — VERIFAI', render: renderPrVerificationScreen },
   };
 
   function appHeader() {
@@ -423,7 +425,7 @@ details > summary:hover { color: var(--text); }
     return `<header class="app-header"><div class="header-inner">
       ${brand()}
       <nav class="header-nav" aria-label="Verification modes">${links}</nav>
-      <div class="header-actions"><span class="scope-chip">Local only</span></div>
+      <div class="header-actions"><span class="scope-chip">Local controller</span></div>
     </div></header>`;
   }
 
@@ -1177,6 +1179,422 @@ details > summary:hover { color: var(--text); }
     }
   }
 
+  /* ---------- pull request verification screen ---------- */
+
+  function renderPrVerificationScreen() {
+    return `${appHeader()}
+      <div class="page">
+        <div class="page-head">
+          <h1 id="prVerificationTitle" tabindex="-1">Pull request verification</h1>
+          <p class="lede">Verify one pull request against the base and head it records, then read what the job actually ran.</p>
+        </div>
+        <form id="prVerificationForm" class="card pad form" aria-describedby="prVerificationHelp" novalidate>
+          <div class="field-row">
+            <div class="field">
+              <label class="label" for="prRepository">Repository</label>
+              <input id="prRepository" name="repository" class="input" type="text" autocomplete="off" spellcheck="false" placeholder="owner/repository" required aria-describedby="prRepositoryHelp" />
+              <p id="prRepositoryHelp" class="help">owner/repository</p>
+            </div>
+            <div class="field">
+              <label class="label" for="prPullRequest">Pull request number</label>
+              <input id="prPullRequest" name="pullRequest" class="input" type="text" inputmode="numeric" autocomplete="off" placeholder="1" required aria-describedby="prPullRequestHelp" />
+              <p id="prPullRequestHelp" class="help">A positive whole number.</p>
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" for="prHeadSha">Expected head commit</label>
+            <input id="prHeadSha" name="expectedHeadSha" class="input mono" type="text" autocomplete="off" spellcheck="false" placeholder="40 hexadecimal characters" required aria-describedby="prHeadShaHelp" />
+            <p id="prHeadShaHelp" class="help">Exactly 40 hexadecimal characters.</p>
+          </div>
+          <div class="field">
+            <label class="label" for="prToken">Bearer token</label>
+            <input id="prToken" name="token" class="input" type="password" autocomplete="off" required aria-describedby="prTokenHelp" />
+            <p id="prTokenHelp" class="help">Sent as an Authorization header. Kept in memory for this session only.</p>
+          </div>
+          <p class="form-limits">It verifies a pull request. It creates none and merges nothing.</p>
+          <div class="actions">
+            <button id="startPrVerification" class="btn primary" type="submit">Verify pull request</button>
+            <span class="form-note">One job per start.</span>
+          </div>
+        </form>
+        <div id="prVerificationResult" class="result-host section" role="region" aria-label="Verification job">
+          <div class="empty-state">
+            <p class="empty-title">No verification job yet</p>
+            <p class="empty-note">Start one to see the phase, the exact base and head the job tested, the checks it covered, the cleanup and the verdict. Nothing is shown that the job did not record.</p>
+          </div>
+        </div>
+        <div class="scope-grid">
+          <section class="card pad scope">
+            <h2>This job records</h2>
+            <ul class="scope-list">
+              <li>The phase the job reached, from Queued to Finished</li>
+              <li>The exact base and head commits the checks ran against</li>
+              <li>The checks that ran, and the ones that did not</li>
+              <li>The cleanup facts and the limitations it hit</li>
+              <li>One verdict, with the failure reason when there is one</li>
+            </ul>
+          </section>
+          <section class="card pad scope">
+            <h2>This screen does not</h2>
+            <ul class="scope-list neg">
+              <li>Create a pull request or merge one</li>
+              <li>Report a check the job did not run</li>
+              <li>Accept live AWS analysis: the controller reports it as not accepted</li>
+              <li>Keep the token anywhere but this session's memory</li>
+            </ul>
+          </section>
+        </div>
+      </div>`;
+  }
+
+  const PR_ACTIVE_PHASES = ['Queued', 'Resolving', 'Planning', 'Executing', 'Cleaning'];
+  const PR_FINISHED_PHASE = 'Finished';
+  let prToken = '';
+  let prJobId = '';
+  let prJob = null;
+  let prCapabilities = null;
+  let prPollTimer = null;
+  let prIdempotency = null;
+
+  function prFieldValue(id) {
+    const element = document.getElementById(id);
+    return element && typeof element.value === 'string' ? element.value.trim() : '';
+  }
+
+  function prIdempotencyKey() {
+    let random = '';
+    try {
+      if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') random = crypto.randomUUID();
+      else if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+        const bytes = new Uint8Array(16);
+        crypto.getRandomValues(bytes);
+        random = Array.from(bytes, byte => byte.toString(16)).join('');
+      }
+    } catch (error) {
+      random = '';
+    }
+    if (!random) random = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    return `prv-${random}`.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 128);
+  }
+
+  function prValidate() {
+    const repository = prFieldValue('prRepository');
+    const pullRequest = prFieldValue('prPullRequest');
+    const expectedHeadSha = prFieldValue('prHeadSha');
+    const token = prFieldValue('prToken');
+    const errors = [];
+    if (!/^[^/\s]+\/[^/\s]+$/.test(repository)) errors.push({ field: 'prRepository', message: 'Enter the repository as owner/repository.' });
+    if (!/^[1-9][0-9]*$/.test(pullRequest)) errors.push({ field: 'prPullRequest', message: 'Enter the pull request number as a positive whole number.' });
+    if (!/^[0-9a-fA-F]{40}$/.test(expectedHeadSha)) errors.push({ field: 'prHeadSha', message: 'Enter the expected head commit as exactly 40 hexadecimal characters.' });
+    if (!token) errors.push({ field: 'prToken', message: 'Enter the bearer token for this job.' });
+    return { errors, payload: { repository, pullRequest: Number(pullRequest), expectedHeadSha } };
+  }
+
+  function prPhase(job) {
+    const phase = job && (job.phase || job.status);
+    return phase ? String(phase) : 'Not reported';
+  }
+
+  function prJobIsActive(job) {
+    return PR_ACTIVE_PHASES.includes(prPhase(job));
+  }
+
+  function prVerdictTone(verdict) {
+    const value = String(verdict || '').toLowerCase();
+    if (value === 'verified') return 'verified';
+    if (value === 'incomplete' || value === 'failed') return 'failed';
+    return 'unknown';
+  }
+
+  function prFieldValueText(value) {
+    if (value === undefined || value === null || value === '') return 'Not reported';
+    if (Array.isArray(value)) return value.length ? value.map(item => (typeof item === 'object' ? JSON.stringify(item) : String(item))).join(', ') : 'None reported';
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+  }
+
+  function prResultField(result, keys) {
+    if (!result || typeof result !== 'object') return undefined;
+    for (const key of keys) {
+      if (result[key] !== undefined && result[key] !== null) return result[key];
+    }
+    return undefined;
+  }
+
+  function prLimitationsBlock(job) {
+    const limitations = job && job.limitations !== undefined ? job.limitations : (job && job.result ? job.result.limitations : undefined);
+    if (limitations === undefined || limitations === null) return `<section class="card pad section evidence-card"><h4>Limitations</h4><p class="evidence-note">Not reported</p></section>`;
+    const items = Array.isArray(limitations) ? limitations : [limitations];
+    if (!items.length) return `<section class="card pad section evidence-card"><h4>Limitations</h4><p class="evidence-note">None reported</p></section>`;
+    return `<section class="card pad section evidence-card"><h4>Limitations (${items.length})</h4>
+      <ul class="artifact-list">${items.map(item => `<li><span class="artifact-name">${escapeHtml(typeof item === 'object' ? JSON.stringify(item) : String(item))}</span></li>`).join('')}</ul>
+    </section>`;
+  }
+
+  function prCoverageBlock(job) {
+    const result = job && job.result;
+    const base = prResultField(result, ['baseSha', 'base', 'testedBase', 'testedBaseSha', 'baseCommitSha']);
+    const head = prResultField(result, ['headSha', 'head', 'testedHead', 'testedHeadSha', 'headCommitSha']);
+    const checks = prResultField(result, ['checks', 'checksRun', 'executedChecks', 'checkCoverage', 'coverage']);
+    return `<section class="card pad section evidence-card"><h4>Tested base and head</h4>
+      ${factGrid([
+        fact('tested base', prFieldValueText(base), undefined, true),
+        fact('tested head', prFieldValueText(head), undefined, true),
+      ])}
+      <p class="evidence-sub">Checks</p>
+      ${checks === undefined || checks === null
+        ? '<p class="evidence-note">Not reported</p>'
+        : Array.isArray(checks)
+          ? (checks.length
+            ? `<ul class="artifact-list">${checks.map(item => `<li><span class="artifact-name">${escapeHtml(typeof item === 'object' ? JSON.stringify(item) : String(item))}</span></li>`).join('')}</ul>`
+            : '<p class="evidence-note">None reported</p>')
+          : `<p class="evidence-note wrap-anywhere">${escapeHtml(prFieldValueText(checks))}</p>`}
+    </section>`;
+  }
+
+  function prCleanupBlock(job) {
+    const cleanup = prResultField(job && job.result, ['cleanup', 'cleanedUp', 'cleanupFacts', 'teardown']);
+    return `<section class="card pad section evidence-card"><h4>Cleanup</h4>
+      ${cleanup === undefined || cleanup === null
+        ? '<p class="evidence-note">Not reported</p>'
+        : typeof cleanup === 'object'
+          ? factGrid(Object.entries(cleanup).map(([key, value]) => fact(key, prFieldValueText(value))))
+          : `<p class="evidence-note wrap-anywhere">${escapeHtml(prFieldValueText(cleanup))}</p>`}
+    </section>`;
+  }
+
+  function renderPrJob(job, host) {
+    prJob = job;
+    const phase = prPhase(job);
+    const verdict = job && job.verdict !== undefined ? job.verdict : undefined;
+    const failure = job && job.failure !== undefined ? job.failure : undefined;
+    const result = job && job.result !== undefined ? job.result : undefined;
+    const tone = prJobIsActive(job) ? 'running' : phase === PR_FINISHED_PHASE ? 'unknown' : 'failed';
+    host.innerHTML = `<section class="card pad result-root" data-job-id="${escapeHtml((job && job.id) || '')}">
+      <div class="result-head">
+        <div class="result-head-text">
+          <h2 class="result-title">Pull request verification</h2>
+          <p class="result-lede">${escapeHtml(prJobHeadline(job, phase, verdict, failure))}</p>
+        </div>
+        <p class="status ${tone}" id="prVerificationPhase">${escapeHtml(phase)}</p>
+      </div>
+      <section class="card pad section evidence-card" id="prVerificationFacts">
+        <h4>Job</h4>
+        ${factGrid([
+          fact('job id', (job && job.id) || '', undefined, true),
+          fact('phase', phase),
+          fact('verdict', prFieldValueText(verdict)),
+          fact('result', prFieldValueText(result && typeof result === 'object' ? result.status : result)),
+        ])}
+        ${failure !== undefined && failure !== null && failure !== '' ? `<p class="status failed wrap-anywhere">${escapeHtml(typeof failure === 'object' ? JSON.stringify(failure) : String(failure))}</p>` : ''}
+      </section>
+      ${prCoverageBlock(job)}
+      ${prCleanupBlock(job)}
+      ${prLimitationsBlock(job)}
+      <p class="tiny muted">These are the facts the job recorded. Nothing above is inferred, and no check is reported that the job did not run.</p>
+      <div class="actions">
+        <button class="btn sm" type="button" data-action="cancel-pr-job" data-job-id="${escapeHtml((job && job.id) || '')}"${prJobIsActive(job) ? '' : ' disabled'}>Cancel job</button>
+        <button class="btn sm" type="button" data-action="load-pr-evidence" data-job-id="${escapeHtml((job && job.id) || '')}">Load evidence</button>
+      </div>
+      <div id="prVerificationEvidence" role="status" aria-live="polite"></div>
+    </section>${prCapabilities ? prCapabilitiesBlock(prCapabilities) : ''}`;
+  }
+
+  function prJobHeadline(job, phase, verdict, failure) {
+    if (prJobIsActive(job)) return `The job is ${phase}. It is still running.`;
+    if (failure !== undefined && failure !== null && failure !== '') return `The job ${phase} with a failure: ${typeof failure === 'object' ? JSON.stringify(failure) : String(failure)}`;
+    if (verdict !== undefined && verdict !== null && verdict !== '') return `The job ${phase}. Verdict: ${String(verdict)}.`;
+    return `The job ${phase}. It recorded no verdict.`;
+  }
+
+  function prCapabilitiesBlock(capabilities) {
+    const data = capabilities || {};
+    return `<section class="card pad section evidence-card" id="prVerificationCapabilities">
+      <h4>Controller runtime</h4>
+      ${factGrid([
+        fact('execution configured', data.executionConfigured === true ? 'yes' : data.executionConfigured === false ? 'no' : 'Not reported'),
+        fact('publication configured', data.publicationConfigured === true ? 'yes' : data.publicationConfigured === false ? 'no' : 'Not reported'),
+        fact('live AWS accepted', data.liveAwsAccepted === true ? 'yes' : data.liveAwsAccepted === false ? 'no' : 'Not reported'),
+      ])}
+    </section>`;
+  }
+
+  function prErrorBlock(status, body, host) {
+    const reasons = {
+      401: 'The server rejected the token (401).',
+      403: 'The server refused this request (403). The token may not cover this job.',
+      429: 'The server is busy (429).',
+      503: 'The verification service is unavailable (503).',
+    };
+    const reason = reasons[status] || (status ? `The server refused this request (HTTP ${status}).` : 'The request did not reach the server.');
+    const detail = body && (body.error || body.message) ? String(body.error || body.message) : '';
+    host.innerHTML = `<section class="card pad error-block" role="alert" tabindex="-1" id="prVerificationError">
+      <p class="error-title">The verification did not start</p>
+      <p class="error-text">${escapeHtml(reason)}</p>
+      ${detail ? `<p class="evidence-note wrap-anywhere">${escapeHtml(detail)}</p>` : ''}
+      <p class="evidence-note">Your input is still in the form. Fix what the server named and start the job again.</p>
+    </section>`;
+    const error = document.getElementById('prVerificationError');
+    if (error && typeof error.focus === 'function') error.focus();
+  }
+
+  function prValidationErrorBlock(errors, host) {
+    host.innerHTML = `<section class="card pad error-block" role="alert" tabindex="-1" id="prVerificationError">
+      <p class="error-title">The form needs a fix</p>
+      <ul class="artifact-list">${errors.map(item => `<li><span class="artifact-name">${escapeHtml(item.message)}</span></li>`).join('')}</ul>
+    </section>`;
+    const error = document.getElementById('prVerificationError');
+    if (error && typeof error.focus === 'function') error.focus();
+    const first = document.getElementById(errors[0].field);
+    if (first && typeof first.focus === 'function') first.focus();
+  }
+
+  async function startPrVerification(form) {
+    const button = document.getElementById('startPrVerification');
+    const host = document.getElementById('prVerificationResult');
+    const { errors, payload } = prValidate();
+    if (errors.length) {
+      prValidationErrorBlock(errors, host);
+      return;
+    }
+    prToken = prFieldValue('prToken');
+    const signature = JSON.stringify(payload);
+    if (!prIdempotency || prIdempotency.signature !== signature) prIdempotency = { signature, key: prIdempotencyKey() };
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.textContent = 'Starting job…';
+    host.innerHTML = '<section class="card pad result-root"><p class="busy-row"><span class="spinner-inline" aria-hidden="true"></span>Starting the verification job…</p></section>';
+    try {
+      const response = await fetch('/api/local/pr-verifications', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'authorization': `Bearer ${prToken}`, 'idempotency-key': prIdempotency.key },
+        body: JSON.stringify(payload),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        prErrorBlock(response.status, body, host);
+        return;
+      }
+      const job = (body && body.job) || {};
+      prJobId = job.id ? String(job.id) : '';
+      prCapabilities = null;
+      renderPrJob(job, host);
+      startPrPolling();
+      loadPrCapabilities(host);
+    } catch (error) {
+      prErrorBlock(0, { error: String(error && error.message ? error.message : error) }, host);
+    } finally {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      button.textContent = 'Verify pull request';
+    }
+  }
+
+  function stopPrPolling() {
+    if (prPollTimer) {
+      clearInterval(prPollTimer);
+      prPollTimer = null;
+    }
+  }
+
+  function startPrPolling() {
+    stopPrPolling();
+    if (!prJobId) return;
+    prPollTimer = setInterval(async () => {
+      if (!prJobId) {
+        stopPrPolling();
+        return;
+      }
+      const host = document.getElementById('prVerificationResult');
+      try {
+        const response = await fetch(`/api/local/pr-verifications/${encodeURIComponent(prJobId)}`, {
+          headers: { 'authorization': `Bearer ${prToken}` },
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          if (host) prErrorBlock(response.status, body, host);
+          stopPrPolling();
+          return;
+        }
+        const job = (body && body.job) || body || {};
+        if (host) renderPrJob(job, host);
+        if (!prJobIsActive(job)) {
+          stopPrPolling();
+          prIdempotency = null;
+        }
+      } catch (error) {
+        if (host) prErrorBlock(0, { error: String(error && error.message ? error.message : error) }, host);
+        stopPrPolling();
+      }
+    }, 1500);
+  }
+
+  async function loadPrCapabilities(host) {
+    if (!host) return;
+    try {
+      const response = await fetch('/api/local/pr-verifications/capabilities', {
+        headers: { 'authorization': `Bearer ${prToken}` },
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) return;
+      prCapabilities = body;
+      if (prJob) renderPrJob(prJob, host);
+    } catch (error) {
+      // the runtime card is an extra, the job result stays the source of truth
+    }
+  }
+
+  async function cancelPrJob(button) {
+    if (!prJobId) return;
+    const host = document.getElementById('prVerificationResult');
+    button.disabled = true;
+    try {
+      const response = await fetch(`/api/local/pr-verifications/${encodeURIComponent(prJobId)}/cancel`, {
+        method: 'POST',
+        headers: { 'authorization': `Bearer ${prToken}` },
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (host) prErrorBlock(response.status, body, host);
+        button.disabled = false;
+        return;
+      }
+      stopPrPolling();
+      if (host) renderPrJob((body && body.job) || {}, host);
+    } catch (error) {
+      if (host) prErrorBlock(0, { error: String(error && error.message ? error.message : error) }, host);
+      button.disabled = false;
+    }
+  }
+
+  async function loadPrEvidence(button) {
+    if (!prJobId) return;
+    const host = document.getElementById('prVerificationEvidence');
+    button.disabled = true;
+    if (host) host.innerHTML = '<p class="busy-row"><span class="spinner-inline" aria-hidden="true"></span>Loading evidence…</p>';
+    try {
+      const response = await fetch(`/api/local/pr-verifications/${encodeURIComponent(prJobId)}/evidence`, {
+        headers: { 'authorization': `Bearer ${prToken}` },
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (host) host.innerHTML = `<p class="status failed">Incomplete: ${escapeHtml(String((body && body.error) || `HTTP ${response.status}`))}</p>`;
+        return;
+      }
+      const evidence = body || {};
+      const parts = [];
+      if (evidence.status !== undefined) parts.push(`<p class="evidence-note">Status: ${escapeHtml(prFieldValueText(evidence.status))}</p>`);
+      if (evidence.candidate !== undefined) parts.push(`<p class="evidence-sub">Candidate</p><p class="evidence-note wrap-anywhere">${escapeHtml(prFieldValueText(evidence.candidate))}</p>`);
+      if (evidence.plan !== undefined) parts.push(`<p class="evidence-sub">Plan</p><p class="evidence-note wrap-anywhere">${escapeHtml(prFieldValueText(evidence.plan))}</p>`);
+      if (evidence.result !== undefined) parts.push(`<p class="evidence-sub">Result</p><p class="evidence-note wrap-anywhere">${escapeHtml(prFieldValueText(evidence.result))}</p>`);
+      if (host) host.innerHTML = `<div class="evidence-card">${parts.join('') || '<p class="evidence-note">The evidence endpoint returned no fields.</p>'}</div>`;
+    } catch (error) {
+      if (host) host.innerHTML = `<p class="status failed">Incomplete: ${escapeHtml(String(error && error.message ? error.message : error))}</p>`;
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   /* ---------- routing ---------- */
 
   function screenFromHash(hash) {
@@ -1186,10 +1604,11 @@ details > summary:hover { color: var(--text); }
 
   function navigate(screen, push = true) {
     if (!Object.prototype.hasOwnProperty.call(SCREENS, screen)) return;
+    if (screen !== 'pr-verification') stopPrPolling();
     state.screen = screen;
     if (push && location.hash !== `#/${screen}`) location.hash = `#/${screen}`;
     render();
-    const title = document.getElementById(`${screen === 'landing' ? 'localAuditTitle' : 'deepAuditTitle'}`);
+    const title = document.getElementById(`${screen === 'landing' ? 'localAuditTitle' : screen === 'deep-audit' ? 'deepAuditTitle' : 'prVerificationTitle'}`);
     if (title && typeof title.focus === 'function') title.focus();
     window.scrollTo({ top: 0, behavior: 'auto' });
   }
@@ -1204,7 +1623,8 @@ details > summary:hover { color: var(--text); }
   function render() {
     const screen = SCREENS[state.screen] || SCREENS.landing;
     app.innerHTML = screen.render();
-    document.title = screen.title === 'Deep audit' ? 'Deep audit — VERIFAI' : 'Local repository check — VERIFAI';
+    document.title = screen.docTitle;
+    if (state.screen !== 'pr-verification') stopPrPolling();
   }
 
   document.addEventListener('submit', (event) => {
@@ -1218,6 +1638,12 @@ details > summary:hover { color: var(--text); }
     if (deepForm) {
       event.preventDefault();
       startDeepAudit(deepForm);
+      return;
+    }
+    const prForm = event.target.closest('#prVerificationForm');
+    if (prForm) {
+      event.preventDefault();
+      startPrVerification(prForm);
     }
   });
 
@@ -1230,6 +1656,10 @@ details > summary:hover { color: var(--text); }
     if (repairAudit) { event.preventDefault(); verifyLocalRepair(repairAudit.dataset.auditId, repairAudit); return; }
     const steer = event.target.closest('[data-action="steer-deep-audit"]');
     if (steer) { event.preventDefault(); steerDeepAudit(steer.dataset.runId, steer); return; }
+    const cancelPr = event.target.closest('[data-action="cancel-pr-job"]');
+    if (cancelPr) { event.preventDefault(); cancelPrJob(cancelPr); return; }
+    const prEvidence = event.target.closest('[data-action="load-pr-evidence"]');
+    if (prEvidence) { event.preventDefault(); loadPrEvidence(prEvidence); return; }
     const retryLocal = event.target.closest('[data-action="retry-local-audit"]');
     if (retryLocal) {
       event.preventDefault();

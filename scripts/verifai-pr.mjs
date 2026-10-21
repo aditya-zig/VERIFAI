@@ -12,48 +12,11 @@ const usage = `Usage:
 
 Resolve a public same-repository PR's exact base/head identity and changed-file digest.
 This command is read-only: it does not run checks, call AWS, write to GitHub or assert a verdict.
+Each GitHub request is bounded by a 15 second timeout.
 
 Optional environment (never printed):
   GITHUB_TOKEN or GH_TOKEN   Public GitHub API token, used only for api.github.com requests
 `;
-
-function parseArguments(argv) {
-  if (argv.length === 0 || argv.includes('--help') || argv.includes('-h')) {
-    process.stdout.write(usage);
-    process.exit(0);
-  }
-
-  const [command, ...rest] = argv;
-  if (command !== 'inspect') throw new Error(`unknown command: ${command}`);
-
-  const allowed = new Set(['repository', 'pr', 'expected-head']);
-  const values = new Map();
-  for (let index = 0; index < rest.length; index += 1) {
-    const argument = rest[index];
-    if (!argument.startsWith('--')) throw new Error(`unexpected argument: ${argument}`);
-    const separator = argument.indexOf('=');
-    const name = separator === -1 ? argument.slice(2) : argument.slice(2, separator);
-    if (!allowed.has(name)) throw new Error(`unknown option: --${name}`);
-    if (values.has(name)) throw new Error(`duplicate option: --${name}`);
-    const value = separator === -1 ? rest[++index] : argument.slice(separator + 1);
-    if (!value || (separator === -1 && value.startsWith('--'))) throw new Error(`missing value for --${name}`);
-    values.set(name, value);
-  }
-
-  for (const name of allowed) {
-    if (!values.has(name)) throw new Error(`missing required option: --${name}`);
-  }
-  const prText = values.get('pr');
-  if (!/^[1-9][0-9]*$/.test(prText) || !Number.isSafeInteger(Number(prText))) {
-    throw new Error('--pr must be a positive integer');
-  }
-
-  return {
-    repository: values.get('repository'),
-    pullRequest: Number(prText),
-    expectedHeadSha: values.get('expected-head'),
-  };
-}
 
 function environmentToken() {
   const token = process.env.GITHUB_TOKEN?.trim() || process.env.GH_TOKEN?.trim();
@@ -67,11 +30,18 @@ function safeMessage(error, token) {
 
 async function loadModules() {
   try {
-    const [candidate, github] = await Promise.all([
+    const [candidate, github, cli] = await Promise.all([
       import('../dist/services/pr-verification/candidate.js'),
       import('../dist/packages/core/github/index.js'),
+      import('../dist/services/pr-verification/cli.js'),
     ]);
-    return { ...candidate, FetchGitHubTransport: github.FetchGitHubTransport };
+    return {
+      ...candidate,
+      FetchGitHubTransport: github.FetchGitHubTransport,
+      parseInspectArguments: cli.parseInspectArguments,
+      formatInspectionResult: cli.formatInspectionResult,
+      INSPECTION_REQUEST_TIMEOUT_MS: cli.INSPECTION_REQUEST_TIMEOUT_MS,
+    };
   } catch (error) {
     if (error?.code === 'ERR_MODULE_NOT_FOUND') {
       throw new Error('compiled modules are missing; run "npm run build" first');
@@ -81,19 +51,18 @@ async function loadModules() {
 }
 
 async function main() {
-  const input = parseArguments(process.argv.slice(2));
-  const token = environmentToken();
+  const argv = process.argv.slice(2);
+  if (argv.length === 0 || argv.includes('--help') || argv.includes('-h')) {
+    process.stdout.write(usage);
+    return;
+  }
+
   const modules = await loadModules();
-  const candidate = await modules.resolveCandidate(input, new modules.FetchGitHubTransport(), { token });
-  process.stdout.write(`${JSON.stringify({
-    candidate,
-    execution: {
-      state: 'pending',
-      runtimeChecksExecuted: false,
-      detail: 'Candidate identity resolved only. No runtime verification was executed and no verdict is asserted.',
-    },
-    verdict: null,
-  }, null, 2)}\n`);
+  const input = modules.parseInspectArguments(argv);
+  const token = environmentToken();
+  const transport = new modules.FetchGitHubTransport({ timeoutMs: modules.INSPECTION_REQUEST_TIMEOUT_MS });
+  const candidate = await modules.resolveCandidate(input, transport, { token });
+  process.stdout.write(`${JSON.stringify(modules.formatInspectionResult(candidate), null, 2)}\n`);
 }
 
 main().catch((error) => {

@@ -28,6 +28,8 @@ export type CandidateResolutionErrorCode =
   | 'INVALID_COMMIT_SHA'
   | 'FILE_LIST_TRUNCATED'
   | 'FILE_PATCH_UNAVAILABLE'
+  | 'FILE_PATCH_TRUNCATED'
+  | 'FILE_PATCH_UNSUPPORTED'
   | 'FILE_LIST_OVERFLOW'
   | 'MALFORMED_GITHUB_RESPONSE';
 
@@ -107,6 +109,13 @@ function readString(value: unknown, label: string): string {
 function readOptionalIdentifier(value: unknown, label: string): string | number | null {
   if (value === undefined || value === null) return null;
   if (typeof value !== 'string' && typeof value !== 'number') malformed(`${label} must be a string, number or null`);
+  return value;
+}
+
+function readNonNegativeInteger(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    malformed(`${label} must be a non-negative integer`);
+  }
   return value;
 }
 
@@ -237,20 +246,136 @@ function readMergeBase(value: unknown, baseSha: string): string {
   return readCommitSha(mergeBase.sha, 'compare merge-base SHA');
 }
 
+const hunkHeaderPattern = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$/;
+const noNewlineMarker = '\\ No newline at end of file';
+
+function patchLines(patch: string): string[] {
+  if (patch.trim() === '') return [];
+  const normalized = patch.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = normalized.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  return lines;
+}
+
+function readHunkHeader(line: string, filename: string): { oldCount: number; newCount: number } {
+  const match = hunkHeaderPattern.exec(line);
+  if (!match) {
+    fail('FILE_PATCH_UNSUPPORTED', `unsupported hunk header for ${filename}`, 422);
+  }
+  const oldCount = match[2] === undefined ? 1 : Number(match[2]);
+  const newCount = match[4] === undefined ? 1 : Number(match[4]);
+  if (!Number.isSafeInteger(oldCount) || oldCount < 0 || !Number.isSafeInteger(newCount) || newCount < 0) {
+    fail('FILE_PATCH_TRUNCATED', `hunk counts are invalid for ${filename}`, 422);
+  }
+  return { oldCount, newCount };
+}
+
+function validateUnifiedPatch(file: {
+  filename: string;
+  patch: string;
+  additions: number;
+  deletions: number;
+  changes: number;
+}): void {
+  if (file.additions + file.deletions !== file.changes) {
+    fail('FILE_PATCH_TRUNCATED', `reported changes do not equal additions plus deletions for ${file.filename}`, 422);
+  }
+
+  const lines = patchLines(file.patch);
+  if (lines.length === 0) {
+    if (file.changes === 0) return;
+    fail('FILE_PATCH_TRUNCATED', `patch is empty despite reported changes for ${file.filename}`, 422);
+  }
+
+  let additions = 0;
+  let deletions = 0;
+  let hunks = 0;
+  let index = 0;
+  while (index < lines.length) {
+    const header = readHunkHeader(lines[index], file.filename);
+    hunks += 1;
+    index += 1;
+    let oldRemaining = header.oldCount;
+    let newRemaining = header.newCount;
+    let sawBody = false;
+    let previousWasContent = false;
+
+    while (index < lines.length && !lines[index].startsWith('@@')) {
+      const line = lines[index];
+      if (line === noNewlineMarker) {
+        if (!previousWasContent) {
+          fail('FILE_PATCH_UNSUPPORTED', `no-newline marker does not follow a content line for ${file.filename}`, 422);
+        }
+        previousWasContent = false;
+        index += 1;
+        continue;
+      }
+
+      let oldDelta = 0;
+      let newDelta = 0;
+      if (line.startsWith(' ')) {
+        oldDelta = 1;
+        newDelta = 1;
+      } else if (line.startsWith('+')) {
+        newDelta = 1;
+        additions += 1;
+      } else if (line.startsWith('-')) {
+        oldDelta = 1;
+        deletions += 1;
+      } else {
+        fail('FILE_PATCH_UNSUPPORTED', `unsupported diff line for ${file.filename}`, 422);
+      }
+
+      oldRemaining -= oldDelta;
+      newRemaining -= newDelta;
+      if (oldRemaining < 0 || newRemaining < 0) {
+        fail('FILE_PATCH_TRUNCATED', `hunk contains more lines than its header declares for ${file.filename}`, 422);
+      }
+      sawBody = true;
+      previousWasContent = true;
+      index += 1;
+    }
+
+    if (!sawBody) {
+      fail('FILE_PATCH_TRUNCATED', `hunk has no body for ${file.filename}`, 422);
+    }
+    if (oldRemaining !== 0 || newRemaining !== 0) {
+      fail('FILE_PATCH_TRUNCATED', `hunk body is shorter than its header declares for ${file.filename}`, 422);
+    }
+  }
+
+  if (file.changes === 0) {
+    if (additions !== 0 || deletions !== 0) {
+      fail('FILE_PATCH_TRUNCATED', `zero-change file reports changed lines for ${file.filename}`, 422);
+    }
+    return;
+  }
+  if (hunks === 0) {
+    fail('FILE_PATCH_TRUNCATED', `patch has no hunks for ${file.filename}`, 422);
+  }
+  if (additions !== file.additions || deletions !== file.deletions) {
+    fail(
+      'FILE_PATCH_TRUNCATED',
+      `parsed patch totals do not match GitHub counts for ${file.filename} (${additions}/${deletions} vs ${file.additions}/${file.deletions})`,
+      422,
+    );
+  }
+}
+
 function readChangedFile(value: unknown): ChangedFileIdentity {
   const file = readRecord(value, 'changed file');
   const filename = readString(file.filename, 'changed file filename');
   if (filename.length > 4_096 || filename.includes('\0')) malformed('changed file filename is invalid');
   const status = readString(file.status, 'changed file status');
   if (status.length > 64) malformed('changed file status is invalid');
-  if (typeof file.changes !== 'number' || !Number.isSafeInteger(file.changes) || file.changes < 0) {
-    malformed(`changed file ${filename} must report non-negative integer changes`);
-  }
+  const additions = readNonNegativeInteger(file.additions, `changed file ${filename} additions`);
+  const deletions = readNonNegativeInteger(file.deletions, `changed file ${filename} deletions`);
+  const changes = readNonNegativeInteger(file.changes, `changed file ${filename} changes`);
 
   let patch: string;
   if (typeof file.patch === 'string') {
     patch = file.patch;
-  } else if (file.patch === undefined && file.changes === 0) {
+  } else if (file.patch === undefined && changes === 0) {
     patch = '';
   } else {
     fail('FILE_PATCH_UNAVAILABLE', `patch data is unavailable for ${filename}; binary or oversized diffs are unsupported`, 422);
@@ -258,9 +383,15 @@ function readChangedFile(value: unknown): ChangedFileIdentity {
   if (patch.length > PR_CANDIDATE_LIMITS.maxPatchCharactersPerFile) {
     fail('FILE_LIST_OVERFLOW', `patch for ${filename} exceeds the per-file intake limit`, 413);
   }
+  validateUnifiedPatch({ filename, patch, additions, deletions, changes });
   return { filename, status, patch };
 }
 
+/**
+ * Hash the validated, reported patch text. This is a patch digest, not a
+ * full-file or tree digest; it cannot prove omitted bytes if GitHub returns a
+ * patch whose counts still agree with its own metadata.
+ */
 export function candidateDiffDigest(files: readonly ChangedFileIdentity[]): string {
   const canonical = [...files]
     .map(({ filename, status, patch }) => ({ filename, status, patch }))

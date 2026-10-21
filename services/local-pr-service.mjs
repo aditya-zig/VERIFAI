@@ -7,7 +7,7 @@ export class LocalPrService{
     this.audits=audits;this.repairs=repairs;this.artifacts=artifacts;this.env=env;this.transportFactory=transportFactory;
   }
   get(auditId){const value=this.#results.get(auditId);return value?JSON.parse(JSON.stringify(value)):undefined;}
-  async create(auditId){
+  async create(auditId,{principal}={}){
     const audit=this.audits.get(auditId);if(!audit)throw Object.assign(new Error('audit not found'),{statusCode:404});
     const repair=this.repairs.get(auditId);if(!repair)throw Object.assign(new Error('verified repair not found'),{statusCode:409});
     const proof=this.artifacts.get(auditId);if(!proof)throw Object.assign(new Error('proof artifact manifest not found'),{statusCode:409});
@@ -26,7 +26,12 @@ export class LocalPrService{
     const result=await createVerifiedRepairPullRequest({
       transport,repository,baseBranch,runId:auditId,finding:audit.finding,repair,proof,approvalToken,approvalSecret,
     });
-    const stored={auditId,repository,baseBranch,...result,approval:{bound:true,patchDigest:repair.patchDigest,proofManifestSha256:proof.manifest.sha256}};
+    // The approval record names the issuing service and explicitly does not
+    // claim human approval. A caller principal, when provided, records which
+    // intake mechanism published; it is not evidence that a human approved.
+    const approval={bound:true,patchDigest:repair.patchDigest,proofManifestSha256:proof.manifest.sha256,issuedBy:'local-service',humanApproved:false};
+    const stored={auditId,repository,baseBranch,...result,approval};
+    if(principal)stored.principal=JSON.parse(JSON.stringify(principal));
     this.#results.set(auditId,stored);
     return JSON.parse(JSON.stringify(stored));
   }

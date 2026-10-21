@@ -54,3 +54,32 @@ test('LocalPrService explicit create uses stored repair/proof and never caller p
   assert.deepEqual(calls.map(x=>x[0]),['verify','branch','commit','push','pr']);
   assert.deepEqual(calls.find(x=>x[0]==='commit')[1].patch,patch);
 });
+
+test('LocalPrService records the publishing caller principal and never claims human approval',async()=>{
+  const {createHash}=await import('node:crypto');
+  const hash=(s)=>createHash('sha256').update(s).digest('hex');
+  const patch={files:[{path:'x',expected:'a',replacement:'b'}]};
+  const repair={verdict:'VerifiedRepair',verifiedBaseCommitSha:'abcdef1234567890',patch,patchDigest:hash(JSON.stringify(patch)),
+    changedFiles:[{path:'x',beforeHash:'1'.repeat(64),afterHash:'2'.repeat(64)}],
+    before:{status:'Failed',executed:true,exitCode:1,command:'check'},after:{status:'Completed',executed:true,exitCode:0,command:'check'},
+    regressions:[{status:'Completed',executed:true,exitCode:0,command:'regression'}],originalUnchanged:true,cleanup:{candidateRemoved:true}};
+  const names=['run','repository','repair','repair-diff','before-verification','after-verification','regressions'];
+  const proof={manifest:{id:'proof:run:manifest',sha256:'a'.repeat(64)},artifacts:names.map((name,i)=>({name,status:'Present',path:name+'.json',sha256:String(i+1).repeat(64).slice(0,64)}))};
+  const transport={
+    async verifyRemoteBase(){},
+    async createBranch(x){return {sha:x.expectedBaseSha};},
+    async commitVerifiedPatch(){return {commitSha:'c'};},
+    async pushBranch(){},
+    async openPullRequest(){return {number:1,url:'u'};},
+  };
+  const service=new LocalPrService({get:()=>({id:'run',repository:{fullName:'owner/repo'},finding:{title:'Bug'}})},{get:()=>repair},{get:()=>proof},{
+    env:{VERIFIAI_PR_APPROVAL_SECRET:'0123456789abcdef0123456789abcdef',VERIFIAI_GITHUB_TOKEN:'token'},
+    transportFactory:()=>transport,
+  });
+  const result=await service.create('run',{principal:{id:'same-origin-browser-session',kind:'browser-session'}});
+  assert.equal(result.approval.humanApproved,false,'a server-issued approval must never claim a human approved');
+  assert.equal(result.approval.issuedBy,'local-service');
+  assert.deepEqual(result.principal,{id:'same-origin-browser-session',kind:'browser-session'});
+  const unattributed=await service.create('run',{});
+  assert.equal(unattributed.approval.humanApproved,false,'unsubmitted principals must keep the honest approval record');
+});

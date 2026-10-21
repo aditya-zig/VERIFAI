@@ -280,6 +280,7 @@ function readHunkHeader(line: string, filename: string): { oldOffset: number; ne
 
 function validateUnifiedPatch(file: {
   filename: string;
+  status: string;
   patch: string;
   additions: number;
   deletions: number;
@@ -300,8 +301,18 @@ function validateUnifiedPatch(file: {
   let index = 0;
   let oldEnd = 0;
   let newEnd = 0;
+  let oldTerminated = false;
+  let newTerminated = false;
   while (index < lines.length) {
     const header = readHunkHeader(lines[index], file.filename);
+    if ((file.status === 'added' && (header.oldOffset !== 0 || header.oldCount !== 0))
+      || (file.status === 'removed' && (header.newOffset !== 0 || header.newCount !== 0))) {
+      fail('FILE_PATCH_TRUNCATED', `hunk does not preserve the empty side of ${file.status} file ${file.filename}`, 422);
+    }
+    if ((oldTerminated && (header.oldOffset !== oldEnd || header.oldCount !== 0))
+      || (newTerminated && (header.newOffset !== newEnd || header.newCount !== 0))) {
+      fail('FILE_PATCH_UNSUPPORTED', `hunk continues beyond a terminated file side for ${file.filename}`, 422);
+    }
     if (header.oldOffset < oldEnd || header.newOffset < newEnd
       || header.oldOffset - oldEnd !== header.newOffset - newEnd) {
       fail('FILE_PATCH_TRUNCATED', `hunk ranges overlap, are unordered or have inconsistent gaps for ${file.filename}`, 422);
@@ -313,15 +324,19 @@ function validateUnifiedPatch(file: {
     let oldRemaining = header.oldCount;
     let newRemaining = header.newCount;
     let sawBody = false;
-    let previousWasContent = false;
+    let previousOldDelta = 0;
+    let previousNewDelta = 0;
 
     while (index < lines.length && !lines[index].startsWith('@@')) {
       const line = lines[index];
       if (line === noNewlineMarker) {
-        if (!previousWasContent) {
+        if (previousOldDelta === 0 && previousNewDelta === 0) {
           fail('FILE_PATCH_UNSUPPORTED', `no-newline marker does not follow a content line for ${file.filename}`, 422);
         }
-        previousWasContent = false;
+        if (previousOldDelta !== 0) oldTerminated = true;
+        if (previousNewDelta !== 0) newTerminated = true;
+        previousOldDelta = 0;
+        previousNewDelta = 0;
         index += 1;
         continue;
       }
@@ -341,13 +356,17 @@ function validateUnifiedPatch(file: {
         fail('FILE_PATCH_UNSUPPORTED', `unsupported diff line for ${file.filename}`, 422);
       }
 
+      if ((oldTerminated && oldDelta !== 0) || (newTerminated && newDelta !== 0)) {
+        fail('FILE_PATCH_UNSUPPORTED', `content follows a terminated file side for ${file.filename}`, 422);
+      }
       oldRemaining -= oldDelta;
       newRemaining -= newDelta;
       if (oldRemaining < 0 || newRemaining < 0) {
         fail('FILE_PATCH_TRUNCATED', `hunk contains more lines than its header declares for ${file.filename}`, 422);
       }
       sawBody = true;
-      previousWasContent = true;
+      previousOldDelta = oldDelta;
+      previousNewDelta = newDelta;
       index += 1;
     }
 
@@ -395,7 +414,7 @@ function readChangedFile(value: unknown): ChangedFileIdentity {
   if (changes === 0) {
     fail('FILE_PATCH_UNSUPPORTED', `zero-change patch context is unsupported for ${filename}`, 422);
   }
-  validateUnifiedPatch({ filename, patch, additions, deletions, changes });
+  validateUnifiedPatch({ filename, status, patch, additions, deletions, changes });
   return { filename, status, patch };
 }
 

@@ -21,18 +21,71 @@ const CONTROLLED_JOB_EXECUTING = {
   phase: 'Executing',
 };
 
-const CONTROLLED_JOB_FINISHED = {
-  id: 'prjob-controlled-0001',
+// The shape the controller stores: PrJob, CheckPlan, CheckObservation and
+// PrVerificationResult from packages/contracts. A Finished job whose result
+// is Incomplete, with one check that ran on the base and one that never ran
+// on the head.
+const STORED_JOB_FINISHED_INCOMPLETE = {
+  id: 'prjob-7f3c1b62-0f5a-4d61-9c1e-2b8a5f0d4e77',
+  ownerId: 'owner-controlled',
+  request: { repository: 'octocat/Hello-World', pullRequest: 7, expectedHeadSha: HEAD_SHA },
+  requestKey: 'prv-controlled-key',
   phase: 'Finished',
-  verdict: 'Incomplete',
-  result: {
-    status: 'notVerified',
+  cancelRequested: false,
+  candidate: {
+    repository: 'octocat/Hello-World',
+    pullRequest: 7,
+    headRepository: 'octocat',
     baseSha: BASE_SHA,
     headSha: HEAD_SHA,
-    checks: ['lint', 'unit'],
-    cleanup: { workspaceRemoved: true, containerRemoved: true },
+    mergeBaseSha: 'c'.repeat(40),
+    changedFiles: ['README.md', 'index.js'],
+    diffDigest: 'd'.repeat(64),
   },
+  plan: {
+    policyVersion: 'pr-verification-policy-v1',
+    profileId: 'pr-demo-profile',
+    profileDigest: 'e'.repeat(64),
+    requiredChecks: [{ checkId: 'lint', artifactRef: 'checks/lint', contentSha256: 'f'.repeat(64), origin: 'approved' }],
+    generatedTests: [{ checkId: 'unit-generated', artifactRef: 'tests/generated-unit', contentSha256: '1'.repeat(64), origin: 'generated' }],
+    planDigest: '2'.repeat(64),
+  },
+  resourceIds: [],
+  result: {
+    candidate: {
+      repository: 'octocat/Hello-World',
+      pullRequest: 7,
+      headRepository: 'octocat',
+      baseSha: BASE_SHA,
+      headSha: HEAD_SHA,
+      mergeBaseSha: 'c'.repeat(40),
+      changedFiles: ['README.md', 'index.js'],
+      diffDigest: 'd'.repeat(64),
+    },
+    plan: {
+      policyVersion: 'pr-verification-policy-v1',
+      profileId: 'pr-demo-profile',
+      profileDigest: 'e'.repeat(64),
+      requiredChecks: [{ checkId: 'lint', artifactRef: 'checks/lint', contentSha256: 'f'.repeat(64), origin: 'approved' }],
+      generatedTests: [{ checkId: 'unit-generated', artifactRef: 'tests/generated-unit', contentSha256: '1'.repeat(64), origin: 'generated' }],
+      planDigest: '2'.repeat(64),
+    },
+    observations: [
+      { checkId: 'lint', revision: 'base', commitSha: BASE_SHA, status: 'Verified', executed: true, exitCode: 0, artifactRefs: ['artifacts/base-lint.json'], commandDigest: '3'.repeat(64), testContentSha256: 'f'.repeat(64) },
+      { checkId: 'lint', revision: 'head', commitSha: HEAD_SHA, status: 'Incomplete', executed: false, exitCode: null, artifactRefs: [], commandDigest: '3'.repeat(64), testContentSha256: 'f'.repeat(64) },
+    ],
+    verdict: 'Incomplete',
+    limitations: ['the head check never ran'],
+    evidenceManifestSha256: '4'.repeat(64),
+    cleanupComplete: true,
+    superseded: false,
+  },
+  verdict: 'Incomplete',
+  failure: { code: 'EXECUTION_RUNTIME_UNAVAILABLE', message: 'the execution runtime is not configured' },
   limitations: ['the execution runtime is not configured'],
+  version: 3,
+  createdAt: '2026-10-21T10:00:00.000Z',
+  updatedAt: '2026-10-21T10:00:12.000Z',
 };
 
 const CONTROLLED_CAPABILITIES = {
@@ -126,7 +179,7 @@ test('the job polls while it is active and stops once it is finished', async () 
   const { doc, calls } = openPrScreen(async (url, options) => {
     if (options.method === 'POST') return jsonResponse({ job: CONTROLLED_JOB_QUEUED }, { status: 202 });
     polls += 1;
-    return jsonResponse({ job: polls === 1 ? CONTROLLED_JOB_EXECUTING : CONTROLLED_JOB_FINISHED });
+    return jsonResponse({ job: polls === 1 ? CONTROLLED_JOB_EXECUTING : STORED_JOB_FINISHED_INCOMPLETE });
   });
 
   fillForm(doc);
@@ -182,23 +235,22 @@ test('cancelling a job is its own action and stops the polling', async () => {
 
 test('a finished job shows only the facts the controller recorded', async () => {
   const { doc } = openPrScreen(async (url, options) => (options.method === 'POST'
-    ? jsonResponse({ job: CONTROLLED_JOB_FINISHED }, { status: 202 })
-    : jsonResponse({ job: CONTROLLED_JOB_FINISHED })));
+    ? jsonResponse({ job: STORED_JOB_FINISHED_INCOMPLETE }, { status: 202 })
+    : jsonResponse({ job: STORED_JOB_FINISHED_INCOMPLETE })));
 
   fillForm(doc);
   doc.getElementById('prVerificationForm').requestSubmit();
   assert.ok(await waitFor(() => doc.getElementById('prVerificationResult').innerHTML.includes('Finished')));
 
   const rendered = doc.getElementById('prVerificationResult').innerHTML;
-  assert.match(rendered, /prjob-controlled-0001/);
+  assert.match(rendered, /prjob-7f3c1b62-0f5a-4d61-9c1e-2b8a5f0d4e77/);
   assert.match(rendered, /Incomplete/);
-  assert.match(rendered, /notVerified/);
   assert.match(rendered, new RegExp(BASE_SHA));
   assert.match(rendered, new RegExp(HEAD_SHA));
   assert.match(rendered, /lint/);
-  assert.match(rendered, /workspaceRemoved/);
+  assert.match(rendered, /cleanup complete/);
   assert.match(rendered, /the execution runtime is not configured/);
-  assert.doesNotMatch(rendered, /Create PR|Merge|pull request created/i, 'no pull request action on this screen');
+  assert.doesNotMatch(rendered, /data-action="create-|Create PR|pull request created/i, 'no pull request action on this screen');
 });
 
 test('the runtime card reports the controller capabilities as they came', async () => {
@@ -219,6 +271,104 @@ test('the runtime card reports the controller capabilities as they came', async 
   assert.match(rendered, /live AWS accepted/);
   const capabilities = calls.find(call => call.url.endsWith('/capabilities'));
   assert.equal(capabilities.headers.authorization, `Bearer ${TOKEN}`);
+});
+
+test('a stored finished job renders the exact contract fields', async () => {
+  const { doc } = openPrScreen(async (url, options) => (options.method === 'POST'
+    ? jsonResponse({ job: STORED_JOB_FINISHED_INCOMPLETE }, { status: 202 })
+    : jsonResponse({ job: STORED_JOB_FINISHED_INCOMPLETE })));
+
+  fillForm(doc);
+  doc.getElementById('prVerificationForm').requestSubmit();
+  assert.ok(await waitFor(() => doc.getElementById('prVerificationResult').innerHTML.includes('prjob-7f3c1b62')));
+
+  const rendered = doc.getElementById('prVerificationResult').innerHTML;
+  // the job itself
+  assert.match(rendered, /prjob-7f3c1b62-0f5a-4d61-9c1e-2b8a5f0d4e77/);
+  assert.match(rendered, /Finished/);
+  assert.match(rendered, /Incomplete/);
+  assert.match(rendered, /EXECUTION_RUNTIME_UNAVAILABLE/);
+  assert.match(rendered, /the execution runtime is not configured/);
+  // the request and the candidate
+  assert.match(rendered, /expected head/);
+  assert.match(rendered, new RegExp(HEAD_SHA));
+  assert.match(rendered, /candidate base/);
+  assert.match(rendered, new RegExp(BASE_SHA));
+  assert.match(rendered, /merge base/);
+  assert.match(rendered, new RegExp('c'.repeat(40)));
+  assert.match(rendered, /README\.md/);
+  // the plan
+  assert.match(rendered, /pr-verification-policy-v1/);
+  assert.match(rendered, /pr-demo-profile/);
+  assert.match(rendered, new RegExp('2'.repeat(64)));
+  assert.match(rendered, /Required checks \(1\)/);
+  assert.match(rendered, /Generated tests \(1\)/);
+  assert.match(rendered, /unit-generated/);
+  // every observation field
+  assert.match(rendered, /revision: base/);
+  assert.match(rendered, /revision: head/);
+  assert.match(rendered, /executed: yes/);
+  assert.match(rendered, /executed: no/);
+  assert.match(rendered, /exit code: 0/);
+  assert.match(rendered, /exit code: Not reported/);
+  assert.match(rendered, /artifacts: artifacts\/base-lint\.json/);
+  assert.match(rendered, /artifacts: None recorded/);
+  assert.match(rendered, new RegExp('3'.repeat(64)));
+  assert.match(rendered, new RegExp('f'.repeat(64)));
+  // cleanup, evidence and limitations
+  assert.match(rendered, /cleanup complete/);
+  assert.match(rendered, /superseded/);
+  assert.match(rendered, new RegExp('4'.repeat(64)));
+  assert.match(rendered, /Job limitations \(1\)/);
+  assert.match(rendered, /Result limitations \(1\)/);
+  assert.match(rendered, /the head check never ran/);
+});
+
+test('an expected head is never reported as a tested commit', async () => {
+  const { doc } = openPrScreen(async (url, options) => (options.method === 'POST'
+    ? jsonResponse({ job: STORED_JOB_FINISHED_INCOMPLETE }, { status: 202 })
+    : jsonResponse({ job: STORED_JOB_FINISHED_INCOMPLETE })));
+
+  fillForm(doc);
+  doc.getElementById('prVerificationForm').requestSubmit();
+  assert.ok(await waitFor(() => doc.getElementById('prVerificationResult').innerHTML.includes('prjob-7f3c1b62')));
+
+  const rendered = doc.getElementById('prVerificationResult').innerHTML;
+  const testedBase = rendered.match(/<dt>tested base commit<\/dt><dd[^>]*>([^<]*)</);
+  const testedHead = rendered.match(/<dt>tested head commit<\/dt><dd[^>]*>([^<]*)</);
+  assert.ok(testedBase, 'the tested base is reported');
+  assert.equal(testedBase[1], BASE_SHA, 'the base that ran is the tested base');
+  assert.ok(testedHead, 'the tested head is reported');
+  assert.equal(testedHead[1], 'Not tested', 'the head that never ran is not called tested, even though the request expected it');
+  assert.match(rendered, /No evidence was recorded for this check\./, 'the check that never ran carries no evidence claim');
+  assert.match(rendered, /expected head/, 'the request head is shown as the expectation');
+});
+
+test('the evidence endpoint reports an unavailable terminal job with its verdict', async () => {
+  const terminalWithoutResult = {
+    id: 'prjob-terminal-0002',
+    phase: 'Finished',
+    verdict: 'Incomplete',
+    limitations: ['the job finished without a recorded result'],
+  };
+  const { doc } = openPrScreen(async (url, options) => {
+    if (url.endsWith('/evidence')) return jsonResponse({ status: 'Unavailable', verdict: 'Incomplete', limitations: ['the job finished without a recorded result'] });
+    if (options.method === 'POST') return jsonResponse({ job: terminalWithoutResult }, { status: 202 });
+    return jsonResponse({ job: terminalWithoutResult });
+  });
+
+  fillForm(doc);
+  doc.getElementById('prVerificationForm').requestSubmit();
+  assert.ok(await waitFor(() => doc.getElementById('prVerificationResult').innerHTML.includes('prjob-terminal-0002')));
+
+  doc.dispatch('click', { target: doc.findByAttribute('data-action', 'load-pr-evidence'), preventDefault() {} });
+  assert.ok(await waitFor(() => doc.getElementById('prVerificationEvidence').innerHTML.includes('Unavailable')));
+
+  const evidence = doc.getElementById('prVerificationEvidence').innerHTML;
+  assert.match(evidence, /Unavailable/);
+  assert.match(evidence, /Verdict: Incomplete/);
+  assert.match(evidence, /the job finished without a recorded result/);
+  assert.doesNotMatch(evidence, /Pending/, 'a terminal job is not left pending');
 });
 
 test('a refused start explains the status, keeps the input and gives the focus back', async () => {
@@ -254,9 +404,14 @@ test('a network error is named and the form stays ready for another attempt', as
 
 test('the evidence endpoint renders what it returns', async () => {
   const { doc, calls } = openPrScreen(async (url, options) => {
-    if (url.endsWith('/evidence')) return jsonResponse({ status: 'partial', candidate: 'candidate-ref', plan: ['lint'], result: 'no verdict' });
-    if (options.method === 'POST') return jsonResponse({ job: CONTROLLED_JOB_FINISHED }, { status: 202 });
-    return jsonResponse({ job: CONTROLLED_JOB_FINISHED });
+    if (url.endsWith('/evidence')) return jsonResponse({
+      status: 'Available',
+      candidate: STORED_JOB_FINISHED_INCOMPLETE.candidate,
+      plan: STORED_JOB_FINISHED_INCOMPLETE.plan,
+      result: STORED_JOB_FINISHED_INCOMPLETE.result,
+    });
+    if (options.method === 'POST') return jsonResponse({ job: STORED_JOB_FINISHED_INCOMPLETE }, { status: 202 });
+    return jsonResponse({ job: STORED_JOB_FINISHED_INCOMPLETE });
   });
 
   fillForm(doc);
@@ -264,11 +419,13 @@ test('the evidence endpoint renders what it returns', async () => {
   assert.ok(await waitFor(() => doc.getElementById('prVerificationResult').innerHTML.includes('Finished')));
 
   doc.dispatch('click', { target: doc.findByAttribute('data-action', 'load-pr-evidence'), preventDefault() {} });
-  assert.ok(await waitFor(() => doc.getElementById('prVerificationEvidence').innerHTML.includes('candidate-ref')));
+  assert.ok(await waitFor(() => doc.getElementById('prVerificationEvidence').innerHTML.includes('Available')));
   const evidence = doc.getElementById('prVerificationEvidence').innerHTML;
-  assert.match(evidence, /Status: partial/);
-  assert.match(evidence, /candidate-ref/);
-  assert.match(evidence, /lint/);
+  assert.match(evidence, /Available/);
+  assert.match(evidence, /pr-demo-profile/);
+  assert.match(evidence, new RegExp('2'.repeat(64)));
+  assert.match(evidence, /observations/);
+  assert.match(evidence, new RegExp('4'.repeat(64)));
   const request = calls.find(call => call.url.endsWith('/evidence'));
   assert.equal(request.headers.authorization, `Bearer ${TOKEN}`);
 });

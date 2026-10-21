@@ -85,7 +85,7 @@ test('the shell offers every mode, marks the current one and moves focus on a sw
   const afterCurrent = after.filter(link => link.attributes['aria-current'] === 'page');
   assert.equal(afterCurrent.length, 1);
   assert.equal(afterCurrent[0].attributes['data-nav'], 'deep-audit');
-  assert.equal(context.document.title, 'Deep audit — VERIFAI');
+  assert.equal(context.document.title, 'Deep audit | VERIFAI');
   assert.ok(doc.app.innerHTML.includes('id="deepAuditForm"'));
   assert.equal(doc.focused && doc.focused.id, 'deepAuditTitle');
 
@@ -93,14 +93,14 @@ test('the shell offers every mode, marks the current one and moves focus on a sw
   const prCurrent = navLinks(doc).filter(link => link.attributes['aria-current'] === 'page');
   assert.equal(prCurrent.length, 1);
   assert.equal(prCurrent[0].attributes['data-nav'], 'pr-verification');
-  assert.equal(context.document.title, 'PR verification — VERIFAI');
+  assert.equal(context.document.title, 'PR verification | VERIFAI');
   assert.ok(doc.app.innerHTML.includes('id="prVerificationForm"'));
   assert.equal(doc.focused && doc.focused.id, 'prVerificationTitle');
 });
 
 test('a retired or unknown hash never brings a retired screen back', () => {
   const { doc, context } = openApp({ hash: '#/verified', fetchImpl: noFetch });
-  assert.equal(context.document.title, 'Local repository check — VERIFAI');
+  assert.equal(context.document.title, 'Local repository check | VERIFAI');
   assert.ok(doc.app.innerHTML.includes('id="localRepositoryForm"'));
   const before = doc.app.innerHTML;
   context.VERIFAI.navigate('repair');

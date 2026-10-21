@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light" />
   <meta name="description" content="Run a bounded local repository check and read the evidence it produced." />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2379AF96'/%3E%3C/svg%3E" />
-  <title>Local repository check — VERIFAI</title>
+  <title>Local repository check | VERIFAI</title>
   <style>
 /* VERIFAI app shell. The brand palette (warm ground, orange accent, green mark)
    and the grotesk are kept. The screens follow the app-screen rules: flat
@@ -244,6 +244,10 @@ details > summary:hover { color: var(--text); }
 .busy-row { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
 
 /* Deep audit lanes */
+.observation-list { display: grid; gap: 8px; }
+.observation { border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); padding: 10px 12px; display: grid; gap: 4px; }
+.observation-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.observation-check { font-weight: 700; font-size: 12.5px; }
 .lane-list { border-top: 1px solid var(--border); }
 .lane-row {
   display: grid; grid-template-columns: 150px 128px 1fr; gap: 12px; align-items: baseline;
@@ -411,9 +415,9 @@ details > summary:hover { color: var(--text); }
   }
 
   const SCREENS = {
-    landing: { label: 'Local audit', docTitle: 'Local repository check — VERIFAI', render: renderLocalAuditScreen },
-    'deep-audit': { label: 'Deep audit', docTitle: 'Deep audit — VERIFAI', render: renderDeepAuditScreen },
-    'pr-verification': { label: 'PR verification', docTitle: 'PR verification — VERIFAI', render: renderPrVerificationScreen },
+    landing: { label: 'Local audit', docTitle: 'Local repository check | VERIFAI', render: renderLocalAuditScreen },
+    'deep-audit': { label: 'Deep audit', docTitle: 'Deep audit | VERIFAI', render: renderDeepAuditScreen },
+    'pr-verification': { label: 'PR verification', docTitle: 'PR verification | VERIFAI', render: renderPrVerificationScreen },
   };
 
   function appHeader() {
@@ -566,7 +570,7 @@ details > summary:hover { color: var(--text); }
     const stderrLines = stderrText ? stderrText.split('\n').length : 0;
     const scopeText = (run.finding && run.finding.assessment && run.finding.assessment.scope)
       || (run.finding && run.finding.executedCheck && run.finding.executedCheck.scope)
-      || 'limited-check: single bounded command — not a test suite, not security verification';
+      || 'limited-check: single bounded command, not a test suite, not security verification';
     return `<section id="localExecutionEvidence" class="card pad section">
         <h4>Executed check (server-owned)</h4>
         <p class="evidence-note wrap-anywhere">${escapeHtml(scopeText)}</p>
@@ -1306,69 +1310,129 @@ details > summary:hover { color: var(--text); }
     return 'unknown';
   }
 
-  function prFieldValueText(value) {
+  function prText(value) {
     if (value === undefined || value === null || value === '') return 'Not reported';
     if (Array.isArray(value)) return value.length ? value.map(item => (typeof item === 'object' ? JSON.stringify(item) : String(item))).join(', ') : 'None reported';
     if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
   }
 
-  function prResultField(result, keys) {
-    if (!result || typeof result !== 'object') return undefined;
-    for (const key of keys) {
-      if (result[key] !== undefined && result[key] !== null) return result[key];
-    }
+  function prVerdictOf(job) {
+    if (job && job.verdict !== undefined && job.verdict !== null) return job.verdict;
+    if (job && job.result && job.result.verdict !== undefined && job.result.verdict !== null) return job.result.verdict;
     return undefined;
   }
 
+  function prObservations(job) {
+    const result = job && job.result;
+    return result && Array.isArray(result.observations) ? result.observations : [];
+  }
+
+  // The commit a revision was actually run against. An expected head is never
+  // reported as tested: only an observation that ran counts.
+  function prTestedCommit(job, revision) {
+    const observations = prObservations(job);
+    if (!observations.length) return 'Not reported';
+    const rows = observations.filter(row => row && row.revision === revision && row.executed === true);
+    if (!rows.length) return 'Not tested';
+    const shas = [...new Set(rows.map(row => row.commitSha).filter(Boolean))];
+    return shas.length ? shas.join(', ') : 'Not reported';
+  }
+
+  function prObservationRows(job) {
+    const observations = prObservations(job);
+    if (!observations.length) return '<p class="evidence-note">No observation was recorded.</p>';
+    return `<ul class="observation-list">${observations.map(row => {
+      const artifactRefs = Array.isArray(row.artifactRefs) ? row.artifactRefs : [];
+      const missing = row.executed !== true || !artifactRefs.length;
+      return `<li class="observation">
+        <div class="observation-head">
+          <span class="observation-check mono">${escapeHtml(row.checkId || 'Not reported')}</span>
+          <span class="status ${prVerdictTone(row.status)}">${escapeHtml(row.status || 'Not reported')}</span>
+        </div>
+        <p class="evidence-note">revision: ${escapeHtml(row.revision || 'Not reported')} · commit <code class="wrap-anywhere">${escapeHtml(row.commitSha || 'Not reported')}</code></p>
+        <p class="evidence-note">executed: ${row.executed === true ? 'yes' : 'no'} · exit code: ${row.exitCode === null || row.exitCode === undefined ? 'Not reported' : escapeHtml(String(row.exitCode))}</p>
+        <p class="evidence-note">artifacts: ${artifactRefs.length ? escapeHtml(artifactRefs.join(', ')) : 'None recorded'}</p>
+        <p class="evidence-note mono wrap-anywhere">command digest ${escapeHtml(row.commandDigest || 'Not reported')} · test content ${escapeHtml(row.testContentSha256 || 'Not reported')}</p>
+        ${missing ? '<p class="evidence-note">No evidence was recorded for this check.</p>' : ''}
+      </li>`;
+    }).join('')}</ul>`;
+  }
+
+  function prPlanChecks(title, checks) {
+    const list = Array.isArray(checks) ? checks : [];
+    if (!list.length) return `<p class="evidence-sub">${escapeHtml(title)}</p><p class="evidence-note">None planned</p>`;
+    return `<p class="evidence-sub">${escapeHtml(title)} (${list.length})</p>
+      <ul class="artifact-list">${list.map(check => `<li>
+        <span class="artifact-name mono">${escapeHtml(check.checkId || 'Not reported')}</span>
+        <span class="evidence-note">${escapeHtml(check.origin || 'Not reported')} · artifact ${escapeHtml(check.artifactRef || 'Not reported')} · content ${escapeHtml(check.contentSha256 || 'Not reported')}</span>
+      </li>`).join('')}</ul>`;
+  }
+
   function prLimitationsBlock(job) {
-    const limitations = job && job.limitations !== undefined ? job.limitations : (job && job.result ? job.result.limitations : undefined);
-    if (limitations === undefined || limitations === null) return `<section class="card pad section evidence-card"><h4>Limitations</h4><p class="evidence-note">Not reported</p></section>`;
-    const items = Array.isArray(limitations) ? limitations : [limitations];
-    if (!items.length) return `<section class="card pad section evidence-card"><h4>Limitations</h4><p class="evidence-note">None reported</p></section>`;
-    return `<section class="card pad section evidence-card"><h4>Limitations (${items.length})</h4>
-      <ul class="artifact-list">${items.map(item => `<li><span class="artifact-name">${escapeHtml(typeof item === 'object' ? JSON.stringify(item) : String(item))}</span></li>`).join('')}</ul>
+    const jobLimitations = Array.isArray(job && job.limitations) ? job.limitations : [];
+    const resultLimitations = job && job.result && Array.isArray(job.result.limitations) ? job.result.limitations : [];
+    const rows = (items, label) => (items.length
+      ? `<p class="evidence-sub">${escapeHtml(label)} (${items.length})</p><ul class="artifact-list">${items.map(item => `<li><span class="artifact-name">${escapeHtml(String(item))}</span></li>`).join('')}</ul>`
+      : `<p class="evidence-sub">${escapeHtml(label)}</p><p class="evidence-note">None reported</p>`);
+    return `<section class="card pad section evidence-card"><h4>Limitations</h4>
+      ${rows(jobLimitations, 'Job limitations')}
+      ${rows(resultLimitations, 'Result limitations')}
     </section>`;
   }
 
-  function prCoverageBlock(job) {
-    const result = job && job.result;
-    const base = prResultField(result, ['baseSha', 'base', 'testedBase', 'testedBaseSha', 'baseCommitSha']);
-    const head = prResultField(result, ['headSha', 'head', 'testedHead', 'testedHeadSha', 'headCommitSha']);
-    const checks = prResultField(result, ['checks', 'checksRun', 'executedChecks', 'checkCoverage', 'coverage']);
-    return `<section class="card pad section evidence-card"><h4>Tested base and head</h4>
+  function prCandidateBlock(job) {
+    const candidate = job && job.candidate ? job.candidate : (job && job.result ? job.result.candidate : null);
+    if (!candidate) return `<section class="card pad section evidence-card"><h4>Candidate revision</h4><p class="evidence-note">Not reported</p></section>`;
+    const changedFiles = Array.isArray(candidate.changedFiles) ? candidate.changedFiles : [];
+    return `<section class="card pad section evidence-card"><h4>Candidate revision</h4>
       ${factGrid([
-        fact('tested base', prFieldValueText(base), undefined, true),
-        fact('tested head', prFieldValueText(head), undefined, true),
+        fact('repository', candidate.repository),
+        fact('pull request', candidate.pullRequest),
+        fact('head repository', candidate.headRepository),
+        fact('candidate base', candidate.baseSha, undefined, true),
+        fact('candidate head', candidate.headSha, undefined, true),
+        fact('merge base', candidate.mergeBaseSha, undefined, true),
+        fact('diff digest', candidate.diffDigest, undefined, true),
       ])}
-      <p class="evidence-sub">Checks</p>
-      ${checks === undefined || checks === null
-        ? '<p class="evidence-note">Not reported</p>'
-        : Array.isArray(checks)
-          ? (checks.length
-            ? `<ul class="artifact-list">${checks.map(item => `<li><span class="artifact-name">${escapeHtml(typeof item === 'object' ? JSON.stringify(item) : String(item))}</span></li>`).join('')}</ul>`
-            : '<p class="evidence-note">None reported</p>')
-          : `<p class="evidence-note wrap-anywhere">${escapeHtml(prFieldValueText(checks))}</p>`}
+      <p class="evidence-sub">Changed files (${changedFiles.length})</p>
+      ${changedFiles.length ? `<ul class="artifact-list">${changedFiles.map(file => `<li><span class="artifact-name mono">${escapeHtml(String(file))}</span></li>`).join('')}</ul>` : '<p class="evidence-note">None reported</p>'}
+    </section>`;
+  }
+
+  function prPlanBlock(job) {
+    const plan = job && job.plan ? job.plan : (job && job.result ? job.result.plan : null);
+    if (!plan) return `<section class="card pad section evidence-card"><h4>Check plan</h4><p class="evidence-note">Not reported</p></section>`;
+    return `<section class="card pad section evidence-card"><h4>Check plan</h4>
+      ${factGrid([
+        fact('policy version', plan.policyVersion),
+        fact('profile', plan.profileId),
+        fact('profile digest', plan.profileDigest, undefined, true),
+        fact('plan digest', plan.planDigest, undefined, true),
+      ])}
+      ${prPlanChecks('Required checks', plan.requiredChecks)}
+      ${prPlanChecks('Generated tests', plan.generatedTests)}
     </section>`;
   }
 
   function prCleanupBlock(job) {
-    const cleanup = prResultField(job && job.result, ['cleanup', 'cleanedUp', 'cleanupFacts', 'teardown']);
-    return `<section class="card pad section evidence-card"><h4>Cleanup</h4>
-      ${cleanup === undefined || cleanup === null
-        ? '<p class="evidence-note">Not reported</p>'
-        : typeof cleanup === 'object'
-          ? factGrid(Object.entries(cleanup).map(([key, value]) => fact(key, prFieldValueText(value))))
-          : `<p class="evidence-note wrap-anywhere">${escapeHtml(prFieldValueText(cleanup))}</p>`}
+    const result = job && job.result;
+    if (!result) return `<section class="card pad section evidence-card"><h4>Cleanup</h4><p class="evidence-note">Not reported</p></section>`;
+    return `<section class="card pad section evidence-card"><h4>Cleanup and evidence</h4>
+      ${factGrid([
+        fact('cleanup complete', result.cleanupComplete === true ? 'yes' : result.cleanupComplete === false ? 'no' : 'Not reported'),
+        fact('superseded', result.superseded === true ? 'yes' : result.superseded === false ? 'no' : 'Not reported'),
+        fact('evidence manifest', result.evidenceManifestSha256, undefined, true),
+      ])}
     </section>`;
   }
 
   function renderPrJob(job, host) {
     prJob = job;
     const phase = prPhase(job);
-    const verdict = job && job.verdict !== undefined ? job.verdict : undefined;
-    const failure = job && job.failure !== undefined ? job.failure : undefined;
-    const result = job && job.result !== undefined ? job.result : undefined;
+    const verdict = prVerdictOf(job);
+    const failure = job && job.failure ? job.failure : null;
+    const request = job && job.request ? job.request : null;
     const tone = prJobIsActive(job) ? 'running' : phase === PR_FINISHED_PHASE ? 'unknown' : 'failed';
     host.innerHTML = `<section class="card pad result-root" data-job-id="${escapeHtml((job && job.id) || '')}">
       <div class="result-head">
@@ -1383,15 +1447,28 @@ details > summary:hover { color: var(--text); }
         ${factGrid([
           fact('job id', (job && job.id) || '', undefined, true),
           fact('phase', phase),
-          fact('verdict', prFieldValueText(verdict)),
-          fact('result', prFieldValueText(result && typeof result === 'object' ? result.status : result)),
+          fact('verdict', prText(verdict)),
         ])}
-        ${failure !== undefined && failure !== null && failure !== '' ? `<p class="status failed wrap-anywhere">${escapeHtml(typeof failure === 'object' ? JSON.stringify(failure) : String(failure))}</p>` : ''}
+        ${request ? factGrid([
+          fact('repository', request.repository),
+          fact('pull request', request.pullRequest),
+          fact('expected head', request.expectedHeadSha, undefined, true),
+        ]) : ''}
+        ${failure ? `<p class="status failed wrap-anywhere">${escapeHtml(failure.code || 'Not reported')}: ${escapeHtml(failure.message || 'Not reported')}</p>` : ''}
       </section>
-      ${prCoverageBlock(job)}
+      ${prCandidateBlock(job)}
+      ${prPlanBlock(job)}
+      <section class="card pad section evidence-card" id="prVerificationObservations">
+        <h4>Observations</h4>
+        ${factGrid([
+          fact('tested base commit', prTestedCommit(job, 'base'), undefined, true),
+          fact('tested head commit', prTestedCommit(job, 'head'), undefined, true),
+        ])}
+        ${prObservationRows(job)}
+      </section>
       ${prCleanupBlock(job)}
       ${prLimitationsBlock(job)}
-      <p class="tiny muted">These are the facts the job recorded. Nothing above is inferred, and no check is reported that the job did not run.</p>
+      <p class="tiny muted">These are the fields the controller recorded. The expected head is the request, not a tested commit: only an observation that ran is called tested.</p>
       <div class="actions">
         <button class="btn sm" type="button" data-action="cancel-pr-job" data-job-id="${escapeHtml((job && job.id) || '')}"${prJobIsActive(job) ? '' : ' disabled'}>Cancel job</button>
         <button class="btn sm" type="button" data-action="load-pr-evidence" data-job-id="${escapeHtml((job && job.id) || '')}">Load evidence</button>
@@ -1582,11 +1659,26 @@ details > summary:hover { color: var(--text); }
         return;
       }
       const evidence = body || {};
+      const status = evidence.status ? String(evidence.status) : 'Not reported';
+      const verdict = evidence.verdict !== undefined && evidence.verdict !== null ? evidence.verdict : undefined;
+      const limitations = Array.isArray(evidence.limitations) ? evidence.limitations : [];
       const parts = [];
-      if (evidence.status !== undefined) parts.push(`<p class="evidence-note">Status: ${escapeHtml(prFieldValueText(evidence.status))}</p>`);
-      if (evidence.candidate !== undefined) parts.push(`<p class="evidence-sub">Candidate</p><p class="evidence-note wrap-anywhere">${escapeHtml(prFieldValueText(evidence.candidate))}</p>`);
-      if (evidence.plan !== undefined) parts.push(`<p class="evidence-sub">Plan</p><p class="evidence-note wrap-anywhere">${escapeHtml(prFieldValueText(evidence.plan))}</p>`);
-      if (evidence.result !== undefined) parts.push(`<p class="evidence-sub">Result</p><p class="evidence-note wrap-anywhere">${escapeHtml(prFieldValueText(evidence.result))}</p>`);
+      parts.push(`<div class="observation-head"><span class="evidence-sub">Evidence status</span><span class="status ${status === 'Available' ? 'verified' : status === 'Unavailable' ? 'failed' : 'unknown'}">${escapeHtml(status)}</span></div>`);
+      if (status === 'Unavailable') parts.push('<p class="evidence-note">The job finished without a recorded result, so there is no evidence bundle to read.</p>');
+      if (status === 'Pending') parts.push('<p class="evidence-note">The job has not produced a result yet.</p>');
+      if (verdict !== undefined) parts.push(`<p class="evidence-note">Verdict: ${escapeHtml(prText(verdict))}</p>`);
+      if (limitations.length) parts.push(`<p class="evidence-sub">Limitations (${limitations.length})</p><ul class="artifact-list">${limitations.map(item => `<li><span class="artifact-name">${escapeHtml(String(item))}</span></li>`).join('')}</ul>`);
+      if (evidence.candidate) parts.push(`<p class="evidence-sub">Candidate</p>${factGrid([fact('candidate base', evidence.candidate.baseSha, undefined, true), fact('candidate head', evidence.candidate.headSha, undefined, true), fact('merge base', evidence.candidate.mergeBaseSha, undefined, true)])}`);
+      if (evidence.plan) parts.push(`<p class="evidence-sub">Plan</p>${factGrid([fact('profile', evidence.plan.profileId), fact('plan digest', evidence.plan.planDigest, undefined, true)])}`);
+      if (evidence.result) {
+        const observations = Array.isArray(evidence.result.observations) ? evidence.result.observations : [];
+        parts.push(`<p class="evidence-sub">Result</p>${factGrid([
+          fact('verdict', prText(evidence.result.verdict)),
+          fact('observations', observations.length),
+          fact('cleanup complete', evidence.result.cleanupComplete === true ? 'yes' : evidence.result.cleanupComplete === false ? 'no' : 'Not reported'),
+          fact('evidence manifest', evidence.result.evidenceManifestSha256, undefined, true),
+        ])}`);
+      }
       if (host) host.innerHTML = `<div class="evidence-card">${parts.join('') || '<p class="evidence-note">The evidence endpoint returned no fields.</p>'}</div>`;
     } catch (error) {
       if (host) host.innerHTML = `<p class="status failed">Incomplete: ${escapeHtml(String(error && error.message ? error.message : error))}</p>`;

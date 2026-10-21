@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { mkdtemp, rm, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createPrVerificationRuntime } from '../services/pr-verification/runtime.mjs';
+import { createDemoServer } from '../scripts/serve-web.mjs';
 
 const baseSha = 'a'.repeat(40);
 const headSha = 'b'.repeat(40);
@@ -107,4 +108,41 @@ test('a second runtime cannot recover a job while its controller is still active
     assert.notEqual(response.status, 200);
     assert.ok(await store.readLock('controller'));
   } finally { await store.releaseLock(lock); }
+});
+
+test('the real web proxy forwards scoped authorization and idempotency to the PR job API', async t => {
+  const directory = await mkdtemp('/tmp/opencode/pr-runtime-');
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const configuredToken = 'controlled-proxy-principal-token-not-a-real-secret';
+  const env = { VERIFIAI_LOCAL_PRINCIPALS_JSON: JSON.stringify([{ ...principal, token: configuredToken }]) };
+  const runtime = createPrVerificationRuntime({
+    directory, env,
+    transport: { async request(_method, path) {
+      if (path.includes('/compare/')) return { status: 'ahead', base_commit: { sha: baseSha }, merge_base_commit: { sha: baseSha }, files: [changed] };
+      if (path.includes('/files?')) return [changed];
+      return structuredClone(metadata);
+    } },
+  });
+  const api = createDemoServer({ apiOnly: true, env, prVerification: runtime });
+  await new Promise(resolve => api.listen(0, '127.0.0.1', resolve));
+  const web = createDemoServer({ env: {}, apiUrl: `http://127.0.0.1:${api.address().port}` });
+  await new Promise(resolve => web.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { await web.shutdown(); await api.shutdown(); });
+  const url = `http://127.0.0.1:${web.address().port}/api/local/pr-verifications`;
+  const start = () => fetch(url, { method: 'POST', headers: {
+    authorization: `Bearer ${configuredToken}`, 'content-type': 'application/json', 'idempotency-key': 'proxy-idempotency-12',
+    origin: `http://127.0.0.1:${web.address().port}`,
+  }, body: JSON.stringify(request) });
+  const first = await start();
+  assert.equal(first.status, 202, await first.clone().text());
+  const admitted = (await first.json()).job;
+  await runtime.waitForIdle();
+  const retry = await start();
+  assert.equal(retry.status, 202);
+  assert.equal((await retry.json()).job.id, admitted.id);
+  const status = await fetch(`${url}/${admitted.id}`, { headers: { authorization: `Bearer ${configuredToken}` } });
+  const body = await status.text();
+  assert.equal(status.status, 200);
+  assert.equal(JSON.parse(body).job.verdict, 'Incomplete');
+  assert.doesNotMatch(body, new RegExp(configuredToken));
 });

@@ -91,7 +91,10 @@ export function createPrVerificationRuntime({
     const { publishPrResult } = await import('../../dist/services/pr-verification/github-checks.js');
     const { FetchGitHubTransport } = await import('../../dist/packages/core/github/index.js');
     const lockName = `publish-${createHash('sha256').update(job.id).digest('hex').slice(0, 24)}`;
-    const lock = await actual.store.acquireLock(lockName);
+    // A publisher that died while holding the lock must not block the job
+    // forever. The store breaks the lock only when its owner process is gone;
+    // a lock held by a live publisher is never taken.
+    const lock = await actual.store.acquireLock(lockName, { stealStale: true });
     try {
       return await publishPrResult({
         job: { repository: job.request.repository, pullRequest: job.request.pullRequest, expectedHeadSha: job.request.expectedHeadSha, result: job.result },

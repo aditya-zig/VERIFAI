@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type {
   CandidateRevision,
   CheckObservation,
@@ -16,6 +15,7 @@ import {
   type PrJobStoreLock,
   type RequestPrincipal,
 } from './store.js';
+import { computeEvidenceManifestSha256 } from './verdict.js';
 
 /**
  * The principal and the job record are re-exported here so a route only has
@@ -423,29 +423,6 @@ export function evaluateObservations(input: {
   return { verdict: 'Incomplete', limitations };
 }
 
-export function buildEvidenceManifest(
-  candidate: CandidateRevision,
-  plan: CheckPlan,
-  observations: readonly CheckObservation[],
-): string {
-  const payload = JSON.stringify({
-    candidate: candidate.diffDigest,
-    plan: plan.planDigest,
-    observations: observations.map((observation) => ({
-      checkId: observation.checkId,
-      revision: observation.revision,
-      commitSha: observation.commitSha,
-      status: observation.status,
-      executed: observation.executed,
-      exitCode: observation.exitCode,
-      artifactRefs: observation.artifactRefs,
-      commandDigest: observation.commandDigest,
-      testContentSha256: observation.testContentSha256,
-    })),
-  });
-  return createHash('sha256').update(payload, 'utf8').digest('hex');
-}
-
 export class PrJobController {
   readonly store: PrJobStore;
   readonly #resolver?: PrJobResolver;
@@ -667,7 +644,13 @@ export class PrJobController {
                 observations: [] as CheckObservation[],
                 verdict: 'Incomplete' as PrVerdict,
                 limitations,
-                evidenceManifestSha256: buildEvidenceManifest(job.candidate, job.plan, []),
+                evidenceManifestSha256: computeEvidenceManifestSha256({
+                  candidate: job.candidate,
+                  plan: job.plan,
+                  observations: [],
+                  cleanupComplete: true,
+                  superseded: false,
+                }),
                 cleanupComplete: true,
                 superseded: false,
               }
@@ -745,7 +728,13 @@ export class PrJobController {
           observations,
           verdict: evaluation.verdict,
           limitations: evaluation.limitations,
-          evidenceManifestSha256: buildEvidenceManifest(job.candidate, job.plan, observations),
+          evidenceManifestSha256: computeEvidenceManifestSha256({
+            candidate: job.candidate,
+            plan: job.plan,
+            observations,
+            cleanupComplete: cleanup.cleanupComplete,
+            superseded,
+          }),
           cleanupComplete: cleanup.cleanupComplete,
           superseded,
         };

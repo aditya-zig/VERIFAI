@@ -78,6 +78,12 @@ test('repository scope outside the configured list is forbidden 403',()=>{
   expectHttpError(()=>authorizeBearer({env:validEnv,authorization:'Bearer '+narrowToken,kind:'human',repository:'octocat/Hello-World'}),403,/repository scope/);
 });
 
+test('the repository scope ignores case, like the pull request routes do',()=>{
+  const principal=authorizeBearer({env:validEnv,authorization:'Bearer '+humanToken,kind:'human',repository:'OctoCat/Hello-World'});
+  assert.deepEqual(principal,{id:'operator-human',kind:'human',repositories:['octocat/Hello-World']});
+  expectHttpError(()=>authorizeBearer({env:validEnv,authorization:'Bearer '+humanToken,kind:'human',repository:'octocat/other-repo'}),403,/repository scope/);
+});
+
 test('agent principals pass when the requested role kind is agent',()=>{
   const principal=authorizeBearer({env:validEnv,authorization:'Bearer '+agentToken,kind:'agent',repository:'octocat/Hello-World'});
   assert.deepEqual(principal,{id:'worker-agent',kind:'agent',repositories:['octocat/Hello-World']});

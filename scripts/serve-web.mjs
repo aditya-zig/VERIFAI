@@ -85,13 +85,6 @@ function localOriginViolation(req, serverPort) {
   return null;
 }
 
-// Recorded identity describes the intake mechanism behind the request; it is
-// not a verified human approval and must never be presented as one.
-function callerPrincipal(req) {
-  if (req.headers.origin === undefined) return { id: 'no-origin-local-caller', kind: 'local-caller' };
-  return { id: 'same-origin-browser-session', kind: 'browser-session' };
-}
-
 export function createDemoServer({ deepAudit, repositories = new LocalRepositoryService(), apiOnly = false, apiUrl, env = process.env, prVerification, adapters = {} } = {}) {
   const prVerificationRuntime = prVerification ?? createPrVerificationRuntime({ env });
   if (apiUrl !== undefined) {
@@ -106,30 +99,12 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
     }
     apiUrl = target.origin;
   }
-  const approvalsService = new LocalHumanApprovalsService({ env, evidenceProvider: auditId => {
-    const audit = (adapters.audits ?? auditsService).get(auditId);
-    if (!audit || audit.status === 'Running') return null;
-    const repair = repairsService.get(auditId);
-    const proof = artifactsService.get(auditId);
-    if (!proof) return null;
-    return {
-      auditId,
-      repository: audit.repository?.fullName ?? null,
-      baseBranch: env.VERIFIAI_GITHUB_BASE_BRANCH || 'main',
-      repair,
-      proof,
-      browser: browserResults.get(auditId) ?? null,
-    };
-  } });
-  const ownerAudit = adapters.audits ?? new MasterAuditService(repositories, { env });
-  const auditsService = ownerAudit;
-  const audits = auditsService;
   const browserResults = new Map();
   const browserImages = new Map();
   const browserTasks = new Set();
   let browserController;
-  const repairs = adapters.repairs ?? new LocalRepairService(repositories, auditsService, { env });
-  const repairsService = repairs;
+  const audits = adapters.audits ?? new MasterAuditService(repositories, { env });
+  const repairs = adapters.repairs ?? new LocalRepairService(repositories, audits, { env });
   const artifacts = adapters.artifacts ?? new LocalArtifactService({ env, screenshotResolver: async ref => {
     const match = ref.match(/^\/api\/local\/audits\/([^/]+)\/browser\/screenshot$/);
     const imagePath = match && browserImages.get(decodeSegment(match[1], 'screenshot reference'));
@@ -141,7 +116,21 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
       return await handle.readFile();
     } finally { await handle.close(); }
   } });
-  const artifactsService = artifacts;
+  const approvalsService = new LocalHumanApprovalsService({ env, evidenceProvider: auditId => {
+    const audit = audits.get(auditId);
+    if (!audit || audit.status === 'Running') return null;
+    const repair = repairs.get(auditId);
+    const proof = artifacts.get(auditId);
+    if (!proof) return null;
+    return {
+      auditId,
+      repository: audit.repository?.fullName ?? null,
+      baseBranch: env.VERIFIAI_GITHUB_BASE_BRANCH || 'main',
+      repair,
+      proof,
+      browser: browserResults.get(auditId) ?? null,
+    };
+  } });
   const pullRequests = adapters.pullRequests ?? new LocalPrService(audits, repairs, artifacts, { env, transportFactory: adapters.transportFactory });
   const getDeepAudit = async () => {
     if (deepAudit) return deepAudit;

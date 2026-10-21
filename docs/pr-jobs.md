@@ -109,6 +109,8 @@ interface PrJob {
 
 `phase` uses the contract vocabulary: `Queued`, `Resolving`, `Planning`, `Executing`, `Cleaning`, `Finished`. `Finished` is the only terminal phase. `verdict` is the job level outcome and is set when the job finishes.
 
+`result.evidenceManifestSha256` is computed by the policy, not by the controller. The controller persists the policy's canonical digest over the candidate, the plan, the observations, the cleanup flag and the superseded flag, so the published manifest and the evaluated manifest are the same value. Observation order does not change it; a changed cleanup or supersession fact does.
+
 `resourceIntent` records what the job intends to allocate before anything is allocated. `resourceIds` records what was allocated. Both are written before the executor runs.
 
 ## Store
@@ -129,6 +131,8 @@ The store keeps one JSON file per job under `<directory>/jobs/<id>.json`, one lo
 | Locks | `acquireLock(name)` creates the lock file exclusively. A second writer gets `LOCK_HELD`. A lock left behind by a dead process can be broken with `stealStale`, which checks the recorded process id first. |
 
 The store keeps a mutation lock of its own (`store-mutation`) so the compare-and-swap stays honest between processes. The controller takes a second lock (`controller`) while it drives a job, so only one controller writes the queue at a time. The controller lock is stolen when its owner process is gone, so a crash does not block the queue forever.
+
+Check publication takes a third lock per job (`publish-<job>`), so two publishers cannot write the same pull request at once. It is stolen the same way: a publisher that died holding it does not block the job forever, and a lock held by a live publisher is never taken. A refused publication writes nothing to GitHub.
 
 Blockers are the reason new work is refused. A blocker records a job, a reason and the resource identifiers that could not be proven safe.
 

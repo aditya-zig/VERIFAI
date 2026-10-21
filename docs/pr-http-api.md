@@ -47,4 +47,6 @@ Check publication remains disabled unless the backend operator supplies
 `VERIFIAI_PR_STRICT_BRANCH_PROTECTION_ACK=1`. The acknowledgment is not a
 verification of branch protection. Configure and validate required checks in
 GitHub separately. Publication records persist privately and remote writes
-hold a per-job lock. No publication or merge happens automatically.
+hold a per-job lock. A lock left behind by a publisher that died is broken on
+the next attempt; a lock held by a live publisher is never taken, and the
+refused request writes nothing. No publication or merge happens automatically.

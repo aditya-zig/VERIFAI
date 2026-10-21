@@ -1,6 +1,7 @@
 import type { PrJobPhase, PrVerdict, PrVerificationResult } from '../../packages/contracts/src/index.js';
-import { buildEvidenceManifest, type PrResourceAdapter, type PrResourceState } from './controller.js';
+import { type PrResourceAdapter, type PrResourceState } from './controller.js';
 import { PrJobStore, type PrJobBlocker } from './store.js';
+import { computeEvidenceManifestSha256 } from './verdict.js';
 
 /**
  * Recovery for interrupted verification jobs.
@@ -203,7 +204,13 @@ export async function recoverInterruptedJobs(options: PrRecoveryOptions): Promis
           observations: [],
           verdict: 'Incomplete',
           limitations,
-          evidenceManifestSha256: buildEvidenceManifest(draft.candidate, draft.plan, []),
+          evidenceManifestSha256: computeEvidenceManifestSha256({
+            candidate: draft.candidate,
+            plan: draft.plan,
+            observations: [],
+            cleanupComplete,
+            superseded: false,
+          }),
           cleanupComplete,
           superseded: false,
         };

@@ -692,6 +692,25 @@ test('publication requires the explicit strict branch protection assumption', as
   assert.equal(fake.calls.length, 0);
 });
 
+test('publication accepts a configured principal id and refuses one outside the configured bounds', async () => {
+  const fake = new PublishingFake();
+  const store = new MemoryPrChecksPublicationStore();
+  const outcome = await publishPrResult(publishInput(result(), request(), fake, config({ principal: 'operator@team_1' }), store));
+
+  assert.equal(outcome.outcome, 'published');
+  assert.equal(store.get(prChecksPublicationKey(REPOSITORY, PULL_REQUEST, HEAD_SHA))?.principal, 'operator@team_1');
+
+  const rejected = new PublishingFake();
+  await assert.rejects(
+    () => publishPrResult(publishInput(result(), request(), rejected, config({ principal: 'x'.repeat(65) }), new MemoryPrChecksPublicationStore())),
+    (error: unknown) => {
+      assert.equal(rejectedCode(error), 'INVALID_PUBLICATION_INPUT');
+      return true;
+    },
+  );
+  assert.equal(rejected.calls.length, 0);
+});
+
 test('closed, draft or forked live PR metadata is rejected before any write', async () => {
   const cases: Array<{ name: string; value: PullMetadata; code: PrChecksPublicationErrorCode }> = [
     { name: 'closed', value: metadata({ state: 'closed' }), code: 'PULL_REQUEST_CLOSED' },

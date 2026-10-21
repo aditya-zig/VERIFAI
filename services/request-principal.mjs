@@ -89,10 +89,15 @@ export function authorizeBearer({env=process.env,authorization,kind,repository}=
 
 // Rejects a resolved principal whose configured repositories do not cover the
 // target repository. Routes and LocalPrService share this so the scope error
-// text stays identical on both layers.
+// text stays identical on both layers. The comparison ignores case, because
+// GitHub owner and repository names are case insensitive and one operator
+// spelling must work on every route.
 export function assertPrincipalScope(principal,repository){
   if(typeof repository!=='string'||repository==='')throw invalidConfig();
-  if(!Array.isArray(principal?.repositories)||!principal.repositories.includes(repository))
+  const wanted=repository.toLowerCase();
+  const allowed=Array.isArray(principal?.repositories)
+    &&principal.repositories.some(item=>typeof item==='string'&&item.toLowerCase()===wanted);
+  if(!allowed)
     throw Object.assign(new Error(`repository scope ${repository} is not configured for principal ${principal?.id}`),{statusCode:403});
   return principal;
 }

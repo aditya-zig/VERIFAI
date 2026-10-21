@@ -206,7 +206,7 @@ const ownerPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const repositoryNamePattern = /^[A-Za-z0-9_.-]{1,100}$/;
 const shaPattern = /^[0-9a-f]{40}$/i;
 const digestPattern = /^[0-9a-f]{64}$/i;
-const principalPattern = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$/;
+const principalPattern = /^[A-Za-z0-9_.:@-]{1,64}$/;
 const checkName = 'VERIFAI runtime verification';
 
 function fail(code: PrChecksPublicationErrorCode, message: string, status: number): never {
@@ -253,7 +253,7 @@ function validateTrustFields(value: Record<string, unknown>): void {
     fail('INVALID_PUBLICATION_INPUT', 'a non-empty trusted token is required', 400);
   }
   if (typeof value.principal !== 'string' || !principalPattern.test(value.principal)) {
-    fail('INVALID_PUBLICATION_INPUT', 'a bounded trusted principal is required', 400);
+    fail('INVALID_PUBLICATION_INPUT', 'the acting principal must be a configured id of 1 to 64 characters', 400);
   }
   if (value.resultSource !== 'server-verifier') {
     fail('INVALID_PUBLICATION_INPUT', 'results may only come from the server-side runtime verifier', 400);

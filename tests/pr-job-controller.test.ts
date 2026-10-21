@@ -18,6 +18,7 @@ import {
   type PrResourceAdapter,
 } from '../services/pr-verification/controller.js';
 import { PrJobStore, type PrJob, type RequestPrincipal } from '../services/pr-verification/store.js';
+import { computeEvidenceManifestSha256 } from '../services/pr-verification/verdict.js';
 
 /**
  * These tests drive the controller against a real store on disk and against
@@ -813,5 +814,112 @@ test('the controller lock keeps a second writer out', async () => {
     await store.releaseLock(lock);
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Run one job on its own store and return the finished record.
+ */
+async function runJobForManifest(
+  directory: string,
+  options: {
+    observations: CheckObservation[];
+    superseded?: boolean;
+    resources?: PrResourceAdapter;
+  },
+): Promise<PrJob> {
+  const store = new PrJobStore({ directory });
+  await store.init();
+  const controller = new PrJobController({
+    store,
+    resolver: resolver(),
+    planner: planner(),
+    executor: {
+      execute: async () => ({
+        observations: options.observations,
+        ...(options.superseded === undefined ? {} : { superseded: options.superseded }),
+      }),
+    },
+    evaluator: evaluator(),
+    ...(options.resources ? { resources: options.resources } : {}),
+  });
+  const job = await controller.start(principal, request);
+  return controller.run(job.id);
+}
+
+test('the persisted result carries the policy evidence manifest', async () => {
+  const directory = await makeTempDir('pr-job-controller');
+  try {
+    const finished = await runJobForManifest(directory, { observations: [makeObservation()] });
+    const result = finished.result;
+    assert.ok(result);
+    assert.equal(
+      result!.evidenceManifestSha256,
+      computeEvidenceManifestSha256({
+        candidate: result!.candidate,
+        plan: result!.plan,
+        observations: result!.observations,
+        cleanupComplete: result!.cleanupComplete,
+        superseded: result!.superseded,
+      }),
+    );
+    assert.notEqual(
+      result!.evidenceManifestSha256,
+      computeEvidenceManifestSha256({
+        candidate: result!.candidate,
+        plan: result!.plan,
+        observations: result!.observations,
+        cleanupComplete: false,
+        superseded: result!.superseded,
+      }),
+    );
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('the evidence manifest does not depend on the observation order', async () => {
+  const first = await makeTempDir('pr-job-controller');
+  const second = await makeTempDir('pr-job-controller');
+  try {
+    const unit = makeObservation({ checkId: 'unit', revision: 'head' });
+    const lint = makeObservation({ checkId: 'lint', revision: 'head' });
+    const ordered = await runJobForManifest(first, { observations: [unit, lint] });
+    const reversed = await runJobForManifest(second, { observations: [lint, unit] });
+
+    assert.equal(ordered.result?.evidenceManifestSha256, reversed.result?.evidenceManifestSha256);
+  } finally {
+    await fs.rm(first, { recursive: true, force: true });
+    await fs.rm(second, { recursive: true, force: true });
+  }
+});
+
+test('the cleanup and supersession facts change the evidence manifest', async () => {
+  const clean = await makeTempDir('pr-job-controller');
+  const unclean = await makeTempDir('pr-job-controller');
+  const moved = await makeTempDir('pr-job-controller');
+  try {
+    const observations = [makeObservation()];
+    const finished = await runJobForManifest(clean, { observations });
+    const failedCleanup = await runJobForManifest(unclean, {
+      observations,
+      resources: {
+        allocate: async () => ['resource-1'],
+        inspect: async () => [{ resourceId: 'resource-1', present: true, owned: true }],
+        release: async () => ({ released: [], failed: ['resource-1'] }),
+      },
+    });
+    const superseded = await runJobForManifest(moved, { observations, superseded: true });
+
+    assert.equal(finished.result?.cleanupComplete, true);
+    assert.equal(failedCleanup.result?.cleanupComplete, false);
+    assert.equal(superseded.result?.superseded, true);
+    assert.notEqual(finished.result?.evidenceManifestSha256, failedCleanup.result?.evidenceManifestSha256);
+    assert.notEqual(finished.result?.evidenceManifestSha256, superseded.result?.evidenceManifestSha256);
+    assert.notEqual(failedCleanup.result?.evidenceManifestSha256, superseded.result?.evidenceManifestSha256);
+  } finally {
+    await fs.rm(clean, { recursive: true, force: true });
+    await fs.rm(unclean, { recursive: true, force: true });
+    await fs.rm(moved, { recursive: true, force: true });
   }
 });

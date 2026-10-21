@@ -31,6 +31,8 @@ publishPrResult({
 
 The result is `{ outcome: "published" | "superseded", verdict, conclusion, headSha, checkRunId, commentId, externalId, repository, pullRequest, reason?, details? }`.
 
+`principal` is the acting identity the server resolved from operator configuration. It must match the configured principal id format (1 to 64 characters of letters, digits, dot, underscore, colon, at sign or dash), the same format the principal configuration accepts, so a configured identity can always publish. The identity is never taken from the request.
+
 ## Publication sequence
 
 1. Validate the config, the request (`owner/repo`, positive PR number, 40-character expected head SHA) and the result structure before any GitHub call.

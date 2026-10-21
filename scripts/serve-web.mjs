@@ -11,6 +11,8 @@ import { LocalRepairService } from '../services/local-repair-service.mjs';
 import { LocalArtifactService } from '../services/local-artifact-service.mjs';
 import { LocalPrService } from '../services/local-pr-service.mjs';
 import { createPrVerificationRuntime } from '../services/pr-verification/runtime.mjs';
+import { LocalHumanApprovalsService } from '../services/human-pr-approvals.mjs';
+import { authorizeBearer, describePrincipalConfig, assertPrincipalScope } from '../services/request-principal.mjs';
 
 const root = fileURLToPath(new URL('../apps/web/', import.meta.url));
 const types = {
@@ -90,15 +92,45 @@ function callerPrincipal(req) {
   return { id: 'same-origin-browser-session', kind: 'browser-session' };
 }
 
-export function createDemoServer({ deepAudit, repositories = new LocalRepositoryService(), apiOnly = false, apiUrl, env = process.env, prVerification } = {}) {
+export function createDemoServer({ deepAudit, repositories = new LocalRepositoryService(), apiOnly = false, apiUrl, env = process.env, prVerification, adapters = {} } = {}) {
   const prVerificationRuntime = prVerification ?? createPrVerificationRuntime({ env });
-  const audits = new MasterAuditService(repositories, { env });
+  if (apiUrl !== undefined) {
+    // The web-to-API proxy is the only place Authorization is forwarded; keep
+    // that target operator-configured and loopback-only.
+    let target;
+    try { target = new URL(String(apiUrl)); }
+    catch { throw new Error('local API target must be a valid URL'); }
+    if (target.protocol !== 'http:' || !LOCAL_HOSTNAMES.has(target.hostname)
+      || target.username || target.password || target.search || target.hash || !['', '/'].includes(target.pathname)) {
+      throw new Error('local API target must use a loopback HTTP origin so Authorization is only forwarded to the configured local API');
+    }
+    apiUrl = target.origin;
+  }
+  const approvalsService = new LocalHumanApprovalsService({ env, evidenceProvider: auditId => {
+    const audit = (adapters.audits ?? auditsService).get(auditId);
+    if (!audit || audit.status === 'Running') return null;
+    const repair = repairsService.get(auditId);
+    const proof = artifactsService.get(auditId);
+    if (!proof) return null;
+    return {
+      auditId,
+      repository: audit.repository?.fullName ?? null,
+      baseBranch: env.VERIFIAI_GITHUB_BASE_BRANCH || 'main',
+      repair,
+      proof,
+      browser: browserResults.get(auditId) ?? null,
+    };
+  } });
+  const ownerAudit = adapters.audits ?? new MasterAuditService(repositories, { env });
+  const auditsService = ownerAudit;
+  const audits = auditsService;
   const browserResults = new Map();
   const browserImages = new Map();
   const browserTasks = new Set();
   let browserController;
-  const repairs = new LocalRepairService(repositories, audits, { env });
-  const artifacts = new LocalArtifactService({ env, screenshotResolver: async ref => {
+  const repairs = adapters.repairs ?? new LocalRepairService(repositories, auditsService, { env });
+  const repairsService = repairs;
+  const artifacts = adapters.artifacts ?? new LocalArtifactService({ env, screenshotResolver: async ref => {
     const match = ref.match(/^\/api\/local\/audits\/([^/]+)\/browser\/screenshot$/);
     const imagePath = match && browserImages.get(decodeSegment(match[1], 'screenshot reference'));
     if (!imagePath) throw new Error('screenshot not retained');
@@ -109,7 +141,8 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
       return await handle.readFile();
     } finally { await handle.close(); }
   } });
-  const pullRequests = new LocalPrService(audits, repairs, artifacts, { env });
+  const artifactsService = artifacts;
+  const pullRequests = adapters.pullRequests ?? new LocalPrService(audits, repairs, artifacts, { env, transportFactory: adapters.transportFactory });
   const getDeepAudit = async () => {
     if (deepAudit) return deepAudit;
     const { DeepAuditService } = await import('../services/deep-audit/index.mjs');
@@ -137,7 +170,12 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
     if (apiUrl && url.pathname.startsWith('/api/local/')) {
       try {
         const body = req.method === 'POST' ? JSON.stringify(await readJson(req)) : undefined;
-        const upstream = await fetch(`${apiUrl}${url.pathname}`, { method: req.method, headers: { 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(120_000) });
+        // Authorization is forwarded to the configured loopback API only and
+        // never recorded, echoed into a response body or logged here.
+        const forwardHeaders = { 'content-type': 'application/json' };
+        if (req.headers.authorization) forwardHeaders.authorization = String(req.headers.authorization);
+        if (req.headers['idempotency-key']) forwardHeaders['idempotency-key'] = String(req.headers['idempotency-key']);
+        const upstream = await fetch(`${apiUrl}${url.pathname}`, { method: req.method, headers: forwardHeaders, body, redirect: 'error', signal: AbortSignal.timeout(120_000) });
         if (/^\/api\/local\/audits\/[^/]+\/browser\/screenshot$/.test(url.pathname) && upstream.ok) {
           const image = Buffer.from(await upstream.arrayBuffer());
           if (image.length > MAX_SCREENSHOT_BYTES || upstream.headers.get('content-type') !== 'image/png') throw new Error('Invalid browser screenshot');
@@ -155,6 +193,45 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
     }
 
     if (await prVerificationRuntime.handle(req, res)) return;
+    if (req.method === 'GET' && url.pathname === '/api/local/capabilities') {
+      const configured = describePrincipalConfig(env);
+      const publicationSecrets = (env.VERIFIAI_PR_APPROVAL_SECRET || env.VERIFIAI_STATE_SECRET || '').length >= 32 && Boolean(env.VERIFIAI_GITHUB_TOKEN || env.GITHUB_TOKEN);
+      // Unauthenticated view: configuration state and required role names
+      // only. Principal identities, scopes and tokens never surface here.
+      return sendJson(res, 200, {
+        service: apiOnly ? 'verifai-local-api' : 'verifai-local',
+        auth: {
+          configured: configured.configured,
+          humanPrincipalConfigured: configured.humanPrincipalConfigured === true,
+          agentPrincipalConfigured: configured.agentPrincipalConfigured === true,
+        },
+        approval: { ttlMinutes: approvalsService.ttlMinutes, endpoints: ['POST /api/local/audits/:id/approval (human bearer authorization)'] },
+        publication: {
+          available: configured.configured && configured.humanPrincipalConfigured === true && publicationSecrets,
+          endpoints: ['POST /api/local/audits/:id/pr {approvalId} (human bearer authorization)'],
+        },
+      });
+    }
+
+    const approvalRoute = url.pathname.match(/^\/api\/local\/audits\/([^/]+)\/approval$/);
+    if (req.method === 'POST' && approvalRoute) {
+      try {
+        const id = decodeSegment(approvalRoute[1]);
+        // Authenticate before any audit existence or evidence lookups so the
+        // endpoint fails closed without leaking state to unauthorized callers.
+        const principal = authorizeBearer({ env, authorization: req.headers.authorization, kind: 'human' });
+        const audit = audits.get(id);
+        if (!audit) return sendJson(res, 404, { status: 'Incomplete', error: 'audit not found' });
+        if (audit.status === 'Running') return sendJson(res, 409, { status: 'Incomplete', error: 'audit still running' });
+        assertPrincipalScope(principal, audit.repository?.fullName);
+        const issued = approvalsService.issue({ principal, auditId: id });
+        return sendJson(res, 201, { approved: true, ...issued, endpoints: { publish: `POST /api/local/audits/${encodeURIComponent(id)}/pr {approvalId}` } });
+      } catch (error) {
+        const statusCode = error.statusCode ?? 409;
+        const status = statusCode === 401 || statusCode === 403 ? 'Unauthenticated' : 'Incomplete';
+        return sendJson(res, statusCode, { status, error: String(error?.message ?? error) });
+      }
+    }
 
     if (req.method === 'POST' && url.pathname === '/api/local/audits') {
       try { const body = await readJson(req); return sendJson(res, 202, audits.start(body.url)); }
@@ -287,7 +364,10 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
     if (req.method === 'POST' && prRouteLocal) {
       try {
         const id = decodeSegment(prRouteLocal[1]);
-        const result = await pullRequests.create(id, { principal: callerPrincipal(req) });
+        // Authenticate before reading the body or the audit: fail closed.
+        const principal = authorizeBearer({ env, authorization: req.headers.authorization, kind: 'human' });
+        const body = await readJson(req);
+        const result = await pullRequests.create(id, { principal, approvalId: body?.approvalId, approvals: approvalsService });
         return sendJson(res, 201, result);
       } catch (error) {
         return sendJson(res, error.statusCode ?? 409, { status: 'Incomplete', error: String(error?.message ?? error) });

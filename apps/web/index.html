@@ -1186,9 +1186,20 @@ details > summary:hover { color: var(--text); }
   }
 
   let repairHuman = { auditId: '', token: '', approvalId: '', expiresAt: '' };
+  let repairApprovalGeneration = 0;
 
+  // Clearing the human state also empties the form: the token leaves the
+  // field, the review is unchecked again and the publish action is locked.
   function clearRepairHuman() {
     repairHuman = { auditId: '', token: '', approvalId: '', expiresAt: '' };
+    repairApprovalGeneration = (typeof repairApprovalGeneration === 'number' ? repairApprovalGeneration : 0) + 1;
+    if (typeof document === 'undefined') return;
+    const tokenInput = document.getElementById('localApprovalToken');
+    if (tokenInput && typeof tokenInput.value === 'string') tokenInput.value = '';
+    const reviewed = document.getElementById('localApprovalReviewed');
+    if (reviewed) reviewed.checked = false;
+    const publish = document.getElementById('localCreatePr');
+    if (publish) publish.disabled = true;
   }
 
   function repairApprovalError(status) {
@@ -1213,6 +1224,9 @@ details > summary:hover { color: var(--text); }
       if (state) state.innerHTML = '<p class="status failed">Confirm that you reviewed the immutable proof and the patch.</p>';
       return;
     }
+    // the token leaves the field as soon as it has been read
+    if (tokenInput && typeof tokenInput.value === 'string') tokenInput.value = '';
+    const generation = repairApprovalGeneration;
     button.disabled = true;
     button.textContent = 'Approving…';
     try {
@@ -1227,7 +1241,15 @@ details > summary:hover { color: var(--text); }
         if (state) state.innerHTML = `<p class="status failed">${escapeHtml(repairApprovalError(response.status))}</p>`;
         return;
       }
-      repairHuman = { auditId, token, approvalId: body.approvalId ? String(body.approvalId) : '', expiresAt: body.expiresAt ? String(body.expiresAt) : '' };
+      if (body.approved !== true || !body.approvalId) {
+        clearRepairHuman();
+        if (state) state.innerHTML = '<p class="status failed">The server did not record an approval, so the pull request stays locked.</p>';
+        return;
+      }
+      // a re-render or a route change while the request was in flight
+      // invalidated this approval: a detached card must not be unlocked
+      if (generation !== repairApprovalGeneration) return;
+      repairHuman = { auditId, token, approvalId: String(body.approvalId), expiresAt: body.expiresAt ? String(body.expiresAt) : '' };
       const publish = document.getElementById('localCreatePr');
       if (publish) publish.disabled = false;
       if (state) state.innerHTML = '<p class="status verified">Approved</p><p class="evidence-note">The publish action is unlocked. The approval is single use: a stale approval is rejected and the repair has to be approved again.</p>';
@@ -1802,6 +1824,7 @@ details > summary:hover { color: var(--text); }
   function navigate(screen, push = true) {
     if (!Object.prototype.hasOwnProperty.call(SCREENS, screen)) return;
     if (screen !== 'pr-verification') stopPrPolling();
+    clearRepairHuman();
     state.screen = screen;
     if (push && location.hash !== `#/${screen}`) location.hash = `#/${screen}`;
     render();

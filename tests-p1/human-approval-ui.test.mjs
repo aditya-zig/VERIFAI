@@ -163,6 +163,102 @@ test('an agent token is refused and the publish stays locked', async () => {
   }
 });
 
+test('an error clears the token field and locks the publish again', async () => {
+  const { doc } = openRepairScreen(stubbed({ approval: { error: 'human principal required' }, approvalStatus: 403 }));
+  await startRepairRun({ doc, calls: [] });
+
+  doc.getElementById('localApprovalToken').value = HUMAN_TOKEN;
+  doc.getElementById('localApprovalReviewed').checked = true;
+  doc.dispatch('click', { target: doc.findByAttribute('data-action', 'approve-local-repair'), preventDefault() {} });
+  assert.ok(await waitFor(() => doc.getElementById('localApprovalState').innerHTML.includes('human token is required')));
+
+  assert.equal(doc.getElementById('localApprovalToken').value, '', 'the token is cleared from the field');
+  assert.equal(doc.getElementById('localApprovalReviewed').checked, false, 'the review is unchecked again');
+  assert.equal(doc.getElementById('localCreatePr').disabled, true, 'the publish is locked again');
+});
+
+test('the token leaves the field as soon as it is read', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const { doc } = openRepairScreen(async (url, options) => {
+    if (url.endsWith('/approval')) {
+      await gate;
+      return jsonResponse({ approved: true, approvalId: 'approval-controlled-1' }, { status: 201 });
+    }
+    if (options.method === 'POST') return jsonResponse({ id: AUDIT_ID, status: 'Running' }, { status: 202 });
+    return jsonResponse(VERIFIED_REPAIR_RUN);
+  });
+  await startRepairRun({ doc, calls: [] });
+
+  doc.getElementById('localApprovalToken').value = HUMAN_TOKEN;
+  doc.getElementById('localApprovalReviewed').checked = true;
+  doc.dispatch('click', { target: doc.findByAttribute('data-action', 'approve-local-repair'), preventDefault() {} });
+  await waitFor(() => doc.getElementById('localApprovalToken').value === '');
+  release();
+});
+
+test('a response without a recorded approval leaves the publish locked', async () => {
+  for (const body of [{ approved: false, approvalId: 'approval-controlled-1' }, { approved: true, approvalId: '' }]) {
+    const { doc } = openRepairScreen(stubbed({ approval: body }));
+    await startRepairRun({ doc, calls: [] });
+
+    doc.getElementById('localApprovalToken').value = HUMAN_TOKEN;
+    doc.getElementById('localApprovalReviewed').checked = true;
+    doc.dispatch('click', { target: doc.findByAttribute('data-action', 'approve-local-repair'), preventDefault() {} });
+    assert.ok(await waitFor(() => doc.getElementById('localApprovalState').innerHTML.includes('did not record an approval')));
+
+    assert.equal(doc.getElementById('localCreatePr').disabled, true, 'the publish stays locked');
+    assert.equal(doc.getElementById('localApprovalToken').value, '');
+  }
+});
+
+test('a late approval after a re-render cannot unlock a detached card', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const { doc, context } = openRepairScreen(async (url, options) => {
+    if (url.endsWith('/approval')) {
+      await gate;
+      return jsonResponse({ approved: true, approvalId: 'approval-controlled-1' }, { status: 201 });
+    }
+    if (options.method === 'POST') return jsonResponse({ id: AUDIT_ID, status: 'Running' }, { status: 202 });
+    return jsonResponse(VERIFIED_REPAIR_RUN);
+  });
+  await startRepairRun({ doc, calls: [] });
+
+  doc.getElementById('localApprovalToken').value = HUMAN_TOKEN;
+  doc.getElementById('localApprovalReviewed').checked = true;
+  doc.dispatch('click', { target: doc.findByAttribute('data-action', 'approve-local-repair'), preventDefault() {} });
+  await waitFor(() => doc.getElementById('localApprovalToken').value === '');
+
+  // the screen re-renders while the approval request is in flight
+  context.VERIFAI.render();
+  release();
+  await new Promise(resolve => setTimeout(resolve, 50));
+
+  const publish = doc.getElementById('localCreatePr');
+  assert.ok(!publish || publish.disabled === true, 'a detached card is not unlocked by a late response');
+  assert.ok(!doc.app.innerHTML.includes('Approved'), 'the late response unlocked nothing');
+  const state = doc.getElementById('localApprovalState');
+  assert.ok(!state || !state.innerHTML.includes('Approved'), 'the late response wrote no approval');
+});
+
+test('leaving the screen drops the human state', async () => {
+  const { doc, context } = openRepairScreen(stubbed());
+  await startRepairRun({ doc, calls: [] });
+
+  doc.getElementById('localApprovalToken').value = HUMAN_TOKEN;
+  doc.getElementById('localApprovalReviewed').checked = true;
+  doc.dispatch('click', { target: doc.findByAttribute('data-action', 'approve-local-repair'), preventDefault() {} });
+  assert.ok(await waitFor(() => doc.getElementById('localApprovalState').innerHTML.includes('Approved')));
+  assert.equal(doc.getElementById('localCreatePr').disabled, false);
+
+  context.VERIFAI.navigate('deep-audit');
+  const publish = doc.getElementById('localCreatePr');
+  assert.ok(!publish || publish.disabled === true, 'the route change locks the publish again');
+  const tokenInput = doc.getElementById('localApprovalToken');
+  assert.ok(!tokenInput || tokenInput.value === '', 'the route change clears the token field');
+});
+
 test('the repair and publish gates are unchanged for every other run', async () => {
   const { doc } = openRepairScreen(async () => jsonResponse({}));
   doc.getElementById('localRepoUrl').value = 'https://github.com/octocat/Hello-World';

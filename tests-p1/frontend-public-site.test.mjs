@@ -34,7 +34,7 @@ function openPage(hash = '') {
 test('the delivered landing renders the bounded real local check', () => {
   const { app, context } = openPage();
   assert.equal(context.document.title, 'Local repository check — VERIFAI');
-  assert.match(app.innerHTML, /Inspect a public GitHub repository/);
+  assert.match(app.innerHTML, /Local repository check/);
   assert.match(app.innerHTML, /id="localRepositoryForm"/);
   assert.match(app.innerHTML, /This limited check is not full verification/);
   assert.match(app.innerHTML, /id="startLocalAudit"/);

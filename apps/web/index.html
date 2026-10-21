@@ -969,12 +969,13 @@ details > summary:hover { color: var(--text); }
     const data = guardrails || {};
     return `<section class="card pad section evidence-card"><h4>Run budget</h4>
       ${factGrid([
-        fact('spend', data.estimatedRunSpendUsd != null ? `$${Number(data.estimatedRunSpendUsd).toFixed(2)}` : 'Not reported'),
-        fact('run cap', data.hardRunCapUsd != null ? `$${Number(data.hardRunCapUsd).toFixed(2)}` : 'Not reported'),
+        fact('estimated run cost', data.estimatedRunSpendUsd != null ? `$${Number(data.estimatedRunSpendUsd).toFixed(2)}` : 'Not reported'),
+        fact('run cost cap', data.hardRunCapUsd != null ? `$${Number(data.hardRunCapUsd).toFixed(2)}` : 'Not reported'),
         fact('requests', data.httpRequests != null ? `${data.httpRequests} of ${data.maxHttpRequests != null ? data.maxHttpRequests : '?'}` : 'Not reported'),
         fact('duration cap', data.maxDurationMs != null ? `${Math.round(data.maxDurationMs / 1000)} s` : 'Not reported'),
       ])}
       <p class="evidence-note">Within guardrails: ${data.withinGuardrails === true ? 'yes' : data.withinGuardrails === false ? 'no' : 'Not reported'}</p>
+      <p class="evidence-note">The estimated run cost is what the controller expects this run to cost. It is an estimate, not a record of a charge.</p>
     </section>`;
   }
 

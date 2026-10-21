@@ -5,7 +5,8 @@
 // renders only what the controller returns.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { openApp, waitFor, jsonResponse } from './audit-app-harness.mjs';
+import vm from 'node:vm';
+import { openApp, waitFor, jsonResponse, pageHtml } from './audit-app-harness.mjs';
 
 const TOKEN = 'controlled-test-token-value';
 const HEAD_SHA = 'a'.repeat(40);
@@ -410,6 +411,33 @@ test('the evidence endpoint reports an unavailable terminal job with its verdict
   assert.match(evidence, /Verdict: Incomplete/);
   assert.match(evidence, /the job finished without a recorded result/);
   assert.doesNotMatch(evidence, /Pending/, 'a terminal job is not left pending');
+});
+
+test('the deep audit budget names the cost as an estimate', async () => {
+  const { doc } = openApp({ fetchImpl: async () => jsonResponse({}) });
+  doc.dispatch('click', { target: doc.findByAttribute('data-nav', 'deep-audit'), preventDefault() {} });
+  const run = {
+    runId: 'deep-estimate-1',
+    status: 'completed',
+    repository: 'acme/checkout',
+    overall: 'Completed with limitations',
+    engines: [],
+    findings: [],
+    coverage: { total: 10, tested: 2, incomplete: 0, unknown: 8, pending: 0, confirmed: 2, percentage: 20, limitations: [] },
+    guardrails: { estimatedRunSpendUsd: 0.99, hardRunCapUsd: 2.5, httpRequests: 17, maxHttpRequests: 80, maxDurationMs: 180000, withinGuardrails: true },
+    events: [],
+    fix: { status: 'not-run', reason: 'no repair in the legacy path', pr: { ready: false } },
+  };
+  const host = { innerHTML: '', querySelector: () => null };
+  const context = { run, host, document: { getElementById: () => null } };
+  const { functionSource } = await import('./result-renderer-harness.mjs');
+  const names = ['escapeHtml', 'fact', 'factGrid', 'deepBudgetBlock'];
+  const sources = names.map(name => functionSource(pageHtml, name)).join('\n\n');
+  const markup = vm.runInNewContext(`${sources}\ndeepBudgetBlock(run.guardrails);`, context);
+  assert.match(markup, /estimated run cost/);
+  assert.match(markup, /\$0\.99/, 'the controller value is kept');
+  assert.doesNotMatch(markup, />spend</, 'the cost is not labelled as spend');
+  assert.match(markup, /It is an estimate, not a record of a charge\./);
 });
 
 test('a refused start explains the status, keeps the input and gives the focus back', async () => {

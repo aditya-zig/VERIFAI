@@ -43,7 +43,7 @@ const controller = new PrVerificationController({
 | `planner` | `PrJobPlanner` | no | Turns a candidate into a check plan. Without one the job ends as `Incomplete` with `PLANNER_UNAVAILABLE`. |
 | `executor` | `PrJobExecutor` | no | Runs the planned checks. Without one the job ends as `Incomplete` with `EXECUTOR_UNAVAILABLE` and the limitation "no execution adapter is configured, so no check was executed". It is never `Verified`. |
 | `resources` | `PrResourceAdapter` | no | Allocates, inspects and releases the resources of a job. Without one nothing is allocated and nothing is released. |
-| `evaluator` | `PrJobEvaluator` | no | The verdict policy. Without one no job can become `Verified`. See the policy seam below. |
+| `evaluator` | `PrJobEvaluator` | no | The verdict policy. It may be asynchronous. Without one no job can become `Verified`. See the policy seam below. |
 | `lockName` | `string` | no | Name of the single writer lock. Defaults to `controller`. |
 
 ### Store options
@@ -134,7 +134,7 @@ Blockers are the reason new work is refused. A blocker records a job, a reason a
 
 ## The policy seam
 
-The verdict of a finished job belongs to an injected evaluator. This module does not hold a success policy.
+The verdict of a finished job belongs to an injected evaluator. This module does not hold a success policy, and it does not hold any artifact, profile or evidence rule either.
 
 ```ts
 interface PrJobEvaluator {
@@ -143,22 +143,46 @@ interface PrJobEvaluator {
     candidate: CandidateRevision;
     plan: CheckPlan;
     observations: readonly CheckObservation[];
+    superseded: boolean;
     cancelled: boolean;
     cleanupComplete: boolean;
     limitations: readonly string[];
-  }): { verdict: PrVerdict; limitations: string[] };
+  }): { verdict: PrVerdict; limitations: string[] } | Promise<{ verdict: PrVerdict; limitations: string[] }>;
 }
 ```
+
+The evaluator may be asynchronous. The policy worker rehashes the persisted artifact bytes before it judges anything, so `evaluate` returns a promise and the controller awaits it at the one point where the job is finalised.
+
+`superseded` comes from the executor and tells the policy that the candidate moved while the checks ran. The policy decides what that means.
 
 Without an evaluator the job uses `evaluateObservations`, a conservative fallback that is not a policy and never claims success. It reports what it can prove from the observations:
 
 - an observation that states a failure becomes `Failed`,
 - everything else becomes `Incomplete`,
-- the limitations name the missing coverage, the mismatched test bytes, the wrong commit, the cancellation and the incomplete cleanup.
+- the limitations name the missing coverage, the mismatched test bytes, the wrong commit, the cancellation, the superseded candidate and the incomplete cleanup.
 
 Without an evaluator no job can be `Verified`. The policy worker supplies the evaluator that decides what a complete observation set means.
 
-The controller keeps two state machine rules whatever the evaluator says: a cancelled job and a job whose cleanup did not finish are downgraded to `Incomplete`.
+The controller keeps two state machine rules whatever the evaluator says: a cancelled job and a job whose cleanup did not finish are downgraded from `Verified` to `Incomplete`. Those rules are stricter than the evaluator on purpose.
+
+An evaluator that throws does not leave the job open and does not become `Verified`. The job finishes as `Incomplete` with `failure.code = "EVALUATOR_FAILED"` and the reason in its limitations.
+
+### Job failure codes
+
+`PrJob.failure.code` records why a job did not reach a verdict.
+
+| Code | Meaning |
+| --- | --- |
+| `RESOLVER_UNAVAILABLE` | No candidate resolver was configured. |
+| `RESOLVER_FAILED` | The resolver threw or returned a candidate that does not match the request. |
+| `PLANNER_UNAVAILABLE` | No check planner was configured. |
+| `PLANNER_FAILED` | The planner threw or returned an unusable plan. |
+| `EXECUTOR_UNAVAILABLE` | No execution adapter was configured. No check was executed. |
+| `EXECUTOR_FAILED` | The executor threw. |
+| `EVALUATOR_FAILED` | The verdict evaluator threw. |
+| `RESOURCE_ALLOCATION_FAILED` | The resource allocation failed or returned unusable identifiers. The outcome is unknown and new work stays blocked. |
+| `CANCELLED` | The job was cancelled before it completed. |
+| `INTERRUPTED` | The job was interrupted and recovered. |
 
 ## Adapter interfaces
 

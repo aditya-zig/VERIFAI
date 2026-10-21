@@ -564,6 +564,178 @@ test('without an evaluator no job can be verified', async () => {
   }
 });
 
+test('an asynchronous evaluator is awaited and its verdict is respected', async () => {
+  const directory = await makeTempDir('pr-job-controller');
+  try {
+    const store = new PrJobStore({ directory });
+    await store.init();
+    let finishedEvaluation = false;
+    const controller = new PrJobController({
+      store,
+      resolver: resolver(),
+      planner: planner(),
+      executor: executor([makeObservation()]),
+      evaluator: {
+        evaluate: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          finishedEvaluation = true;
+          return { verdict: 'Unknown', limitations: ['the policy could not settle the verdict'] };
+        },
+      },
+    });
+
+    const job = await controller.start(principal, request);
+    const finished = await controller.run(job.id);
+
+    assert.equal(finishedEvaluation, true);
+    assert.equal(finished.phase, 'Finished');
+    assert.equal(finished.verdict, 'Unknown');
+    assert.equal(finished.result?.verdict, 'Unknown');
+    assert.ok(finished.limitations.includes('the policy could not settle the verdict'));
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('an evaluator that throws never produces a verified job', async () => {
+  const directory = await makeTempDir('pr-job-controller');
+  try {
+    const store = new PrJobStore({ directory });
+    await store.init();
+    const controller = new PrJobController({
+      store,
+      resolver: resolver(),
+      planner: planner(),
+      executor: executor([makeObservation()]),
+      evaluator: {
+        evaluate: async () => {
+          throw new Error('the artifact bytes could not be rehashed');
+        },
+      },
+    });
+
+    const job = await controller.start(principal, request);
+    const finished = await controller.run(job.id);
+
+    assert.equal(finished.phase, 'Finished');
+    assert.equal(finished.verdict, 'Incomplete');
+    assert.notEqual(finished.verdict, 'Verified');
+    assert.equal(finished.result?.verdict, 'Incomplete');
+    assert.equal(finished.failure?.code, 'EVALUATOR_FAILED');
+    assert.ok(finished.limitations.some((item) => item.includes('the artifact bytes could not be rehashed')));
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('an optimistic evaluator is overridden when the job was cancelled', async () => {
+  const directory = await makeTempDir('pr-job-controller');
+  try {
+    const store = new PrJobStore({ directory });
+    await store.init();
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const controller = new PrJobController({
+      store,
+      resolver: resolver(),
+      planner: planner(),
+      executor: {
+        execute: async () => {
+          await gate;
+          return { observations: [makeObservation()] };
+        },
+      },
+      evaluator: {
+        evaluate: async () => ({ verdict: 'Verified', limitations: [] }),
+      },
+    });
+
+    const job = await controller.start(principal, request);
+    const running = controller.run(job.id);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await controller.cancel(principal, job.id);
+    release();
+    const finished = await running;
+
+    assert.equal(finished.verdict, 'Incomplete');
+    assert.notEqual(finished.verdict, 'Verified');
+    assert.ok(finished.limitations.some((item) => item.includes('cancelled')));
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('an optimistic evaluator is overridden when the cleanup did not finish', async () => {
+  const directory = await makeTempDir('pr-job-controller');
+  try {
+    const store = new PrJobStore({ directory });
+    await store.init();
+    const resources: PrResourceAdapter = {
+      allocate: async () => ['resource-1'],
+      inspect: async () => [{ resourceId: 'resource-1', present: true, owned: true }],
+      release: async () => ({ released: [], failed: ['resource-1'] }),
+    };
+
+    const controller = new PrJobController({
+      store,
+      resolver: resolver(),
+      planner: planner(),
+      resources,
+      executor: executor([makeObservation()]),
+      evaluator: {
+        evaluate: async () => ({ verdict: 'Verified', limitations: [] }),
+      },
+    });
+
+    const job = await controller.start(principal, request);
+    const finished = await controller.run(job.id);
+
+    assert.equal(finished.verdict, 'Incomplete');
+    assert.notEqual(finished.verdict, 'Verified');
+    assert.equal(finished.result?.cleanupComplete, false);
+    assert.ok(finished.limitations.some((item) => item.includes('resource cleanup did not complete')));
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('the evaluator is told that the candidate was superseded', async () => {
+  const directory = await makeTempDir('pr-job-controller');
+  try {
+    const store = new PrJobStore({ directory });
+    await store.init();
+    let seenSuperseded: boolean | undefined;
+    const controller = new PrJobController({
+      store,
+      resolver: resolver(),
+      planner: planner(),
+      executor: {
+        execute: async () => ({ observations: [makeObservation()], superseded: true }),
+      },
+      evaluator: {
+        evaluate: async (input) => {
+          seenSuperseded = input.superseded;
+          return input.superseded
+            ? { verdict: 'Incomplete', limitations: ['the candidate was superseded'] }
+            : { verdict: 'Verified', limitations: [] };
+        },
+      },
+    });
+
+    const job = await controller.start(principal, request);
+    const finished = await controller.run(job.id);
+
+    assert.equal(seenSuperseded, true);
+    assert.equal(finished.verdict, 'Incomplete');
+    assert.equal(finished.result?.superseded, true);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('a persisted plan is not replaced by a different plan', async () => {
   const directory = await makeTempDir('pr-job-controller');
   try {

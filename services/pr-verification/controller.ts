@@ -316,6 +316,8 @@ export interface PrJobEvaluationInput {
   candidate: CandidateRevision;
   plan: CheckPlan;
   observations: readonly CheckObservation[];
+  /** True when the executor says the candidate moved while the checks ran. */
+  superseded: boolean;
   cancelled: boolean;
   cleanupComplete: boolean;
   limitations: readonly string[];
@@ -332,9 +334,12 @@ export interface PrJobEvaluation {
  * The verdict of a finished job belongs to an injected evaluator, not to
  * this module. The policy worker supplies one. Without an evaluator no job
  * can become `Verified`.
+ *
+ * The evaluator may be asynchronous because it rehashes the persisted
+ * artifact bytes before it judges anything.
  */
 export interface PrJobEvaluator {
-  evaluate(input: PrJobEvaluationInput): PrJobEvaluation;
+  evaluate(input: PrJobEvaluationInput): PrJobEvaluation | Promise<PrJobEvaluation>;
 }
 
 /**
@@ -352,6 +357,7 @@ export function evaluateObservations(input: {
   plan: CheckPlan;
   candidate: CandidateRevision;
   observations: readonly CheckObservation[];
+  superseded?: boolean;
   cancelled: boolean;
   cleanupComplete: boolean;
   limitations?: readonly string[];
@@ -359,6 +365,10 @@ export function evaluateObservations(input: {
   const limitations: string[] = [...(input.limitations ?? [])];
   const problems: string[] = [];
   let sawFailure = false;
+
+  if (input.superseded === true && !limitations.includes('the candidate was superseded while the checks ran')) {
+    limitations.push('the candidate was superseded while the checks ran');
+  }
 
   for (const observation of input.observations) {
     if (!isRecord(observation) || typeof observation.checkId !== 'string') {
@@ -704,15 +714,31 @@ export class PrJobController {
       job = cleanup.job;
 
       if (job.candidate && job.plan) {
-        const evaluation = this.#evaluate({
-          job,
-          candidate: job.candidate,
-          plan: job.plan,
-          observations,
-          cancelled,
-          cleanupComplete: cleanup.cleanupComplete,
-          limitations: cleanup.limitations,
-        });
+        let evaluation: PrJobEvaluation;
+        let evaluationFailure: { code: string; message: string } | undefined;
+        try {
+          // The policy evaluator may be asynchronous because it rehashes the
+          // persisted artifact bytes. It is awaited here, at the point where
+          // the job is finalised.
+          evaluation = await this.#evaluate({
+            job,
+            candidate: job.candidate,
+            plan: job.plan,
+            observations,
+            superseded,
+            cancelled,
+            cleanupComplete: cleanup.cleanupComplete,
+            limitations: cleanup.limitations,
+          });
+        } catch (error) {
+          // A policy that cannot answer must not leave the job open and must
+          // never turn into a Verified job.
+          evaluation = {
+            verdict: 'Incomplete',
+            limitations: [`the verdict evaluator failed: ${errorMessage(error)}`],
+          };
+          evaluationFailure = { code: 'EVALUATOR_FAILED', message: errorMessage(error) };
+        }
         const result: PrVerificationResult = {
           candidate: job.candidate,
           plan: job.plan,
@@ -727,7 +753,7 @@ export class PrJobController {
           verdict: evaluation.verdict,
           limitations: evaluation.limitations,
           result,
-          failure: executionFailure,
+          failure: executionFailure ?? evaluationFailure,
         });
       }
 
@@ -744,16 +770,21 @@ export class PrJobController {
   /**
    * Ask the configured evaluator for the verdict.
    *
+   * The evaluator may be asynchronous. It is awaited here, at the one place
+   * where the job is finalised, so a policy that rehashes persisted artifact
+   * bytes can finish before the result is written.
+   *
    * Without an evaluator the conservative fallback runs and the job stays
    * `Incomplete`. A cancelled job or a job whose cleanup did not finish can
    * never carry a `Verified` verdict, whatever the evaluator says. Those two
    * rules belong to the state machine, not to the policy.
    */
-  #evaluate(input: Omit<PrJobEvaluationInput, 'job'> & { job: PrJob }): PrJobEvaluation {
+  async #evaluate(input: PrJobEvaluationInput): Promise<PrJobEvaluation> {
     const fallback = evaluateObservations({
       plan: input.plan,
       candidate: input.candidate,
       observations: input.observations,
+      superseded: input.superseded,
       cancelled: input.cancelled,
       cleanupComplete: input.cleanupComplete,
       limitations: input.limitations,
@@ -767,7 +798,7 @@ export class PrJobController {
         ],
       };
     }
-    const evaluation = this.#evaluator.evaluate(input);
+    const evaluation = await this.#evaluator.evaluate(input);
     const limitations = [...(evaluation.limitations ?? [])];
     let verdict = evaluation.verdict;
     if (verdict === 'Verified' && input.cancelled) {

@@ -1,19 +1,13 @@
 # Non-AWS readiness and runbook
 
-Status of `origin/main` at `b88775d` (merge of PR #79) for running VERIFAI
-locally without live AWS. Written from source and docs on branch
-`docs/non-aws-handoff-20261021` on 21 October 2026. Above `b88775d` this
-checkout carries no code changes of its own.
+Baseline snapshot of main `b88775d`, the merge of PR #79. The isolated
+documentation worker recorded these observations on 21 October 2026 before
+the non-AWS integration changes. They are not acceptance evidence for the
+release branch. Check GitHub for current issues, PRs and CI.
 
-Live checks against GitHub on 2026-10-21: latest `main` CI run in `VERIFAI CI`,
-id 37222440775, success, 2026-10-04. The only open PR is #80
-(`docs/pr-runtime-verification-plan`, a different docs worker's PR). The
-`AgentCore live acceptance` workflow is limited to `workflow_dispatch` with
-repository secrets and stays outside everything below.
-
-Shadowing everything below: this is a runbook, not a claims list. The final
-subsection marks what this checkout actually executed. Everything else is
-read from source as intended behavior and labelled not run here.
+The `AgentCore live acceptance` workflow requires explicit dispatch and
+repository secrets. It remains outside this work. The evidence section below
+separates commands that the documentation worker ran from source descriptions.
 
 ## What main currently is, without live AWS
 
@@ -21,6 +15,8 @@ read from source as intended behavior and labelled not run here.
   8787, both with a 256 MiB Node old-space cap. Occupied ports are refused,
   never killed. The web proxy starts with a clean environment; only the API
   role loads `.env.local`. Restart clears in-memory audit history.
+  The non-AWS integration launcher also compiles TypeScript before starting
+  either role. Help and invalid arguments do not compile or start services.
 - An audit runs clone, Bedrock-backed analysis through Strands
   (`@strands-agents/sdk`), then one bounded Docker command execution, a
   finding with recorded output, and cleanup. A missing model, denied access,

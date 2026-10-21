@@ -10,6 +10,7 @@ import { runBrowserJourney, MAX_SCREENSHOT_BYTES, screenshotRoot } from '../serv
 import { LocalRepairService } from '../services/local-repair-service.mjs';
 import { LocalArtifactService } from '../services/local-artifact-service.mjs';
 import { LocalPrService } from '../services/local-pr-service.mjs';
+import { createPrVerificationRuntime } from '../services/pr-verification/runtime.mjs';
 
 const root = fileURLToPath(new URL('../apps/web/', import.meta.url));
 const types = {
@@ -89,7 +90,8 @@ function callerPrincipal(req) {
   return { id: 'same-origin-browser-session', kind: 'browser-session' };
 }
 
-export function createDemoServer({ deepAudit, repositories = new LocalRepositoryService(), apiOnly = false, apiUrl, env = process.env } = {}) {
+export function createDemoServer({ deepAudit, repositories = new LocalRepositoryService(), apiOnly = false, apiUrl, env = process.env, prVerification } = {}) {
+  const prVerificationRuntime = prVerification ?? createPrVerificationRuntime({ env });
   const audits = new MasterAuditService(repositories, { env });
   const browserResults = new Map();
   const browserImages = new Map();
@@ -151,6 +153,8 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
         return sendJson(res, upstream.status, await upstream.json());
       } catch (error) { return sendJson(res, error.statusCode ?? 502, { status: 'Incomplete', error: 'Local API unavailable or request invalid' }); }
     }
+
+    if (await prVerificationRuntime.handle(req, res)) return;
 
     if (req.method === 'POST' && url.pathname === '/api/local/audits') {
       try { const body = await readJson(req); return sendJson(res, 202, audits.start(body.url)); }
@@ -425,6 +429,7 @@ export function createDemoServer({ deepAudit, repositories = new LocalRepository
   });
 
   server.shutdown = async () => {
+    await prVerificationRuntime.shutdown();
     browserController?.abort(new Error('Server stopping'));
     abortActiveAudit();
     await Promise.allSettled([...browserTasks]);

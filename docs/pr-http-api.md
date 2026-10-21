@@ -16,6 +16,9 @@ All routes use `/api/local/pr-verifications` and require authentication.
   available. Before a result exists, it returns `status: "Pending"`.
 - `GET /capabilities` reports configured execution and publication adapters.
   Configured capability is not live AWS acceptance.
+- `POST /:id/publish` lets an authenticated human explicitly publish the
+  stored terminal result as a GitHub Check. It accepts no result in the body.
+  Agent principals cannot call this write endpoint.
 
 Request bodies are JSON objects bounded to 32 KiB. Invalid input returns 400,
 unsupported content types 415, and unsupported methods 405. Missing configured
@@ -38,3 +41,10 @@ on the command line. The client permits only a loopback HTTP origin in
 The launcher compiles the TypeScript services before starting either role.
 `./start.sh --help` and unsupported-argument handling still delegate directly
 without starting services or compiling code.
+
+Check publication remains disabled unless the backend operator supplies
+`VERIFIAI_GITHUB_APP_TOKEN` and sets
+`VERIFIAI_PR_STRICT_BRANCH_PROTECTION_ACK=1`. The acknowledgment is not a
+verification of branch protection. Configure and validate required checks in
+GitHub separately. Publication records persist privately and remote writes
+hold a per-job lock. No publication or merge happens automatically.

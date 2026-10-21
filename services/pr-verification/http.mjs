@@ -55,6 +55,7 @@ export function createPrVerificationHttpHandler({
   authenticate = () => reject(401, 'authentication required'),
   executionConfigured = false,
   publicationConfigured = false,
+  publish,
 } = {}) {
   return async function handlePrVerification(req, res) {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
@@ -72,10 +73,10 @@ export function createPrVerificationHttpHandler({
         reply(res, 200, { executionConfigured, publicationConfigured, liveAwsAccepted: false, authenticated: true });
         return true;
       }
-      const match = url.pathname.slice(prefix.length).match(/^\/([^/]+)(?:\/(cancel|evidence))?$/);
+      const match = url.pathname.slice(prefix.length).match(/^\/([^/]+)(?:\/(cancel|evidence|publish))?$/);
       const id = match ? jobIdentifier(match[1]) : undefined;
       const action = match?.[2];
-      const allowed = url.pathname === prefix ? 'POST' : action === 'cancel' ? 'POST' : 'GET';
+      const allowed = url.pathname === prefix || action === 'cancel' || action === 'publish' ? 'POST' : 'GET';
       if (url.pathname !== prefix && !match) {
         reply(res, 404, { error: 'PR verification route not found' });
         return true;
@@ -90,6 +91,13 @@ export function createPrVerificationHttpHandler({
         const key = req.headers['idempotency-key'];
         if (typeof key !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/.test(key)) reject(400, 'a bounded Idempotency-Key header is required');
         reply(res, 202, { job: await controller.start(body, principal, key) });
+      } else if (action === 'publish') {
+        if (principal.kind !== 'human') reject(403, 'a human principal must explicitly request check publication');
+        if (Object.keys(await readInput(req)).length) reject(400, 'publication accepts no caller-authored result or approval');
+        if (!publish) reject(503, 'GitHub Check publication is not configured');
+        const job = await controller.get(id, principal);
+        if (!job || job.phase !== 'Finished' || !job.result) reject(409, 'a recorded terminal verification result is required');
+        reply(res, 200, { publication: await publish(job, principal) });
       } else if (action === 'cancel') {
         if (Object.keys(await readInput(req)).length) reject(400, 'cancel does not accept execution records or other input');
         await controller.cancel(id, principal);
@@ -98,7 +106,11 @@ export function createPrVerificationHttpHandler({
         const job = await controller.get(id, principal);
         if (!job) reject(404, 'PR verification job not found');
         if (action === 'evidence') {
-          reply(res, 200, { status: job.result ? 'Available' : 'Pending', candidate: job.candidate, plan: job.plan, result: job.result });
+          reply(res, 200, {
+            status: job.result ? 'Available' : job.phase === 'Finished' ? 'Unavailable' : 'Pending',
+            candidate: job.candidate, plan: job.plan, result: job.result,
+            ...(job.phase === 'Finished' && !job.result ? { verdict: job.verdict, limitations: job.limitations ?? [] } : {}),
+          });
         } else reply(res, 200, { job });
       }
     } catch (error) {

@@ -97,6 +97,15 @@ test('unconfigured execution is disclosed and missing controller cannot admit a 
   assert.deepEqual(calls, []);
 });
 
+test('finished jobs without a plan disclose unavailable evidence rather than permanent Pending', async t => {
+  const { base, job } = await fixture(t);
+  job.phase = 'Finished';
+  job.verdict = 'Incomplete';
+  job.limitations = ['no approved profile configured'];
+  const response = await fetch(`${base}/job-12/evidence`);
+  assert.deepEqual(await response.json(), { status: 'Unavailable', verdict: 'Incomplete', limitations: ['no approved profile configured'] });
+});
+
 test('internal controller errors do not expose secrets or crash the server', async t => {
   const { start, base } = await fixture(t, { controller: {
     async start() { throw new Error('private-credential-value'); },
@@ -106,4 +115,25 @@ test('internal controller errors do not expose secrets or crash the server', asy
   assert.equal(failed.status, 500);
   assert.doesNotMatch(await failed.text(), /private-credential-value/);
   assert.equal((await fetch(`${base}/job-12`)).status, 200);
+});
+
+test('check publication uses only a stored terminal result and an explicit authenticated human', async t => {
+  const published = [];
+  const human = { ...principal, id: 'operator', kind: 'human' };
+  const { base, job } = await fixture(t, { authenticate: () => human, publish: async (...args) => { published.push(args); return { outcome: 'published' }; } });
+  job.phase = 'Finished'; job.result = { verdict: 'Incomplete', observations: [] };
+  const injected = await fetch(`${base}/job-12/publish`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ result: { verdict: 'Verified' } }) });
+  assert.equal(injected.status, 400);
+  assert.equal(published.length, 0);
+  const response = await fetch(`${base}/job-12/publish`, { method: 'POST' });
+  assert.equal(response.status, 200);
+  assert.equal(published[0][0].result.verdict, 'Incomplete');
+  assert.deepEqual(published[0][1], human);
+});
+
+test('agent principals cannot request GitHub writes through the verification API', async t => {
+  let writes = 0;
+  const { base } = await fixture(t, { publish: async () => { writes++; } });
+  assert.equal((await fetch(`${base}/job-12/publish`, { method: 'POST' })).status, 403);
+  assert.equal(writes, 0);
 });

@@ -16,6 +16,8 @@ interface PrFs {
   writeFile(path: string, data: string, options?: { mode?: number; flag?: string }): Promise<void>;
   readdir(path: string): Promise<string[]>;
   stat(path: string): Promise<{ mode: number }>;
+  symlink(target: string, path: string): Promise<void>;
+  mkdir(path: string, options?: { mode?: number }): Promise<void>;
 }
 
 const fs = nodeFs as unknown as PrFs;
@@ -75,6 +77,42 @@ test('a job survives a restart of the process', async () => {
     assert.equal(job.phase, 'Queued');
     assert.equal(job.request.repository, 'acme/shop');
     assert.equal(job.version, 0);
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('initialization refuses linked state directories without changing the target permissions', async () => {
+  const directory = await makeTempDir('pr-job-store');
+  try {
+    const target = join(directory, 'unrelated');
+    await fs.mkdir(target, { mode: 0o755 });
+    const before = (await fs.stat(target)).mode;
+    for (const child of ['', 'jobs', 'locks']) {
+      const root = join(directory, `state-${child || 'root'}`);
+      if (child) await fs.mkdir(root);
+      await fs.symlink(target, child ? join(root, child) : root);
+      await assert.rejects(() => new PrJobStore({ directory: root }).init(),
+        (error: unknown) => isStoreError(error, 'CORRUPTED_STATE'));
+      assert.equal((await fs.stat(target)).mode, before);
+      assert.deepEqual(await fs.readdir(target), []);
+    }
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a copied checksummed record cannot change the requested job identity', async () => {
+  const directory = await makeTempDir('pr-job-store');
+  try {
+    const store = new PrJobStore({ directory });
+    await store.init();
+    await store.create(makeJob());
+    const raw = await fs.readFile(join(directory, 'jobs', 'job-alpha.json'), 'utf8');
+    await fs.writeFile(join(directory, 'jobs', 'job-beta.json'), raw);
+    await assert.rejects(() => store.get('job-beta'),
+      (error: unknown) => isStoreError(error, 'CORRUPTED_STATE'));
+    assert.equal((await store.get('job-alpha')).id, 'job-alpha');
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }

@@ -40,6 +40,7 @@ interface PrFileSystem {
   readdir(path: string): Promise<string[]>;
   rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
   stat(path: string): Promise<{ mode: number }>;
+  lstat(path: string): Promise<{ isDirectory(): boolean; isSymbolicLink(): boolean }>;
   chmod(path: string, mode: number): Promise<void>;
 }
 
@@ -252,12 +253,14 @@ export class PrJobStore {
 
   /** Create the private directory layout. Safe to call more than once. */
   async init(): Promise<void> {
-    await fs.mkdir(this.directory, { recursive: true, mode: DIRECTORY_MODE });
-    await fs.chmod(this.directory, DIRECTORY_MODE);
-    await fs.mkdir(this.#jobsDirectory, { recursive: true, mode: DIRECTORY_MODE });
-    await fs.chmod(this.#jobsDirectory, DIRECTORY_MODE);
-    await fs.mkdir(this.#locksDirectory, { recursive: true, mode: DIRECTORY_MODE });
-    await fs.chmod(this.#locksDirectory, DIRECTORY_MODE);
+    for (const path of [this.directory, this.#jobsDirectory, this.#locksDirectory]) {
+      await fs.mkdir(path, { recursive: true, mode: DIRECTORY_MODE });
+      const info = await fs.lstat(path);
+      if (info.isSymbolicLink() || !info.isDirectory()) {
+        throw new PrJobStoreError('CORRUPTED_STATE', 'job state directories must be real directories');
+      }
+      await fs.chmod(path, DIRECTORY_MODE);
+    }
   }
 
   newJobId(): string {
@@ -365,6 +368,9 @@ export class PrJobStore {
       throw new PrJobStoreError('CORRUPTED_STATE', `job ${id} failed its checksum`, 500);
     }
     assertJobShape(parsed.job);
+    if (parsed.job.id !== id) {
+      throw new PrJobStoreError('CORRUPTED_STATE', `job ${id} has a mismatched identity`, 500);
+    }
     return parsed.job as PrJob;
   }
 

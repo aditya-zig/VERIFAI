@@ -292,7 +292,7 @@ test('a stored finished job renders the exact contract fields', async () => {
   // the request and the candidate
   assert.match(rendered, /expected head/);
   assert.match(rendered, new RegExp(HEAD_SHA));
-  assert.match(rendered, /candidate base/);
+  assert.match(rendered, /resolved base/);
   assert.match(rendered, new RegExp(BASE_SHA));
   assert.match(rendered, /merge base/);
   assert.match(rendered, new RegExp('c'.repeat(40)));
@@ -322,6 +322,47 @@ test('a stored finished job renders the exact contract fields', async () => {
   assert.match(rendered, /Job limitations \(1\)/);
   assert.match(rendered, /Result limitations \(1\)/);
   assert.match(rendered, /the head check never ran/);
+});
+
+test('a resolved job that failed before the checks shows the failure, not a JSON dump', async () => {
+  const resolvedButUnplanned = {
+    id: 'prjob-resolved-0003',
+    phase: 'Finished',
+    verdict: 'Incomplete',
+    request: { repository: 'octocat/Hello-World', pullRequest: 80, expectedHeadSha: HEAD_SHA },
+    candidate: {
+      repository: 'octocat/Hello-World',
+      pullRequest: 80,
+      headRepository: 'octocat',
+      baseSha: BASE_SHA,
+      headSha: HEAD_SHA,
+      mergeBaseSha: 'c'.repeat(40),
+      changedFiles: ['README.md'],
+      diffDigest: 'd'.repeat(64),
+    },
+    failure: { code: 'PLANNER_UNAVAILABLE', message: 'no approved profile is configured for this repository' },
+    limitations: ['the check plan could not be built'],
+  };
+  const { doc } = openPrScreen(async (url, options) => (options.method === 'POST'
+    ? jsonResponse({ job: resolvedButUnplanned }, { status: 202 })
+    : jsonResponse({ job: resolvedButUnplanned })));
+
+  fillForm(doc, { pullRequest: '80' });
+  doc.getElementById('prVerificationForm').requestSubmit();
+  assert.ok(await waitFor(() => doc.getElementById('prVerificationResult').innerHTML.includes('PLANNER_UNAVAILABLE')));
+
+  const rendered = doc.getElementById('prVerificationResult').innerHTML;
+  assert.match(rendered, /PLANNER_UNAVAILABLE/);
+  assert.match(rendered, /no approved profile is configured for this repository/);
+  assert.doesNotMatch(rendered, /\"code\"|\"message\"/, 'the failure is not a JSON dump');
+  assert.match(rendered, /resolved base/);
+  assert.match(rendered, new RegExp(BASE_SHA));
+  assert.match(rendered, /resolved head/);
+  const testedBase = rendered.match(/<dt>tested base commit<\/dt><dd[^>]*>([^<]*)</);
+  const testedHead = rendered.match(/<dt>tested head commit<\/dt><dd[^>]*>([^<]*)</);
+  assert.equal(testedBase[1], 'Not tested', 'a resolved base is not a tested base');
+  assert.equal(testedHead[1], 'Not tested', 'a resolved head is not a tested head');
+  assert.ok(!rendered.includes('no observations were recorded'), 'the wording stays plain');
 });
 
 test('an expected head is never reported as a tested commit', async () => {

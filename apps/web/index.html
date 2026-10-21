@@ -265,6 +265,11 @@ details > summary:hover { color: var(--text); }
 .event-row { display: grid; grid-template-columns: 118px 1fr; gap: 10px; font-size: 12.5px; color: var(--muted); }
 .event-row time { color: var(--muted-2); white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11.5px; } /* taste-skill-ignore: hashes, ids and commands stay monospace */
 .steer-row { display: grid; gap: 8px; }
+.human-approval { display: grid; gap: 8px; border-top: 1px solid var(--rule); padding-top: 12px; }
+.failure-block { display: grid; gap: 4px; border-left: 3px solid var(--failed); padding: 4px 0 4px 10px; }
+.human-approval h5 { font-size: 13px; font-weight: 700; }
+.check-row { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--text); cursor: pointer; }
+.check-row input { width: 16px; height: 16px; margin-top: 2px; flex: 0 0 auto; }
 
 /* Toast */
 .toast {
@@ -677,7 +682,22 @@ details > summary:hover { color: var(--text); }
         ${repairFilesMarkup}
         ${repairDiffMarkup}
         <p class="tiny muted">Review proof first. Creating a PR requires this explicit human action and revalidates the immutable repair, proof manifest, and remote base.</p>
-        <div class="actions"><button class="btn primary sm" data-action="create-local-pr" data-audit-id="${escapeHtml(run.id)}">Create PR</button></div>
+        <div class="human-approval">
+          <h5>Human approval</h5>
+          <p class="evidence-note">A human token is needed twice: once to approve the repair, once to open the pull request. The token is sent as an Authorization header and is held in memory for this session only. It is never written to storage, a URL, the log or the page.</p>
+          <label class="label" for="localApprovalToken">Human token</label>
+          <input id="localApprovalToken" class="input" type="password" autocomplete="off" aria-describedby="localApprovalHelp" />
+          <label class="check-row" for="localApprovalReviewed">
+            <input id="localApprovalReviewed" type="checkbox" />
+            <span>I reviewed the immutable proof and the patch above.</span>
+          </label>
+          <p id="localApprovalHelp" class="help">Approving and publishing are two separate actions. The approval is single use: if it goes stale the server rejects it and the repair has to be approved again.</p>
+          <div class="actions">
+            <button class="btn primary sm" type="button" data-action="approve-local-repair" data-audit-id="${escapeHtml(run.id)}">Approve repair</button>
+            <button id="localCreatePr" class="btn sm" type="button" data-action="create-local-pr" data-audit-id="${escapeHtml(run.id)}" disabled>Create PR</button>
+          </div>
+          <div id="localApprovalState" role="status" aria-live="polite"></div>
+        </div>
         <div id="localPrResult" role="status" aria-live="polite">${run.pullRequest && run.pullRequest.pullRequest && run.pullRequest.pullRequest.url ? `<a class="wrap-anywhere" href="${escapeHtml(run.pullRequest.pullRequest.url)}" target="_blank" rel="noopener">Open created PR</a>` : ''}</div>
       </section>`;
     }
@@ -743,6 +763,7 @@ details > summary:hover { color: var(--text); }
   }
 
   function renderMasterAudit(run, host) {
+    clearRepairHuman();
     const statusText = run.status === 'Completed' ? 'Completed limited check' : run.status;
     host.innerHTML = `<section class="card pad result-root" data-audit-id="${escapeHtml(run.id)}">
       ${localResultHead(run, statusText)}
@@ -1163,20 +1184,93 @@ details > summary:hover { color: var(--text); }
     }
   }
 
+  let repairHuman = { auditId: '', token: '', approvalId: '', expiresAt: '' };
+
+  function clearRepairHuman() {
+    repairHuman = { auditId: '', token: '', approvalId: '', expiresAt: '' };
+  }
+
+  function repairApprovalError(status) {
+    if (status === 401) return 'The server rejected the token (401).';
+    if (status === 403) return 'The server refused this token (403). A human token is required for the approval.';
+    if (status === 409) return 'The server refused the request (409). The repair is not in a state that can be approved.';
+    if (status === 429) return 'The server is busy (429).';
+    if (status === 503) return 'The service is unavailable (503).';
+    return status ? `The server refused this request (HTTP ${status}).` : 'The request did not reach the server.';
+  }
+
+  async function approveLocalRepair(auditId, button) {
+    const tokenInput = document.getElementById('localApprovalToken');
+    const reviewed = document.getElementById('localApprovalReviewed');
+    const state = document.getElementById('localApprovalState');
+    const token = tokenInput && typeof tokenInput.value === 'string' ? tokenInput.value.trim() : '';
+    if (!token) {
+      if (state) state.innerHTML = '<p class="status failed">A human token is required before the repair can be approved.</p>';
+      return;
+    }
+    if (!reviewed || reviewed.checked !== true) {
+      if (state) state.innerHTML = '<p class="status failed">Confirm that you reviewed the immutable proof and the patch.</p>';
+      return;
+    }
+    button.disabled = true;
+    button.textContent = 'Approving…';
+    try {
+      const response = await fetch(`/api/local/audits/${encodeURIComponent(auditId)}/approval`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'authorization': `Bearer ${token}` },
+        body: '{}',
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        clearRepairHuman();
+        if (state) state.innerHTML = `<p class="status failed">${escapeHtml(repairApprovalError(response.status))}</p>`;
+        return;
+      }
+      repairHuman = { auditId, token, approvalId: body.approvalId ? String(body.approvalId) : '', expiresAt: body.expiresAt ? String(body.expiresAt) : '' };
+      const publish = document.getElementById('localCreatePr');
+      if (publish) publish.disabled = false;
+      if (state) state.innerHTML = '<p class="status verified">Approved</p><p class="evidence-note">The publish action is unlocked. The approval is single use: a stale approval is rejected and the repair has to be approved again.</p>';
+      announce('Repair approved.');
+    } catch (error) {
+      clearRepairHuman();
+      if (state) state.innerHTML = `<p class="status failed">${escapeHtml(repairApprovalError(0))} ${escapeHtml(String(error && error.message ? error.message : error))}</p>`;
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Approve repair';
+    }
+  }
+
   async function createLocalPullRequest(auditId, buttonEl) {
     const host = document.getElementById('localPrResult');
+    const approval = repairHuman;
+    if (!approval.approvalId || approval.auditId !== auditId) {
+      if (host) host.innerHTML = '<p class="status failed">The repair is not approved. Approve the repair first, then open the pull request.</p>';
+      return;
+    }
     buttonEl.disabled = true;
     buttonEl.textContent = 'Creating PR…';
     try {
-      const response = await fetch(`/api/local/audits/${encodeURIComponent(auditId)}/pr`, { method: 'POST' });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      const response = await fetch(`/api/local/audits/${encodeURIComponent(auditId)}/pr`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'authorization': `Bearer ${approval.token}` },
+        body: JSON.stringify({ approvalId: approval.approvalId }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        clearRepairHuman();
+        if (host) host.innerHTML = `<p class="status failed">${escapeHtml(repairApprovalError(response.status))}</p>`;
+        buttonEl.disabled = false;
+        buttonEl.textContent = 'Create PR';
+        return;
+      }
       const url = result.pullRequest && result.pullRequest.url;
       if (host) host.innerHTML = url
         ? `<p class="status verified">PR created</p><a href="${escapeHtml(url)}" target="_blank" rel="noopener">Open pull request</a>`
         : '<p class="status verified">PR created</p>';
+      clearRepairHuman();
       announce('Pull request created.');
     } catch (error) {
+      clearRepairHuman();
       if (host) host.innerHTML = `<p class="status failed">Incomplete: ${escapeHtml(String(error && error.message ? error.message : error))}</p>`;
       buttonEl.disabled = false;
       buttonEl.textContent = 'Create PR';
@@ -1332,7 +1426,6 @@ details > summary:hover { color: var(--text); }
   // reported as tested: only an observation that ran counts.
   function prTestedCommit(job, revision) {
     const observations = prObservations(job);
-    if (!observations.length) return 'Not reported';
     const rows = observations.filter(row => row && row.revision === revision && row.executed === true);
     if (!rows.length) return 'Not tested';
     const shas = [...new Set(rows.map(row => row.commitSha).filter(Boolean))];
@@ -1390,8 +1483,8 @@ details > summary:hover { color: var(--text); }
         fact('repository', candidate.repository),
         fact('pull request', candidate.pullRequest),
         fact('head repository', candidate.headRepository),
-        fact('candidate base', candidate.baseSha, undefined, true),
-        fact('candidate head', candidate.headSha, undefined, true),
+        fact('resolved base', candidate.baseSha, undefined, true),
+        fact('resolved head', candidate.headSha, undefined, true),
         fact('merge base', candidate.mergeBaseSha, undefined, true),
         fact('diff digest', candidate.diffDigest, undefined, true),
       ])}
@@ -1454,7 +1547,7 @@ details > summary:hover { color: var(--text); }
           fact('pull request', request.pullRequest),
           fact('expected head', request.expectedHeadSha, undefined, true),
         ]) : ''}
-        ${failure ? `<p class="status failed wrap-anywhere">${escapeHtml(failure.code || 'Not reported')}: ${escapeHtml(failure.message || 'Not reported')}</p>` : ''}
+        ${prFailureBlock(failure)}
       </section>
       ${prCandidateBlock(job)}
       ${prPlanBlock(job)}
@@ -1468,7 +1561,7 @@ details > summary:hover { color: var(--text); }
       </section>
       ${prCleanupBlock(job)}
       ${prLimitationsBlock(job)}
-      <p class="tiny muted">These are the fields the controller recorded. The expected head is the request, not a tested commit: only an observation that ran is called tested.</p>
+      <p class="tiny muted">These are the fields the controller recorded. The resolved base and head are the candidate the controller resolved. A tested commit is one an observation actually ran: neither the request nor the candidate identity proves that a check ran.</p>
       <div class="actions">
         <button class="btn sm" type="button" data-action="cancel-pr-job" data-job-id="${escapeHtml((job && job.id) || '')}"${prJobIsActive(job) ? '' : ' disabled'}>Cancel job</button>
         <button class="btn sm" type="button" data-action="load-pr-evidence" data-job-id="${escapeHtml((job && job.id) || '')}">Load evidence</button>
@@ -1479,9 +1572,20 @@ details > summary:hover { color: var(--text); }
 
   function prJobHeadline(job, phase, verdict, failure) {
     if (prJobIsActive(job)) return `The job is ${phase}. It is still running.`;
-    if (failure !== undefined && failure !== null && failure !== '') return `The job ${phase} with a failure: ${typeof failure === 'object' ? JSON.stringify(failure) : String(failure)}`;
+    if (failure && (failure.code || failure.message)) return `The job ${phase} with a failure. The code and the message are below.`;
     if (verdict !== undefined && verdict !== null && verdict !== '') return `The job ${phase}. Verdict: ${String(verdict)}.`;
     return `The job ${phase}. It recorded no verdict.`;
+  }
+
+  function prFailureBlock(failure) {
+    if (!failure) return '';
+    const code = failure.code ? String(failure.code) : 'Not reported';
+    const message = failure.message ? String(failure.message) : 'Not reported';
+    return `<div class="failure-block">
+      <p class="evidence-sub">Failure</p>
+      <p class="evidence-note mono wrap-anywhere">${escapeHtml(code)}</p>
+      <p class="evidence-note wrap-anywhere">${escapeHtml(message)}</p>
+    </div>`;
   }
 
   function prCapabilitiesBlock(capabilities) {
@@ -1742,6 +1846,8 @@ details > summary:hover { color: var(--text); }
   document.addEventListener('click', (event) => {
     const fixtureBrowser = event.target.closest('[data-action="run-fixture-browser"]');
     if (fixtureBrowser) { event.preventDefault(); runFixtureBrowser(fixtureBrowser); return; }
+    const approveRepair = event.target.closest('[data-action="approve-local-repair"]');
+    if (approveRepair) { event.preventDefault(); approveLocalRepair(approveRepair.dataset.auditId, approveRepair); return; }
     const createPr = event.target.closest('[data-action="create-local-pr"]');
     if (createPr) { event.preventDefault(); createLocalPullRequest(createPr.dataset.auditId, createPr); return; }
     const repairAudit = event.target.closest('[data-action="repair-local-audit"]');

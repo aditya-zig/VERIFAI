@@ -33,7 +33,7 @@ export class FakeElement {
     }
     this.classList = new FakeClassList();
     this.value = options.value ?? (options.attributes && options.attributes.value) ?? '';
-    this.disabled = false;
+    this.disabled = Object.prototype.hasOwnProperty.call(this.attributes, 'disabled');
     this._innerHTML = '';
     this.textContent = '';
   }

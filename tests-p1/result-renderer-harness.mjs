@@ -10,6 +10,7 @@ export const RESULT_HELPERS = [
   'localResultHead', 'localSummaryBlock', 'localFindingBlock', 'localExecutionBlock',
   'localStagesBlock', 'localSpecialistBlock', 'localBrowserBlock', 'localRepairBlock',
   'localProofBlock', 'localCleanupBlock', 'localFixtureActionBlock',
+  'clearRepairHuman',
 ];
 
 const PAGE_URL = new URL('../apps/web/index.html', import.meta.url);

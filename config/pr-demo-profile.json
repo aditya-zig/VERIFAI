@@ -1,0 +1,33 @@
+{
+  "profileId": "verifai-pr-demo",
+  "policyVersion": "1",
+  "repository": "acme/shop",
+  "policyCommitSha": "0000000000000000000000000000000000000001",
+  "imageDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "dependencyDigests": [
+    {
+      "name": "package-lock.json",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    }
+  ],
+  "requiredChecks": [
+    {
+      "checkId": "unit",
+      "command": "node scripts/pr-unit.mjs",
+      "script": "process.stdout.write('unit check placeholder\\n');\n",
+      "timeoutMs": 120000
+    },
+    {
+      "checkId": "types",
+      "command": "node scripts/pr-types.mjs",
+      "script": "process.stdout.write('type check placeholder\\n');\n",
+      "timeoutMs": 120000
+    }
+  ],
+  "regressionCheck": {
+    "checkId": "smoke",
+    "command": "node scripts/pr-smoke.mjs",
+    "script": "process.stdout.write('smoke check placeholder\\n');\n",
+    "timeoutMs": 120000
+  }
+}

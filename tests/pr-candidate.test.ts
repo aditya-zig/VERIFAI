@@ -173,9 +173,7 @@ test('accepts complete unified hunks with context, section text and no-newline m
     '@@ -1,2 +1,2 @@ function first()',
     ' context one',
     '-old line',
-    '\\ No newline at end of file',
     '+new line',
-    '\\ No newline at end of file',
     '@@ -10,2 +10,3 @@',
     ' context two',
     '+added line',
@@ -670,4 +668,91 @@ test('pins H1 patch context through an H1 to H2 to H1 force-push race', async ()
   assert.equal(pullReads, 2);
   assert.equal(mutableFileReads, 0);
   assert.equal(liveHead, HEAD_SHA);
+});
+
+
+test('rejects content and hunks that continue either side after its EOF marker', async () => {
+  const marker = '\\ No newline at end of file';
+  const cases = [
+    { name: 'context after new EOF', lines: ['@@ -1,2 +1,2 @@', '-a', '+b', marker, ' context'], additions: 1, deletions: 1 },
+    { name: 'context after old EOF', lines: ['@@ -1,2 +1,2 @@', '-a', marker, '+b', ' context'], additions: 1, deletions: 1 },
+    { name: 'deletion after old EOF', lines: ['@@ -1,2 +1 @@', '-a', marker, '-b', '+c'], additions: 1, deletions: 2 },
+    { name: 'addition after new EOF', lines: ['@@ -1 +1,2 @@', '-a', '+b', marker, '+c'], additions: 2, deletions: 1 },
+    { name: 'content after shared context EOF', lines: ['@@ -1,2 +1,2 @@', ' context', marker, '-a', '+b'], additions: 1, deletions: 1 },
+    { name: 'later hunk after both EOFs', lines: ['@@ -1 +1 @@', '-a', marker, '+b', marker, '@@ -4 +4 @@', '-c', '+d'], additions: 2, deletions: 2 },
+    { name: 'later deletion after old EOF', lines: ['@@ -1 +1 @@', '-a', marker, '+b', '@@ -2 +2 @@', '-c', '+d'], additions: 2, deletions: 2 },
+    { name: 'later addition after new EOF', lines: ['@@ -1 +1 @@', '-a', '+b', marker, '@@ -2 +2 @@', '-c', '+d'], additions: 2, deletions: 2 },
+    { name: 'unchanged gap beyond old EOF', lines: ['@@ -1 +1 @@', '-a', marker, '+b', '@@ -4,0 +5 @@', '+c'], additions: 2, deletions: 1 },
+    { name: 'unchanged gap beyond new EOF', lines: ['@@ -1 +1 @@', '-a', '+b', marker, '@@ -5 +4,0 @@', '-c'], additions: 1, deletions: 2 },
+    { name: 'marker without content', lines: ['@@ -1 +1 @@', marker, '-a', '+b'], additions: 1, deletions: 1 },
+    { name: 'duplicate marker', lines: ['@@ -1 +1 @@', '-a', marker, marker, '+b'], additions: 1, deletions: 1 },
+  ];
+  for (const item of cases) {
+    const file = {
+      filename: 'src/app.ts', status: 'modified', additions: item.additions, deletions: item.deletions,
+      changes: item.additions + item.deletions, patch: item.lines.join('\n'),
+    };
+    const fake = new FakeGitHub({ metadata: [metadata(), metadata()], files: [file] });
+    await assert.rejects(() => resolveCandidate(request(), fake), (error: unknown) => {
+      assert.equal(rejectedCode(error), 'FILE_PATCH_UNSUPPORTED', item.name);
+      assert.equal((error as CandidateResolutionError).status, 422, item.name);
+      return true;
+    }, item.name);
+  }
+});
+
+test('accepts independent old and new EOF markers at the final content of each side', async () => {
+  const marker = '\\ No newline at end of file';
+  const cases = [
+    { lines: ['@@ -1 +1,2 @@', '-old', marker, '+new', '+extra', marker], additions: 2, deletions: 1 },
+    { lines: ['@@ -1,2 +1 @@', '+new', marker, '-old', '-extra', marker], additions: 1, deletions: 2 },
+    { lines: ['@@ -1,2 +1,2 @@', '-old', '+new', ' final context', marker], additions: 1, deletions: 1 },
+    { lines: ['@@ -1 +1 @@', '-old', marker, '+new', '@@ -1,0 +2 @@', '+extra', marker], additions: 2, deletions: 1 },
+    { lines: ['@@ -1 +1 @@', '-old', '+new', marker, '@@ -2 +1,0 @@', '-extra', marker], additions: 1, deletions: 2 },
+  ];
+  for (const item of cases) {
+    const file = {
+      filename: 'src/app.ts', status: 'modified', additions: item.additions, deletions: item.deletions,
+      changes: item.additions + item.deletions, patch: item.lines.join('\n'),
+    };
+    const candidate = await resolveCandidate(request(), new FakeGitHub({ metadata: [metadata(), metadata()], files: [file] }));
+    assert.deepEqual(candidate.changedFiles, ['src/app.ts']);
+    assert.equal(candidate.diffDigest, candidateDiffDigest([file]));
+  }
+});
+
+test('rejects added and removed patches that consume or skip their empty side', async () => {
+  const cases = [
+    { name: 'added with old offset', status: 'added', patch: '@@ -5,0 +6 @@\n+tail', additions: 1, deletions: 0 },
+    { name: 'removed with new offset', status: 'removed', patch: '@@ -6 +5,0 @@\n-tail', additions: 0, deletions: 1 },
+    { name: 'added with existing context', status: 'added', patch: '@@ -1 +1,2 @@\n context\n+tail', additions: 1, deletions: 0 },
+    { name: 'removed with remaining context', status: 'removed', patch: '@@ -1,2 +1 @@\n context\n-tail', additions: 0, deletions: 1 },
+    { name: 'added with deleted content', status: 'added', patch: '@@ -1 +1 @@\n-old\n+new', additions: 1, deletions: 1 },
+    { name: 'removed with added content', status: 'removed', patch: '@@ -1 +1 @@\n-old\n+new', additions: 1, deletions: 1 },
+    { name: 'added with deletion against zero count', status: 'added', patch: '@@ -0,0 +1 @@\n-old\n+new', additions: 1, deletions: 1 },
+    { name: 'removed with addition against zero count', status: 'removed', patch: '@@ -1 +0,0 @@\n-old\n+new', additions: 1, deletions: 1 },
+    { name: 'added with later old offset', status: 'added', patch: '@@ -0,0 +1 @@\n+first\n@@ -3,0 +5 @@\n+tail', additions: 2, deletions: 0 },
+    { name: 'removed with later new offset', status: 'removed', patch: '@@ -1 +0,0 @@\n-first\n@@ -5 +3,0 @@\n-tail', additions: 0, deletions: 2 },
+  ];
+  for (const item of cases) {
+    const file = { filename: 'src/app.ts', ...item, changes: item.additions + item.deletions };
+    const fake = new FakeGitHub({ metadata: [metadata(), metadata()], files: [file] });
+    await assert.rejects(() => resolveCandidate(request(), fake), (error: unknown) => {
+      assert.equal(rejectedCode(error), 'FILE_PATCH_TRUNCATED', item.name);
+      assert.equal((error as CandidateResolutionError).status, 422, item.name);
+      return true;
+    }, item.name);
+  }
+});
+
+test('accepts complete added and removed files with empty opposite sides', async () => {
+  const marker = '\\ No newline at end of file';
+  for (const file of [
+    { filename: 'src/added.ts', status: 'added', additions: 2, deletions: 0, changes: 2, patch: ['@@ -0,0 +1,2 @@', '+first', '+last', marker].join('\n') },
+    { filename: 'src/removed.ts', status: 'removed', additions: 0, deletions: 2, changes: 2, patch: ['@@ -1,2 +0,0 @@', '-first', '-last', marker].join('\n') },
+  ]) {
+    const candidate = await resolveCandidate(request(), new FakeGitHub({ metadata: [metadata(), metadata()], files: [file] }));
+    assert.deepEqual(candidate.changedFiles, [file.filename]);
+    assert.equal(candidate.diffDigest, candidateDiffDigest([file]));
+  }
 });

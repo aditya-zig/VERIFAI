@@ -2,16 +2,20 @@
 
 Issue #83, checked 21 October 2026 against main `b88775d`.
 
-The buildspec generator rejects shell syntax, control characters, absolute paths,
-traversal, empty components and leading option characters before `StartBuild`.
-An omitted path still selects `Dockerfile`. Accepted paths are at most 256
-characters and use repository-relative components containing letters, digits,
-underscores, dots and hyphens.
+The buildspec generator defaults an omitted `dockerfile` to `Dockerfile`.
+An explicit value must be a nonempty string of at most 256 ASCII characters,
+with repository-relative components separated by `/`. Each component must start
+with a letter, digit or underscore; later characters may also be dots or hyphens.
+Values are not trimmed: empty strings, whitespace, shell syntax, control
+characters, absolute paths, traversal and empty components are rejected with an
+`AwsTargetLifecycleError` in the `build` phase before `StartBuild` or any other
+cloud call from `AwsTargetLifecycle.start`.
 
 The generated build checks that the Dockerfile is tracked and regular, and that
-neither the file nor any parent component is a symlink. Diagnostics and Docker
-arguments quote the accepted path. The guard is a JSON-quoted YAML scalar so its
-diagnostic colon cannot change the buildspec structure.
+neither the file nor any parent component is a symlink. A failed check exits 42
+with a `VERIFIAI_UNSUPPORTED` diagnostic before `docker build`. Diagnostics and
+Docker arguments quote the accepted path. The guard is a JSON-quoted YAML scalar
+so its diagnostic colon cannot change the buildspec structure.
 
 ## Verification
 

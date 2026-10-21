@@ -12,7 +12,7 @@ import {
 const BASE_SHA = '1'.repeat(40);
 const HEAD_SHA = '2'.repeat(40);
 const NEXT_SHA = '3'.repeat(40);
-const MERGE_BASE_SHA = '4'.repeat(40);
+const MERGE_BASE_SHA = BASE_SHA;
 const REPOSITORY = 'acme/shop';
 const PULL_REQUEST = 7;
 
@@ -80,20 +80,19 @@ function metadata(overrides: {
 class FakeGitHub implements GitHubTransport {
   readonly calls: Array<{ method: string; path: string; token?: string }> = [];
   readonly metadataQueue: PullMetadata[];
-  readonly pages: Map<number, PullFile[]>;
   compareResponse: unknown;
 
   constructor(options: {
     metadata: PullMetadata[];
-    pages?: Map<number, PullFile[]>;
+    files?: PullFile[];
     compare?: unknown;
   }) {
     this.metadataQueue = options.metadata;
-    this.pages = options.pages ?? new Map([[1, [{ filename: 'src/app.ts', status: 'modified', additions: 1, deletions: 1, changes: 2, patch: '@@ -1 +1 @@\n-old\n+new' }]]]);
     this.compareResponse = options.compare ?? {
       status: 'ahead',
       base_commit: { sha: BASE_SHA },
       merge_base_commit: { sha: MERGE_BASE_SHA },
+      files: options.files ?? [{ filename: 'src/app.ts', status: 'modified', additions: 1, deletions: 1, changes: 2, patch: '@@ -1 +1 @@\n-old\n+new' }],
     };
   }
 
@@ -105,12 +104,8 @@ class FakeGitHub implements GitHubTransport {
       if (!next) throw new Error('no metadata queued');
       return structuredClone(next) as T;
     }
-    if (method === 'GET' && path === `/repos/${REPOSITORY}/compare/${BASE_SHA}...${HEAD_SHA}?per_page=1`) {
+    if (method === 'GET' && path === `/repos/${REPOSITORY}/compare/${BASE_SHA}...${HEAD_SHA}?per_page=1&page=1`) {
       return structuredClone(this.compareResponse) as T;
-    }
-    const pageMatch = path.match(new RegExp(`^/repos/${REPOSITORY}/pulls/${PULL_REQUEST}/files\\?per_page=100&page=(\\d+)$`));
-    if (method === 'GET' && pageMatch) {
-      return structuredClone(this.pages.get(Number(pageMatch[1])) ?? []) as T;
     }
     throw new Error(`unexpected GitHub request: ${method} ${path}`);
   }
@@ -130,7 +125,7 @@ function rejectedCode(error: unknown): CandidateResolutionErrorCode | undefined 
 }
 
 test('resolves a public same-repo PR head and base from live metadata', async () => {
-  const firstPage = Array.from({ length: 100 }, (_, index) => ({
+  const initialFiles = Array.from({ length: 100 }, (_, index) => ({
     filename: `src/file-${String(index).padStart(3, '0')}.ts`,
     status: 'modified',
     additions: 1,
@@ -138,13 +133,13 @@ test('resolves a public same-repo PR head and base from live metadata', async ()
     changes: 2,
     patch: `@@ -1 +1 @@\n-old-${index}\n+new-${index}`,
   }));
-  const secondPage = [{ filename: 'README.md', status: 'added', additions: 1, deletions: 0, changes: 1, patch: '@@ -0,0 +1 @@\n+hello' }];
+  const additionalFiles = [{ filename: 'README.md', status: 'added', additions: 1, deletions: 0, changes: 1, patch: '@@ -0,0 +1 @@\n+hello' }];
   const fake = new FakeGitHub({
     metadata: [metadata({ changedFiles: 101 }), metadata({ changedFiles: 101 })],
-    pages: new Map([[1, firstPage], [2, secondPage]]),
+    files: [...initialFiles, ...additionalFiles],
   });
 
-  const changed = [...firstPage, ...secondPage]
+  const changed = [...initialFiles, ...additionalFiles]
     .map(({ filename, status, patch }) => ({ filename, status, patch }))
     .sort((a, b) => (a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : 0));
 
@@ -166,8 +161,8 @@ test('resolves a public same-repo PR head and base from live metadata', async ()
 
   const pullReads = fake.calls.filter((call) => call.path === `/repos/${REPOSITORY}/pulls/${PULL_REQUEST}`);
   assert.equal(pullReads.length, 2);
-  assert.equal(fake.calls.filter((call) => call.path.includes('/files?')).length, 2);
-  assert.ok(fake.calls.some((call) => call.path.includes('/compare/')));
+  assert.equal(fake.calls.filter((call) => call.path.includes('/files?')).length, 0);
+  assert.equal(fake.calls.filter((call) => call.path.includes('/compare/')).length, 1);
   assert.ok(fake.calls.every((call) => call.method === 'GET'));
   assert.ok(fake.calls.every((call) => call.token === 'test-token'));
   assert.equal(JSON.stringify(candidate).includes('test-token'), false);
@@ -190,7 +185,7 @@ test('accepts complete unified hunks with context, section text and no-newline m
   const file = { filename: 'src/app.ts', status: 'modified', additions: 2, deletions: 1, changes: 3, patch };
   const fake = new FakeGitHub({
     metadata: [metadata(), metadata()],
-    pages: new Map([[1, [file]]]),
+    files: [file],
   });
 
   const candidate = await resolveCandidate(request(), fake);
@@ -250,7 +245,7 @@ test('rejects a present patch whose parsed added and deleted lines disagree with
   for (const item of cases) {
     const fake = new FakeGitHub({
       metadata: [metadata(), metadata()],
-      pages: new Map([[1, [item.file]]]),
+      files: [item.file],
     });
     await assert.rejects(
       () => resolveCandidate(request(), fake),
@@ -275,7 +270,7 @@ test('rejects an incomplete hunk even when parsed totals match the reported file
   };
   const fake = new FakeGitHub({
     metadata: [metadata(), metadata()],
-    pages: new Map([[1, [file]]]),
+    files: [file],
   });
 
   await assert.rejects(
@@ -288,24 +283,20 @@ test('rejects an incomplete hunk even when parsed totals match the reported file
   );
 });
 
-test('accepts a zero-change rename with no patch or an empty patch', async () => {
-  for (const patch of [undefined, '']) {
-    const file: PullFile = {
-      filename: 'src/old-name.ts',
-      status: 'renamed',
-      additions: 0,
-      deletions: 0,
-      changes: 0,
-      ...(patch === undefined ? {} : { patch }),
-    };
-    const fake = new FakeGitHub({
-      metadata: [metadata(), metadata()],
-      pages: new Map([[1, [file]]]),
-    });
-
-    const candidate = await resolveCandidate(request(), fake);
-    assert.deepEqual(candidate.changedFiles, ['src/old-name.ts']);
-    assert.equal(candidate.diffDigest, candidateDiffDigest([{ filename: file.filename, status: file.status, patch: patch ?? '' }]));
+test('rejects zero-change binary and rename context without assuming content preservation', async () => {
+  for (const status of ['modified', 'added', 'removed', 'renamed']) {
+    for (const patch of [undefined, '', '   ', '@@ -1 +1 @@\n unchanged']) {
+      const file: PullFile = {
+        filename: 'asset.bin', status, additions: 0, deletions: 0, changes: 0,
+        ...(patch === undefined ? {} : { patch }),
+      };
+      const fake = new FakeGitHub({ metadata: [metadata(), metadata()], files: [file] });
+      await assert.rejects(() => resolveCandidate(request(), fake), (error: unknown) => {
+        assert.ok(error instanceof CandidateResolutionError);
+        assert.equal((error as CandidateResolutionError).status, 422);
+        return true;
+      }, `${status}: ${String(patch)}`);
+    }
   }
 });
 
@@ -320,7 +311,7 @@ test('rejects unsupported patch data instead of digesting it', async () => {
   };
   const fake = new FakeGitHub({
     metadata: [metadata(), metadata()],
-    pages: new Map([[1, [file]]]),
+    files: [file],
   });
 
   await assert.rejects(
@@ -426,7 +417,7 @@ test('rejects a base that is not an ancestor of the PR head', async () => {
 test('rejects a truncated file list and unavailable patches', async () => {
   const truncated = new FakeGitHub({
     metadata: [metadata({ changedFiles: 3 }), metadata({ changedFiles: 3 })],
-    pages: new Map([[1, [{ filename: 'src/app.ts', status: 'modified', additions: 1, deletions: 1, changes: 2, patch: '@@ -1 +1 @@\n-a\n+b' }]]]),
+    files: [{ filename: 'src/app.ts', status: 'modified', additions: 1, deletions: 1, changes: 2, patch: '@@ -1 +1 @@\n-a\n+b' }],
   });
   await assert.rejects(
     () => resolveCandidate(request(), truncated),
@@ -439,7 +430,7 @@ test('rejects a truncated file list and unavailable patches', async () => {
 
   const noPatch = new FakeGitHub({
     metadata: [metadata()],
-    pages: new Map([[1, [{ filename: 'logo.png', status: 'modified', additions: 2, deletions: 2, changes: 4 }]]]),
+    files: [{ filename: 'logo.png', status: 'modified', additions: 2, deletions: 2, changes: 4 }],
   });
   await assert.rejects(
     () => resolveCandidate(request(), noPatch),
@@ -452,7 +443,7 @@ test('rejects a truncated file list and unavailable patches', async () => {
 });
 
 test('rejects a file listing that overflows the bounded intake', async () => {
-  const fake = new FakeGitHub({ metadata: [metadata({ changedFiles: 3001 })] });
+  const fake = new FakeGitHub({ metadata: [metadata({ changedFiles: 301 })] });
   await assert.rejects(
     () => resolveCandidate(request(), fake),
     (error: unknown) => {
@@ -465,7 +456,7 @@ test('rejects a file listing that overflows the bounded intake', async () => {
 
   const oversizedPatch = new FakeGitHub({
     metadata: [metadata()],
-    pages: new Map([[1, [{ filename: 'src/huge.ts', status: 'modified', additions: 1, deletions: 0, changes: 1, patch: 'x'.repeat(1_000_001) }]]]),
+    files: [{ filename: 'src/huge.ts', status: 'modified', additions: 1, deletions: 0, changes: 1, patch: 'x'.repeat(1_000_001) }],
   });
   await assert.rejects(
     () => resolveCandidate(request(), oversizedPatch),
@@ -541,4 +532,142 @@ test('returns the live GitHub repository name after accepting case-insensitive i
   const candidate = await resolveCandidate(request({ repository: 'Acme/Shop' }), fake);
   assert.equal(candidate.repository, liveName);
   assert.equal(candidate.headRepository, liveName);
+});
+
+test('rejects malformed hunk coordinates even when changed-line totals agree', async () => {
+  const cases = [
+    { name: 'overlapping replacements', patch: '@@ -1 +1 @@\n-a\n+b\n@@ -1 +1 @@\n-c\n+d', additions: 2, deletions: 2 },
+    { name: 'unordered ranges', patch: '@@ -3 +3 @@\n-a\n+b\n@@ -1 +1 @@\n-c\n+d', additions: 2, deletions: 2 },
+    { name: 'old range overlap', patch: '@@ -1 +1 @@\n-a\n+b\n@@ -1 +2 @@\n-c\n+d', additions: 2, deletions: 2 },
+    { name: 'new range overlap', patch: '@@ -1 +1 @@\n-a\n+b\n@@ -2 +1 @@\n-c\n+d', additions: 2, deletions: 2 },
+    { name: 'zero old start with content', patch: '@@ -0 +1 @@\n-a\n+b', additions: 1, deletions: 1 },
+    { name: 'zero new start with content', patch: '@@ -1 +0 @@\n-a\n+b', additions: 1, deletions: 1 },
+    { name: 'unsafe old start', patch: '@@ -9007199254740992 +1 @@\n-a\n+b', additions: 1, deletions: 1 },
+    { name: 'unsafe new start', patch: '@@ -1 +9007199254740992 @@\n-a\n+b', additions: 1, deletions: 1 },
+    { name: 'unsafe count', patch: '@@ -1,9007199254740992 +1 @@\n-a\n+b', additions: 1, deletions: 1 },
+    { name: 'overflowing end', patch: '@@ -9007199254740991,2 +9007199254740991,2 @@\n-a\n+b\n context', additions: 1, deletions: 1 },
+    { name: 'empty ranges', patch: '@@ -0,0 +0,0 @@\n+a', additions: 1, deletions: 0 },
+    { name: 'inconsistent first positions', patch: '@@ -2 +3 @@\n-a\n+b', additions: 1, deletions: 1 },
+    { name: 'inconsistent unchanged gaps', patch: '@@ -1 +1 @@\n-a\n+b\n@@ -4 +5 @@\n-c\n+d', additions: 2, deletions: 2 },
+    { name: 'too many body lines', patch: '@@ -1 +1 @@\n-a\n+b\n+c', additions: 2, deletions: 1 },
+    { name: 'too few body lines', patch: '@@ -1,2 +1,2 @@\n-a\n+b', additions: 1, deletions: 1 },
+  ];
+  for (const item of cases) {
+    const file = { filename: 'src/app.ts', status: 'modified', ...item, changes: item.additions + item.deletions };
+    const fake = new FakeGitHub({ metadata: [metadata(), metadata()], files: [file] });
+    await assert.rejects(() => resolveCandidate(request(), fake), (error: unknown) => {
+      assert.equal(rejectedCode(error), 'FILE_PATCH_TRUNCATED', item.name);
+      return true;
+    }, item.name);
+  }
+});
+
+test('accepts ordered adjacent ranges and zero-count insertion and deletion coordinates', async () => {
+  const cases = [
+    { patch: '@@ -1 +1 @@\n-a\n+b\n@@ -2 +2 @@\n-c\n+d', additions: 2, deletions: 2 },
+    { patch: '@@ -0,0 +1 @@\n+first\n@@ -4,0 +6 @@\n+next', additions: 2, deletions: 0 },
+    { patch: '@@ -1 +0,0 @@\n-first\n@@ -6 +4,0 @@\n-next', additions: 0, deletions: 2 },
+    { patch: '@@ -5,0 +6 @@\n+append', additions: 1, deletions: 0 },
+    { patch: '@@ -6 +5,0 @@\n-remove', additions: 0, deletions: 1 },
+  ];
+  for (const item of cases) {
+    const file = { filename: 'src/app.ts', status: 'modified', ...item, changes: item.additions + item.deletions };
+    const fake = new FakeGitHub({ metadata: [metadata(), metadata()], files: [file] });
+    const candidate = await resolveCandidate(request(), fake);
+    assert.deepEqual(candidate.changedFiles, ['src/app.ts']);
+  }
+});
+
+test('accepts all 300 compare files and rejects oversized or mismatched compare lists', async () => {
+  const files = Array.from({ length: 300 }, (_, index) => ({
+    filename: `src/file-${index}.ts`, status: 'added', additions: 1, deletions: 0, changes: 1,
+    patch: '@@ -0,0 +1 @@\n+hello',
+  }));
+  const accepted = await resolveCandidate(request(), new FakeGitHub({
+    metadata: [metadata({ changedFiles: 300 }), metadata({ changedFiles: 300 })], files,
+  }));
+  assert.equal(accepted.changedFiles.length, 300);
+  for (const [batch, code] of [
+    [files.slice(1), 'FILE_LIST_TRUNCATED'],
+    [[...files, { ...files[0], filename: 'overflow.ts' }], 'FILE_LIST_OVERFLOW'],
+  ] as const) {
+    const fake = new FakeGitHub({ metadata: [metadata({ changedFiles: 300 })], files: [...batch] });
+    await assert.rejects(() => resolveCandidate(request(), fake), (error: unknown) => {
+      assert.equal(rejectedCode(error), code);
+      return true;
+    });
+  }
+});
+
+test('rejects unavailable compare files, duplicate paths and unsupported file statuses', async () => {
+  for (const files of [undefined, null, {}, 'truncated']) {
+    const fake = new FakeGitHub({ metadata: [metadata()], compare: {
+      status: 'ahead', base_commit: { sha: BASE_SHA }, merge_base_commit: { sha: BASE_SHA }, files,
+    } });
+    await assert.rejects(() => resolveCandidate(request(), fake), (error: unknown) => {
+      assert.equal(rejectedCode(error), 'MALFORMED_GITHUB_RESPONSE');
+      return true;
+    });
+  }
+  const file = { filename: 'src/app.ts', status: 'modified', additions: 1, deletions: 1, changes: 2, patch: '@@ -1 +1 @@\n-old\n+new' };
+  const duplicate = new FakeGitHub({ metadata: [metadata({ changedFiles: 2 })], files: [file, file] });
+  await assert.rejects(() => resolveCandidate(request(), duplicate), (error: unknown) => {
+    assert.equal(rejectedCode(error), 'MALFORMED_GITHUB_RESPONSE');
+    return true;
+  });
+  for (const status of ['renamed', 'copied', 'unknown']) {
+    const fake = new FakeGitHub({ metadata: [metadata()], files: [{ ...file, status }] });
+    await assert.rejects(() => resolveCandidate(request(), fake), (error: unknown) => {
+      assert.equal(rejectedCode(error), 'FILE_PATCH_UNSUPPORTED');
+      return true;
+    });
+  }
+});
+
+test('rejects a compare merge-base that differs from the pinned base', async () => {
+  const fake = new FakeGitHub({ metadata: [metadata()], compare: {
+    status: 'ahead', base_commit: { sha: BASE_SHA }, merge_base_commit: { sha: NEXT_SHA }, files: [],
+  } });
+  await assert.rejects(() => resolveCandidate(request(), fake), (error: unknown) => {
+    assert.equal(rejectedCode(error), 'BASE_NOT_ANCESTOR');
+    return true;
+  });
+});
+
+test('pins H1 patch context through an H1 to H2 to H1 force-push race', async () => {
+  const h1File = { filename: 'src/app.ts', status: 'modified', additions: 1, deletions: 1, changes: 2, patch: '@@ -1 +1 @@\n-old\n+new' };
+  const h2File = { ...h1File, patch: '@@ -1 +1 @@\n-old\n+force-pushed' };
+  let liveHead = HEAD_SHA;
+  let pullReads = 0;
+  let mutableFileReads = 0;
+  const transport: GitHubTransport = {
+    async request<T>(method: string, path: string): Promise<T> {
+      assert.equal(method, 'GET');
+      if (path === `/repos/${REPOSITORY}/pulls/${PULL_REQUEST}`) {
+        if (pullReads > 0) liveHead = HEAD_SHA;
+        const pull = metadata({ headSha: liveHead });
+        pullReads += 1;
+        if (pullReads === 1) liveHead = NEXT_SHA;
+        return pull as T;
+      }
+      if (path.startsWith(`/repos/${REPOSITORY}/compare/${BASE_SHA}...${HEAD_SHA}?`)) {
+        assert.equal(liveHead, NEXT_SHA);
+        return { status: 'ahead', base_commit: { sha: BASE_SHA }, merge_base_commit: { sha: BASE_SHA }, files: [h1File] } as T;
+      }
+      if (path.startsWith(`/repos/${REPOSITORY}/pulls/${PULL_REQUEST}/files?`)) {
+        assert.equal(liveHead, NEXT_SHA);
+        mutableFileReads += 1;
+        liveHead = HEAD_SHA;
+        return [h2File] as T;
+      }
+      throw new Error(`unexpected request: ${path}`);
+    },
+  };
+  const candidate = await resolveCandidate(request(), transport);
+  assert.equal(candidate.headSha, HEAD_SHA);
+  assert.equal(candidate.diffDigest, '4c5d0cd33e4987e98a0cfc3985278bf1d49c12af67a431c0fb622d056d4bea70');
+  assert.notEqual(candidate.diffDigest, '90d30c0357dc558be5fe83820f4a833b2c3619b52428a05bed040091d6f7b1c5');
+  assert.equal(pullReads, 2);
+  assert.equal(mutableFileReads, 0);
+  assert.equal(liveHead, HEAD_SHA);
 });

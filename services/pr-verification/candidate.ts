@@ -7,8 +7,7 @@ import type { CandidateRevision, PrVerificationRequest } from '../../packages/co
  * sandbox limits, and they intentionally fail closed instead of truncating.
  */
 export const PR_CANDIDATE_LIMITS = Object.freeze({
-  pageSize: 100,
-  maxChangedFiles: 3_000,
+  maxChangedFiles: 300,
   maxPatchCharactersPerFile: 1_000_000,
   maxTotalPatchCharacters: 16_000_000,
 });
@@ -257,17 +256,26 @@ function patchLines(patch: string): string[] {
   return lines;
 }
 
-function readHunkHeader(line: string, filename: string): { oldCount: number; newCount: number } {
+function readHunkHeader(line: string, filename: string): { oldOffset: number; newOffset: number; oldCount: number; newCount: number } {
   const match = hunkHeaderPattern.exec(line);
   if (!match) {
     fail('FILE_PATCH_UNSUPPORTED', `unsupported hunk header for ${filename}`, 422);
   }
+  const oldStart = Number(match[1]);
+  const newStart = Number(match[3]);
   const oldCount = match[2] === undefined ? 1 : Number(match[2]);
   const newCount = match[4] === undefined ? 1 : Number(match[4]);
-  if (!Number.isSafeInteger(oldCount) || oldCount < 0 || !Number.isSafeInteger(newCount) || newCount < 0) {
-    fail('FILE_PATCH_TRUNCATED', `hunk counts are invalid for ${filename}`, 422);
+  if (![oldStart, newStart, oldCount, newCount].every((value) => Number.isSafeInteger(value) && value >= 0)
+    || (oldStart === 0 && oldCount !== 0) || (newStart === 0 && newCount !== 0)
+    || (oldCount === 0 && newCount === 0)) {
+    fail('FILE_PATCH_TRUNCATED', `hunk coordinates are invalid for ${filename}`, 422);
   }
-  return { oldCount, newCount };
+  const oldOffset = oldCount === 0 ? oldStart : oldStart - 1;
+  const newOffset = newCount === 0 ? newStart : newStart - 1;
+  if (!Number.isSafeInteger(oldOffset + oldCount) || !Number.isSafeInteger(newOffset + newCount)) {
+    fail('FILE_PATCH_TRUNCATED', `hunk ranges are invalid for ${filename}`, 422);
+  }
+  return { oldOffset, newOffset, oldCount, newCount };
 }
 
 function validateUnifiedPatch(file: {
@@ -283,7 +291,6 @@ function validateUnifiedPatch(file: {
 
   const lines = patchLines(file.patch);
   if (lines.length === 0) {
-    if (file.changes === 0) return;
     fail('FILE_PATCH_TRUNCATED', `patch is empty despite reported changes for ${file.filename}`, 422);
   }
 
@@ -291,8 +298,16 @@ function validateUnifiedPatch(file: {
   let deletions = 0;
   let hunks = 0;
   let index = 0;
+  let oldEnd = 0;
+  let newEnd = 0;
   while (index < lines.length) {
     const header = readHunkHeader(lines[index], file.filename);
+    if (header.oldOffset < oldEnd || header.newOffset < newEnd
+      || header.oldOffset - oldEnd !== header.newOffset - newEnd) {
+      fail('FILE_PATCH_TRUNCATED', `hunk ranges overlap, are unordered or have inconsistent gaps for ${file.filename}`, 422);
+    }
+    oldEnd = header.oldOffset + header.oldCount;
+    newEnd = header.newOffset + header.newCount;
     hunks += 1;
     index += 1;
     let oldRemaining = header.oldCount;
@@ -344,12 +359,6 @@ function validateUnifiedPatch(file: {
     }
   }
 
-  if (file.changes === 0) {
-    if (additions !== 0 || deletions !== 0) {
-      fail('FILE_PATCH_TRUNCATED', `zero-change file reports changed lines for ${file.filename}`, 422);
-    }
-    return;
-  }
   if (hunks === 0) {
     fail('FILE_PATCH_TRUNCATED', `patch has no hunks for ${file.filename}`, 422);
   }
@@ -367,7 +376,9 @@ function readChangedFile(value: unknown): ChangedFileIdentity {
   const filename = readString(file.filename, 'changed file filename');
   if (filename.length > 4_096 || filename.includes('\0')) malformed('changed file filename is invalid');
   const status = readString(file.status, 'changed file status');
-  if (status.length > 64) malformed('changed file status is invalid');
+  if (!['added', 'removed', 'modified'].includes(status)) {
+    fail('FILE_PATCH_UNSUPPORTED', `changed file status ${status} is unsupported for ${filename}`, 422);
+  }
   const additions = readNonNegativeInteger(file.additions, `changed file ${filename} additions`);
   const deletions = readNonNegativeInteger(file.deletions, `changed file ${filename} deletions`);
   const changes = readNonNegativeInteger(file.changes, `changed file ${filename} changes`);
@@ -375,13 +386,14 @@ function readChangedFile(value: unknown): ChangedFileIdentity {
   let patch: string;
   if (typeof file.patch === 'string') {
     patch = file.patch;
-  } else if (file.patch === undefined && changes === 0) {
-    patch = '';
   } else {
     fail('FILE_PATCH_UNAVAILABLE', `patch data is unavailable for ${filename}; binary or oversized diffs are unsupported`, 422);
   }
   if (patch.length > PR_CANDIDATE_LIMITS.maxPatchCharactersPerFile) {
     fail('FILE_LIST_OVERFLOW', `patch for ${filename} exceeds the per-file intake limit`, 413);
+  }
+  if (changes === 0) {
+    fail('FILE_PATCH_UNSUPPORTED', `zero-change patch context is unsupported for ${filename}`, 422);
   }
   validateUnifiedPatch({ filename, patch, additions, deletions, changes });
   return { filename, status, patch };
@@ -447,38 +459,33 @@ export async function resolveCandidate(
     );
   }
 
-  const mergeBaseSha = readMergeBase(
-    await request<unknown>(
-      `/repos/${repository.fullName}/compare/${before.base.sha}...${before.head.sha}?per_page=1`,
-    ),
-    before.base.sha,
-  );
+  const compare = readRecord(await request<unknown>(
+    `/repos/${repository.fullName}/compare/${before.base.sha}...${before.head.sha}?per_page=1&page=1`,
+  ), 'compare response');
+  const mergeBaseSha = readMergeBase(compare, before.base.sha);
+  if (mergeBaseSha !== before.base.sha) {
+    fail('BASE_NOT_ANCESTOR', 'the compare merge-base does not equal the pinned base', 409);
+  }
+  if (!Array.isArray(compare.files)) malformed('compare files must be an array');
+  if (compare.files.length > PR_CANDIDATE_LIMITS.maxChangedFiles) {
+    fail('FILE_LIST_OVERFLOW', `compare file count exceeds the intake limit of ${PR_CANDIDATE_LIMITS.maxChangedFiles}`, 413);
+  }
+  if (compare.files.length !== before.changedFiles) {
+    fail('FILE_LIST_TRUNCATED', `pull request reports ${before.changedFiles} changed files but the pinned compare returned ${compare.files.length}`, 422);
+  }
 
   const files: ChangedFileIdentity[] = [];
   const seen = new Set<string>();
   let totalPatchCharacters = 0;
-  for (let page = 1; files.length < PR_CANDIDATE_LIMITS.maxChangedFiles; page += 1) {
-    const batch = await request<unknown>(
-      `/repos/${repository.fullName}/pulls/${pullRequest}/files?per_page=${PR_CANDIDATE_LIMITS.pageSize}&page=${page}`,
-    );
-    if (!Array.isArray(batch)) malformed('pull request files response must be an array');
-    if (batch.length > PR_CANDIDATE_LIMITS.pageSize) {
-      fail('FILE_LIST_OVERFLOW', 'GitHub returned more files than the requested page size', 413);
+  for (const item of compare.files) {
+    const file = readChangedFile(item);
+    if (seen.has(file.filename)) malformed(`duplicate changed file ${file.filename}`);
+    seen.add(file.filename);
+    files.push(file);
+    totalPatchCharacters += file.patch.length;
+    if (totalPatchCharacters > PR_CANDIDATE_LIMITS.maxTotalPatchCharacters) {
+      fail('FILE_LIST_OVERFLOW', 'combined patch data exceeds the intake limit', 413);
     }
-    for (const item of batch) {
-      const file = readChangedFile(item);
-      if (seen.has(file.filename)) malformed(`duplicate changed file ${file.filename}`);
-      seen.add(file.filename);
-      files.push(file);
-      if (files.length > PR_CANDIDATE_LIMITS.maxChangedFiles) {
-        fail('FILE_LIST_OVERFLOW', `changed file count exceeds the intake limit of ${PR_CANDIDATE_LIMITS.maxChangedFiles}`, 413);
-      }
-      totalPatchCharacters += file.patch.length;
-      if (totalPatchCharacters > PR_CANDIDATE_LIMITS.maxTotalPatchCharacters) {
-        fail('FILE_LIST_OVERFLOW', 'combined patch data exceeds the intake limit', 413);
-      }
-    }
-    if (batch.length < PR_CANDIDATE_LIMITS.pageSize) break;
   }
 
   const after = inspectPullMetadata(await request<unknown>(pullPath), {
@@ -488,14 +495,6 @@ export async function resolveCandidate(
   });
   if (identitySnapshot(before) !== identitySnapshot(after)) {
     fail('CANDIDATE_CHANGED', 'pull request metadata changed while its changed files were being read; retry the new head', 409);
-  }
-
-  if (files.length !== before.changedFiles) {
-    fail(
-      'FILE_LIST_TRUNCATED',
-      `pull request reports ${before.changedFiles} changed files but the bounded listing returned ${files.length}`,
-      422,
-    );
   }
 
   const canonical = [...files].sort((left, right) => (left.filename < right.filename ? -1 : left.filename > right.filename ? 1 : 0));

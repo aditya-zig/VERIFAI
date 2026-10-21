@@ -250,8 +250,7 @@ const noNewlineMarker = '\\ No newline at end of file';
 
 function patchLines(patch: string): string[] {
   if (patch.trim() === '') return [];
-  const normalized = patch.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  const lines = normalized.split('\n');
+  const lines = patch.split('\n');
   if (lines[lines.length - 1] === '') lines.pop();
   return lines;
 }

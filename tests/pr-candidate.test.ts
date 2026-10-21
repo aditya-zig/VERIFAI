@@ -756,3 +756,29 @@ test('accepts complete added and removed files with empty opposite sides', async
     assert.equal(candidate.diffDigest, candidateDiffDigest([file]));
   }
 });
+
+
+test('rejects a carriage return that splices an apparent addition into a deletion record', async () => {
+  const file = {
+    filename: 'src/app.ts', status: 'modified', additions: 1, deletions: 1, changes: 2,
+    patch: '@@ -1 +1 @@\n-old\r+new',
+  };
+  const fake = new FakeGitHub({ metadata: [metadata(), metadata()], files: [file] });
+  await assert.rejects(() => resolveCandidate(request(), fake), (error: unknown) => {
+    assert.equal(rejectedCode(error), 'FILE_PATCH_TRUNCATED');
+    assert.equal((error as CandidateResolutionError).status, 422);
+    return true;
+  });
+});
+
+test('accepts content carriage returns and preserves them in the patch digest', async () => {
+  const file = {
+    filename: 'src/app.ts', status: 'modified', additions: 1, deletions: 1, changes: 2,
+    patch: '@@ -1 +1 @@\n-old\r+literal\r\n+new\r-literal\r\n',
+  };
+  const fake = new FakeGitHub({ metadata: [metadata(), metadata()], files: [file] });
+  const candidate = await resolveCandidate(request(), fake);
+  assert.deepEqual(candidate.changedFiles, ['src/app.ts']);
+  assert.equal(candidate.diffDigest, '095702e3cd52ae74facd8733204c641dbe0e2bcf46d92782addc356190d57d9b');
+  assert.notEqual(candidate.diffDigest, candidateDiffDigest([{ ...file, patch: file.patch.replace(/\r/g, '') }]));
+});

@@ -30,7 +30,7 @@ The command reads an optional token from `GITHUB_TOKEN` or `GH_TOKEN`. It never 
 
 ## Diff digest
 
-`candidateDiffDigest(files)` hashes UTF-8 canonical JSON. The payload is an array of `{ filename, status, patch }` objects sorted by filename, then status, then patch. SHA-256 is lowercase hex. Tests can call the exported function to reproduce the value.
+`candidateDiffDigest(files)` hashes UTF-8 canonical JSON. The payload is an array of `{ filename, status, patch }` objects sorted by filename, then status, then patch. SHA-256 is lowercase hex. Patch records are separated only by LF; carriage returns within content are preserved during validation and hashing. Tests can call the exported function to reproduce the value.
 
 The digest covers the validated, reported patch text. It is not a file-tree digest and does not cover unchanged file bytes. Hunk and count validation catches the truncation GitHub reports through mismatched metadata, but if GitHub ever returns a patch and metadata that agree with each other while both omit bytes, this digest cannot detect that. Treat it as a digest of the reported change, not a proof of complete changed bytes.
 

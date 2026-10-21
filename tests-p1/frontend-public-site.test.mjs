@@ -33,8 +33,8 @@ function openPage(hash = '') {
 
 test('the delivered landing renders the bounded real local check', () => {
   const { app, context } = openPage();
-  assert.equal(context.document.title, 'Local repository check — VERIFAI');
-  assert.match(app.innerHTML, /Inspect a public GitHub repository/);
+  assert.equal(context.document.title, 'Local repository check | VERIFAI');
+  assert.match(app.innerHTML, /Local repository check/);
   assert.match(app.innerHTML, /id="localRepositoryForm"/);
   assert.match(app.innerHTML, /This limited check is not full verification/);
   assert.match(app.innerHTML, /id="startLocalAudit"/);
@@ -44,7 +44,7 @@ test('the delivered landing renders the bounded real local check', () => {
 test('legacy prototype hashes cannot display a verdict without executed evidence', () => {
   for (const hash of ['#/verified', '#/repair', '#/results', '#/live', '#/project']) {
     const { app, context } = openPage(hash);
-    assert.equal(context.document.title, 'Local repository check — VERIFAI', hash);
+    assert.equal(context.document.title, 'Local repository check | VERIFAI', hash);
     assert.match(app.innerHTML, /id="localRepositoryForm"/, hash);
     assert.doesNotMatch(app.innerHTML, /10 \/ 10 passed|Fix Verified|3 \/ 3 failed/, hash);
   }

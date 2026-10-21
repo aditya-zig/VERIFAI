@@ -23,7 +23,7 @@ test('the local repository flow clones a public GitHub repo, reads it, and clean
   assert.match(page, /id="localRepoUrl"/, 'frontend exposes a GitHub URL input');
   assert.match(page, /id="startLocalAudit"/, 'frontend exposes a start button');
   assert.match(page, /id="localRepoResult"/, 'frontend has a place to show real repository information');
-  assert.match(page, /api\/local\/repositories/, 'the start button calls the local repository backend');
+  assert.match(page, /api\/local\/audits/, 'the start button calls the master audit backend');
   assert.doesNotMatch(page, /src="\.\/app\.js"/, 'local repository checks do not load the audit prototype script');
 
   const cloneResponse = await fetch(`${baseUrl}/api/local/repositories`, {

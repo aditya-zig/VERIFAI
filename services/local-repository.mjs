@@ -1,9 +1,98 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, readFile } from 'node:fs/promises';
+import { lstat, opendir, readFile } from 'node:fs/promises';
 import { registerWorkspace, removeWorkspace } from './repository-workspaces.mjs';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { runOwnedProcess } from './local-command.mjs';
+
+export const defaultRepositoryBounds = Object.freeze({
+  workspaceBytes: 100 * 1024 * 1024,
+  workspaceEntries: 20_000,
+  retainedWorkspaces: 4,
+  workspaceCheckIntervalMs: 100,
+});
+
+function positiveSafeInteger(value, name) {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
+  return value;
+}
+
+function overrunError(reason, limits) {
+  const error = reason === 'bytes'
+    ? new Error(`Repository materialization exceeded the workspace limit of ${limits.maxBytes} bytes`)
+    : new Error(`Repository materialization exceeded the workspace limit of ${limits.maxEntries} entries`);
+  error.statusCode = 413;
+  return error;
+}
+
+// Bounded size/entry accounting of an owned workspace. Symlinks are counted as
+// entries but never followed, so neither their targets' bytes nor their
+// targets' subtrees enter the account. The walk stops the moment a ceiling is
+// crossed and reads each directory incrementally, so the accounting itself
+// stays bounded by the ceilings instead of by the repository's shape.
+export async function workspaceUsage(root, { maxBytes, maxEntries }) {
+  let bytes = 0;
+  let entries = 0;
+  const pending = [root];
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    let handle;
+    try {
+      handle = await opendir(directory);
+    } catch (error) {
+      if (['ENOENT', 'ENOTDIR', 'EACCES', 'ELOOP'].includes(error.code)) continue;
+      throw error;
+    }
+    // The async iterator closes the handle on completion, break, and throw.
+    for await (const entry of handle) {
+      entries += 1;
+      if (entries > maxEntries) return { bytes, entries, overrun: 'entries' };
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) {
+        pending.push(join(directory, entry.name));
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      try {
+        bytes += (await lstat(join(directory, entry.name))).size;
+      } catch (error) {
+        if (!['ENOENT', 'EACCES'].includes(error.code)) throw error;
+        continue;
+      }
+      if (bytes > maxBytes) return { bytes, entries, overrun: 'bytes' };
+    }
+  }
+  return { bytes, entries, overrun: null };
+}
+
+// Polls the owned workspace while materialization runs and reports the first
+// overrun. The poller aborts the clone's owned controller, which kills the
+// owned git process tree through the existing abort path in runOwnedProcess.
+function startWorkspaceMonitor(workspacePath, limits, intervalMs, onOverrun) {
+  let stopped = false;
+  let timer;
+  const tick = async () => {
+    if (stopped) return;
+    let usage;
+    try {
+      usage = await workspaceUsage(workspacePath, limits);
+    } catch {
+      // Transient filesystem races while git writes; the settled recheck after
+      // materialization still enforces the ceiling.
+      usage = { overrun: null };
+    }
+    if (stopped) return;
+    if (usage.overrun) {
+      stopped = true;
+      onOverrun(usage.overrun);
+      return;
+    }
+    timer = setTimeout(() => void tick(), intervalMs);
+    timer.unref?.();
+  };
+  void tick();
+  return { stop() { stopped = true; clearTimeout(timer); } };
+}
 
 const fileLimit = 100;
 const languageByExtension = new Map([
@@ -153,24 +242,63 @@ export class LocalRepositoryService {
   #repositories = new Map();
   #clones = new Set();
   #registries = new Map();
+  #maxWorkspaceBytes;
+  #maxWorkspaceEntries;
+  #maxRetainedWorkspaces;
+  #workspaceCheckIntervalMs;
+  #runGit;
+
+  constructor({
+    maxWorkspaceBytes = defaultRepositoryBounds.workspaceBytes,
+    maxWorkspaceEntries = defaultRepositoryBounds.workspaceEntries,
+    maxRetainedWorkspaces = defaultRepositoryBounds.retainedWorkspaces,
+    workspaceCheckIntervalMs = defaultRepositoryBounds.workspaceCheckIntervalMs,
+    runGit: runGitImpl = runGit,
+  } = {}) {
+    this.#maxWorkspaceBytes = positiveSafeInteger(maxWorkspaceBytes, 'maxWorkspaceBytes');
+    this.#maxWorkspaceEntries = positiveSafeInteger(maxWorkspaceEntries, 'maxWorkspaceEntries');
+    this.#maxRetainedWorkspaces = positiveSafeInteger(maxRetainedWorkspaces, 'maxRetainedWorkspaces');
+    this.#workspaceCheckIntervalMs = positiveSafeInteger(workspaceCheckIntervalMs, 'workspaceCheckIntervalMs');
+    this.#runGit = runGitImpl;
+  }
 
   async clone(url, { signal } = {}) {
     const repository = parseRepositoryUrl(url);
+    // Admission: every bound is checked synchronously, before the ownership
+    // registry, the workspace directory, or any process spawn. Callers cannot
+    // widen these limits per request.
+    signal?.throwIfAborted();
+    if (this.#clones.size > 0) throw new Error('Another repository clone is already in progress; one materialization at a time');
+    if (this.#repositories.size >= this.#maxRetainedWorkspaces) {
+      throw new Error(`Repository workspace limit reached (${this.#maxRetainedWorkspaces}); clean up a repository before cloning another`);
+    }
+    const limits = { maxBytes: this.#maxWorkspaceBytes, maxEntries: this.#maxWorkspaceEntries };
     const controller = new AbortController();
     this.#clones.add(controller);
     let workspacePath;
     let registry;
+    let monitor;
+    let overrunReason = null;
     const id = randomUUID();
     try {
       ({ workspacePath, registry } = await registerWorkspace(id));
+      monitor = startWorkspaceMonitor(workspacePath, limits, this.#workspaceCheckIntervalMs, (reason) => {
+        overrunReason = reason;
+        controller.abort();
+      });
       const cloneSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-      await runGit(['clone', '--depth', '1', '--single-branch', '--no-tags', '--quiet', '--', repository.url, workspacePath], { signal: cloneSignal });
-      const head = (await runGit(['-C', workspacePath, 'rev-parse', 'HEAD'], { signal: cloneSignal })).stdout.trim();
+      await this.#runGit(['clone', '--depth', '1', '--single-branch', '--no-tags', '--quiet', '--', repository.url, workspacePath], { signal: cloneSignal });
+      const head = (await this.#runGit(['-C', workspacePath, 'rev-parse', 'HEAD'], { signal: cloneSignal })).stdout.trim();
       if (!/^[0-9a-f]{40}$/i.test(head)) throw new Error('Could not resolve cloned HEAD commit');
       repository.commit = head;
       const listing = await listTrackedFiles(workspacePath, cloneSignal);
       const info = await readRepository(workspacePath, listing);
       cloneSignal.throwIfAborted();
+      // The poller can miss a materialization shorter than one interval, so
+      // the ceiling is re-checked against the settled workspace before success.
+      const usage = await workspaceUsage(workspacePath, limits);
+      if (usage.overrun) throw overrunError(usage.overrun, limits);
+      monitor.stop();
       const files = {
         count: listing.count,
         items: listing.items,
@@ -189,8 +317,12 @@ export class LocalRepositoryService {
       return record;
     } catch (error) {
       if (workspacePath) await removeWorkspace(workspacePath, registry);
+      if (overrunReason) throw overrunError(overrunReason, limits);
       throw error;
-    } finally { this.#clones.delete(controller); }
+    } finally {
+      monitor?.stop();
+      this.#clones.delete(controller);
+    }
   }
 
   get(id) {

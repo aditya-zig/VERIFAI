@@ -4,608 +4,310 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta name="color-scheme" content="light" />
-  <meta name="description" content="Clone and inspect a public GitHub repository locally with VERIFAI." />
+  <meta name="description" content="Run a bounded local repository check and read the evidence it produced." />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2379AF96'/%3E%3C/svg%3E" />
-  <title>VERIFAI — Local repository check</title>
+  <title>Local repository check | VERIFAI</title>
   <style>
+/* VERIFAI app shell. The brand palette (warm ground, orange accent, green mark)
+   and the grotesk are kept. The screens follow the app-screen rules: flat
+   surfaces with a 1px edge, one filled action, honest data states. */
 :root {
   --bg: #fffaf5;
   --surface: #ffffff;
-  --surface-2: #f7f4ef;
-  --surface-3: #eee8e1;
+  --surface-2: #f4f1ec;
   --text: #2d2019;
-  --muted: #6f625b;
-  --muted-2: #9a8d85;
+  --muted: #5f534b;
+  --muted-2: #786c64;
   --border: #e5ded7;
   --border-strong: #cfc4ba;
+  --rule: #efeae4;
   --ink: #2d2019;
   --accent: #ff4f00;
-  --accent-dark: #e54400;
-  --accent-soft: #fff0e8;
-  --verified: #16803f;
+  --accent-dark: #c33d00;
+  --verified: #14713a;
   --verified-soft: #ebf8f0;
-  --failed: #c93b37;
+  --verified-edge: #caecd5;
+  --failed: #b32f2b;
   --failed-soft: #fff0ef;
-  --running: #2468d5;
+  --failed-edge: #f2cecb;
+  --running: #1c56b8;
   --running-soft: #eef5ff;
-  --warning: #a5680b;
+  --running-edge: #cadcff;
+  --warning: #8f5808;
   --warning-soft: #fff7e8;
-  --unknown: #667085;
+  --warning-edge: #f0debb;
+  --unknown: #5b6472;
   --unknown-soft: #f2f4f7;
-  --shadow-sm: 0 2px 0 rgba(45,32,25,.04), 0 4px 14px rgba(45,32,25,.05);
-  --shadow-md: 0 22px 60px rgba(45,32,25,.12), 0 6px 20px rgba(45,32,25,.06);
-  --shadow-hover: 0 24px 50px rgba(45,32,25,.14), 0 8px 18px rgba(45,32,25,.08);
-  --radius-sm: 8px;
-  --radius: 12px;
-  --radius-lg: 18px;
-  --max: 1240px;
-  --sidebar: 232px;
+  --unknown-edge: #e2e5ea;
+  --shadow-float: 0 18px 44px rgba(45,32,25,.16);
+  --radius-sm: 6px;
+  --radius: 10px;
+  --max: 1120px;
 }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
 body {
   margin: 0;
-  background:
-    radial-gradient(circle at 12% 8%, rgba(255,79,0,.07), transparent 28%),
-    linear-gradient(180deg, #fffdf9 0%, var(--bg) 46%, #fff 100%);
+  background: var(--bg);
   color: var(--text);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 a { color: inherit; text-decoration: none; }
 code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+h1, h2, h3, h4, p, ul, ol, dl, dd, figure { margin: 0; }
+ul, ol { padding: 0; list-style: none; }
+.fact dd, .lane-row, .event-row time { font-variant-numeric: tabular-nums; }
 
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
 .skip-link {
-  position: fixed; left: 16px; top: -48px; z-index: 1000;
-  padding: 10px 14px; border-radius: 8px; background: var(--ink); color: white;
+  position: fixed; left: max(16px, calc(50% - 560px)); top: -48px; z-index: 1000;
+  padding: 10px 14px; border-radius: 8px; background: var(--ink); color: #fff;
 }
 .skip-link:focus { top: 16px; }
-:focus-visible { outline: 3px solid rgba(37,99,235,.35); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--accent-dark); outline-offset: 2px; }
 
+/* Header */
 .app-header {
-  height: 64px; display: flex; align-items: center; border-bottom: 1px solid var(--border);
-  background: rgba(255,255,255,.94); position: sticky; top: 0; z-index: 20; backdrop-filter: blur(10px);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 20;
 }
-.header-inner { width: min(var(--max), calc(100% - 40px)); margin: 0 auto; display: flex; align-items: center; gap: 24px; }
+.header-inner {
+  width: min(var(--max), calc(100% - 48px)); margin: 0 auto; min-height: 60px;
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 10px 0;
+}
 .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 760; letter-spacing: -.02em; }
-.brand-mark { width: 30px; height: 30px; flex: 0 0 auto; border-radius: 8px; display: inline-block; background: #79af96; box-shadow: inset 0 0 0 1px rgba(45,32,25,.04); transition: transform .18s cubic-bezier(.2,.8,.2,1), opacity .18s ease; }
-.brand:hover .brand-mark { transform: scale(1.05); opacity: .92; }
-.header-nav { display: flex; gap: 22px; margin-left: auto; align-items: center; color: var(--muted); font-size: 14px; }
-.header-nav a,.header-nav button { position: relative; }
-.header-nav button { border:0; background:transparent; color:inherit; padding:0; font:inherit; cursor:pointer; }
-.header-nav a::after,.header-nav button::after { content: ''; position: absolute; left: 0; right: 100%; bottom: -7px; height: 2px; border-radius: 999px; background: var(--accent); transition: right .2s ease; }
-.header-nav a:hover,.header-nav button:hover,.header-nav button.active { color: var(--text); }
-.header-nav a:hover::after,.header-nav button:hover::after,.header-nav button.active::after { right: 0; }
-.app-header.scrolled { border-bottom-color:#d9d1c8; box-shadow:0 8px 26px rgba(45,32,25,.055); }
-.header-actions { display: flex; gap: 10px; align-items: center; }
-
-.btn {
-  border: 1px solid var(--border-strong); background: var(--surface); color: var(--text);
-  min-height: 42px; padding: 0 16px; border-radius: 9px; font-weight: 720; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  box-shadow: var(--shadow-sm); transition: border-color .18s ease, transform .18s cubic-bezier(.2,.8,.2,1), background .18s ease, box-shadow .18s ease;
+.brand-mark {
+  width: 26px; height: 26px; flex: 0 0 auto; border-radius: 7px; display: inline-block;
+  background: #79af96;
 }
-.btn:hover { border-color: #b7a99d; transform: translateY(-2px); box-shadow: 0 10px 20px rgba(45,32,25,.10); }
-.btn:active { transform: translateY(0) scale(.985); }
-.btn.primary { background: var(--accent); color: white; border-color: var(--accent); box-shadow: 0 8px 18px rgba(255,79,0,.20); }
-.btn.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); box-shadow: 0 12px 24px rgba(255,79,0,.28); }
-.btn.primary::after { content: '→'; display: inline-block; transition: transform .18s ease; }
-.btn.primary:hover::after { transform: translateX(3px); }
-.btn.blue { background: var(--accent); color: white; border-color: var(--accent); }
-.btn.ghost { background: transparent; box-shadow: none; border-color: transparent; color: var(--muted); }
-.btn.danger { color: var(--failed); }
-.btn.sm { min-height: 34px; padding: 0 11px; font-size: 13px; }
-.btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+.header-nav {
+  display: inline-flex; gap: 2px; padding: 3px; border-radius: 9px; background: var(--surface-2);
+  margin-left: auto;
+}
+.nav-link {
+  padding: 6px 12px; border: 1px solid transparent; border-radius: 7px;
+  font-size: 13px; font-weight: 640; color: var(--muted);
+  transition: background .16s ease, color .16s ease, border-color .16s ease;
+}
+.nav-link:hover { color: var(--text); }
+.nav-link.active { background: var(--surface); color: var(--text); border-color: var(--border); }
+.header-actions { display: flex; align-items: center; gap: 10px; }
+.scope-chip {
+  font-size: 12px; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 999px; padding: 3px 9px; white-space: nowrap;
+}
 
-.page { width: min(var(--max), calc(100% - 40px)); margin: 0 auto; padding: 36px 0 64px; }
-.page.narrow { max-width: 820px; }
-.page.compact { padding-top: 24px; }
-.eyebrow { color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-h1,h2,h3,p { margin-top: 0; }
-h1 { font-size: clamp(34px, 5vw, 62px); line-height: 1.02; letter-spacing: -.045em; margin-bottom: 18px; }
-h2 { font-size: 28px; line-height: 1.15; letter-spacing: -.025em; margin-bottom: 10px; }
-h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 8px; }
-.lede { color: var(--muted); font-size: 18px; max-width: 720px; }
+/* Page */
+.page { width: min(var(--max), calc(100% - 48px)); margin: 0 auto; padding: 30px 0 72px; }
+.page-head { max-width: 74ch; margin-bottom: 22px; }
+h1 { font-size: 30px; line-height: 1.15; letter-spacing: -.028em; margin: 6px 0 10px; }
+h2 { font-size: 19px; line-height: 1.25; letter-spacing: -.015em; }
+h3 { font-size: 16px; line-height: 1.3; }
+h4 { font-size: 13px; font-weight: 700; color: var(--muted-2); }
+.lede { color: var(--muted); font-size: 16px; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
 .tiny { font-size: 12px; }
-.section { margin-top: 28px; }
-.section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
-.actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.wrap-anywhere { overflow-wrap: anywhere; word-break: break-word; }
 
-.hero { min-height: 690px; display: grid; grid-template-columns: .9fr 1.1fr; gap: 54px; align-items: center; padding: 64px 0 80px; }
-.hero-copy { padding: 34px 0; }
-.hero-copy .lede { max-width: 650px; }
-.hero-actions { display: flex; gap: 10px; margin: 26px 0 14px; flex-wrap: wrap; }
-.hero-note { color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 8px; }
-.hero-preview { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-md); overflow: hidden; transform: rotate(.3deg); }
-.preview-bar { height: 42px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 7px; padding: 0 14px; background: #fbfcfd; }
-.dot { width: 8px; height: 8px; border-radius: 999px; background: #d3d8df; }
-.preview-body { padding: 22px; }
-.preview-requirement { border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; }
-.preview-chain { display: grid; gap: 8px; margin-top: 14px; }
-.chain-row { display: grid; grid-template-columns: 130px 1fr auto; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); }
-.chain-row:first-child { border-top: 0; }
-.chain-label { color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
-
-.cap-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); transition: transform .22s cubic-bezier(.2,.8,.2,1), border-color .22s ease, box-shadow .22s ease; }
-.card.pad { padding: 18px; }
-.card.pad-lg { padding: 24px; }
-.card.flat { box-shadow: none; }
-.card.hover:hover, .metric:hover, .result-row:hover, .plan-group:hover, .req-card:hover, .detect-item:hover { border-color: #c9bbb0; transform: translateY(-4px); box-shadow: var(--shadow-hover); }
-.card.hover .icon-box { transition: transform .22s ease, background .22s ease, color .22s ease; }
-.card.hover:hover .icon-box { transform: rotate(-4deg) scale(1.06); background: var(--accent-soft); color: var(--accent); }
-.repo-row { transition: background .18s ease, transform .18s ease; }
-.repo-row:hover { background: #fff8f2; transform: translateX(3px); }
-.side-link, .tab, .engine { transition: background .18s ease, color .18s ease, transform .18s ease, border-color .18s ease; }
-.side-link:hover { transform: translateX(2px); }
-.tab:hover { color: var(--text); background: #fff7f1; }
-.engine:hover { border-color: #c9bbb0; transform: translateY(-1px); }
-.icon-box { width: 34px; height: 34px; border-radius: 9px; background: var(--surface-2); display: grid; place-items: center; font-weight: 800; margin-bottom: 14px; }
-
-.status { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 4px 8px; font-size: 12px; line-height: 1; font-weight: 760; border: 1px solid transparent; white-space: nowrap; }
-.status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.status.verified { color: var(--verified); background: var(--verified-soft); border-color: #caecd5; }
-.status.failed { color: var(--failed); background: var(--failed-soft); border-color: #f2cecb; }
-.status.running { color: var(--running); background: var(--running-soft); border-color: #cadcff; }
-.status.warning { color: var(--warning); background: var(--warning-soft); border-color: #f0debb; }
-.status.unknown { color: var(--unknown); background: var(--unknown-soft); border-color: #e2e5ea; }
-
-/* Local result page: summary, section cards, machine evidence (adapted from PR #66 presentation) */
-.result-root { display: grid; gap: 16px; min-width: 0; }
-.result-summary { display: grid; gap: 12px; min-width: 0; justify-items: start; }
+/* Surfaces */
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  min-width: 0;
+}
+.pad { padding: 18px; }
+.section { margin-top: 14px; }
+.evidence-card { display: grid; gap: 10px; min-width: 0; }
+.evidence-card > h4 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.evidence-note { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.55; }
+.evidence-sub { margin: 2px 0 0; font-size: 12px; font-weight: 700; color: var(--muted-2); }
+.result-root { display: grid; gap: 14px; min-width: 0; }
+.result-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.result-head-text { min-width: 0; display: grid; gap: 6px; }
+.result-title { font-size: 20px; letter-spacing: -.02em; }
+.result-sub { color: var(--muted); font-size: 13px; }
+.result-lede { color: var(--muted); font-size: 14px; max-width: 78ch; }
 .result-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { display: inline-flex; align-items: baseline; gap: 5px; max-width: 100%; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); padding: 4px 10px; font-size: 12px; line-height: 1.35; color: var(--muted); }
-.chip b { color: var(--text); font-weight: 720; overflow-wrap: anywhere; }
-.chip.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11.5px; }
+.chip {
+  display: inline-flex; align-items: baseline; gap: 5px; max-width: 100%;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2);
+  padding: 3px 10px; font-size: 12px; line-height: 1.35; color: var(--muted);
+}
+.chip b { color: var(--text); font-weight: 700; overflow-wrap: anywhere; }
+.chip.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11.5px; } /* taste-skill-ignore: hashes, ids and commands stay monospace */
 
-.evidence-card { display: grid; gap: 12px; min-width: 0; }
-.evidence-card > .result-chips { justify-self: start; }
-.evidence-card > h4 { margin: 0; font-size: 13px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.evidence-note { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.55; }
-.evidence-sub { margin: 2px 0 0; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted-2); }
-
-.fact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 168px), 1fr)); gap: 8px; margin: 0; }
-.stage-facts { list-style: none; padding: 0; }
-.fact { min-width: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); padding: 8px 10px; }
-.fact dt { margin: 0 0 3px; font-size: 10.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--muted-2); }
-.fact dd { margin: 0; font-size: 13px; font-weight: 660; color: var(--text); overflow-wrap: anywhere; }
-.fact dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11.5px; font-weight: 600; }
-.fact.good { border-color: #caecd5; background: var(--verified-soft); }
-.fact.bad { border-color: #f2cecb; background: var(--failed-soft); }
-.fact.warn { border-color: #f0debb; background: var(--warning-soft); }
+/* Facts */
+.fact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 8px; margin: 0; }
+.fact { min-width: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); padding: 8px 10px; }
+.fact dt { margin: 0 0 3px; font-size: 11.5px; font-weight: 700; color: var(--muted-2); }
+.fact dd { margin: 0; font-size: 13px; font-weight: 640; color: var(--text); overflow-wrap: anywhere; }
+.fact dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11.5px; font-weight: 600; } /* taste-skill-ignore: hashes, ids and commands stay monospace */
+.fact.good { border-color: var(--verified-edge); background: var(--verified-soft); }
+.fact.bad { border-color: var(--failed-edge); background: var(--failed-soft); }
+.fact.warn { border-color: var(--warning-edge); background: var(--warning-soft); }
 .fact.good dt, .fact.good dd { color: var(--verified); }
 .fact.bad dt, .fact.bad dd { color: var(--failed); }
 .fact.warn dt, .fact.warn dd { color: var(--warning); }
+.stage-facts { gap: 8px; }
+.stage-facts .fact { background: var(--surface-2); }
+.stage-facts .fact strong { font-weight: 700; font-size: 13px; }
+.local-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.local-summary-grid > div { min-width: 0; border-top: 1px solid var(--rule); padding-top: 7px; }
+.local-summary-grid strong { font-size: 13px; font-weight: 680; overflow-wrap: anywhere; }
 
-.artifact-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.artifact-list li { min-width: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); padding: 8px 10px; }
-.artifact-list .artifact-name { font-weight: 700; font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
-
-@media(max-width:720px){
-  .fact-grid { grid-template-columns: 1fr; }
+/* Status pills */
+.status {
+  display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 3px 9px;
+  font-size: 12px; line-height: 1.3; font-weight: 720; border: 1px solid transparent; white-space: nowrap;
 }
+.status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+.status.verified { color: var(--verified); background: var(--verified-soft); border-color: var(--verified-edge); }
+.status.failed { color: var(--failed); background: var(--failed-soft); border-color: var(--failed-edge); }
+.status.running { color: var(--running); background: var(--running-soft); border-color: var(--running-edge); }
+.status.warning { color: var(--warning); background: var(--warning-soft); border-color: var(--warning-edge); }
+.status.unknown { color: var(--unknown); background: var(--unknown-soft); border-color: var(--unknown-edge); }
 
-/* Zapier-inspired interactive workflow canvas */
-.flow-shell { position: relative; min-height: 525px; border: 1px solid #d9cec4; border-radius: 22px; background:
-  linear-gradient(rgba(45,32,25,.045) 1px, transparent 1px),
-  linear-gradient(90deg, rgba(45,32,25,.045) 1px, transparent 1px),
-  #fff; background-size: 28px 28px; box-shadow: var(--shadow-md); overflow: hidden; isolation: isolate; }
-.flow-shell::before { content:''; position:absolute; inset:-25% auto auto -18%; width:330px; height:330px; border-radius:50%; background:rgba(255,79,0,.08); filter:blur(8px); z-index:-1; }
-.flow-topbar { position:absolute; inset:0 0 auto 0; height:52px; background:rgba(255,255,255,.92); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; padding:0 16px; z-index:5; backdrop-filter:blur(10px); }
-.flow-title { display:flex; align-items:center; gap:9px; font-size:12px; font-weight:800; letter-spacing:.02em; }
-.flow-live { display:inline-flex; align-items:center; gap:7px; color:var(--muted); font-size:11px; font-weight:700; }
-.flow-live-dot { width:8px; height:8px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 0 rgba(255,79,0,.35); animation:livePulse 1.8s ease-out infinite; }
-@keyframes livePulse { 0%{box-shadow:0 0 0 0 rgba(255,79,0,.35)} 70%{box-shadow:0 0 0 8px rgba(255,79,0,0)} 100%{box-shadow:0 0 0 0 rgba(255,79,0,0)} }
-.flow-canvas { position:absolute; inset:52px 0 0 0; }
-.flow-lines { position:absolute; inset:0; width:100%; height:100%; z-index:0; pointer-events:none; }
-.flow-line { fill:none; stroke:#b9aca2; stroke-width:1.7; stroke-linecap:round; stroke-dasharray:5 9; animation:flowDash 1.25s linear infinite; }
-.flow-line.hot { stroke:var(--accent); stroke-width:2; }
-@keyframes flowDash { to { stroke-dashoffset:-28; } }
-.flow-node { position:absolute; z-index:2; width:176px; min-height:74px; background:#fff; border:1px solid #d3c8bf; border-radius:12px; padding:12px 13px; box-shadow:0 8px 20px rgba(45,32,25,.07); transition: transform .24s cubic-bezier(.2,.8,.2,1), box-shadow .24s ease, border-color .24s ease; font:inherit; color:inherit; text-align:left; cursor:pointer; }
-.flow-node:hover { transform:translateY(-5px) scale(1.015); border-color:#9e8f84; box-shadow:0 18px 34px rgba(45,32,25,.14); z-index:4; }
-.flow-node::after { content:'Open ↗'; position:absolute; left:12px; bottom:-24px; opacity:0; color:var(--accent); font-size:10px; font-weight:800; transition:opacity .18s ease, transform .18s ease; transform:translateY(-3px); pointer-events:none; }
-.flow-node:hover::after,.flow-node:focus-visible::after { opacity:1; transform:none; }
-.flow-node.active { border-color:var(--accent); box-shadow:0 0 0 3px rgba(255,79,0,.13), 0 16px 32px rgba(45,32,25,.12); animation:nodeBreathe 1.15s ease both; }
-@keyframes nodeBreathe { 0%{transform:scale(.985)} 55%{transform:scale(1.025)} 100%{transform:scale(1)} }
-.flow-node .node-kicker { display:block; color:var(--muted); font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; }
-.flow-node .node-title { display:block; font-weight:800; font-size:13px; margin-top:3px; }
-.flow-node .node-meta { display:block; color:var(--muted); font-size:11px; margin-top:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.flow-node .node-icon { position:absolute; right:10px; top:10px; width:23px; height:23px; border-radius:7px; display:grid; place-items:center; background:var(--surface-2); font-size:11px; font-weight:900; }
-.flow-node.active .node-icon { background:var(--accent); color:#fff; }
-.flow-node.repo { left:50%; top:24px; transform:translateX(-50%); }
-.flow-node.repo:hover { transform:translateX(-50%) translateY(-5px) scale(1.015); }
-.flow-node.repo.active { transform:translateX(-50%) scale(1.02); }
-.flow-node.requirements { left:7%; top:142px; }
-.flow-node.sandbox { right:7%; top:142px; }
-.flow-node.experiment { left:50%; top:250px; transform:translateX(-50%); }
-.flow-node.experiment:hover { transform:translateX(-50%) translateY(-5px) scale(1.015); }
-.flow-node.experiment.active { transform:translateX(-50%) scale(1.02); }
-.flow-node.failure { left:8%; top:365px; }
-.flow-node.repair { right:8%; top:365px; }
-.flow-mini-loader { width:14px; height:14px; border-radius:50%; border:2px solid #f1c7b4; border-top-color:var(--accent); animation:spin .8s linear infinite; }
-.flow-caption { position:absolute; left:50%; bottom:10px; transform:translateX(-50%); background:#2d2019; color:#fff; border-radius:999px; padding:7px 11px; font-size:11px; font-weight:750; box-shadow:0 8px 20px rgba(45,32,25,.16); z-index:5; min-width:210px; text-align:center; }
-.flow-hint { position:absolute; right:14px; bottom:14px; color:var(--muted); font-size:10px; z-index:4; }
-.route-enter { animation:routeIn .28s cubic-bezier(.2,.8,.2,1) both; }
-@keyframes routeIn { from{opacity:.35; transform:translateY(5px)} to{opacity:1; transform:none} }
-.metric,.result-row,.plan-group,.req-card,.detect-item { transition:transform .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s ease, border-color .22s ease; }
-.progress-fill { background: linear-gradient(90deg, var(--accent), #ff8a4c); }
-.auth-wrap { min-height: calc(100vh - 64px); display: grid; place-items: center; padding: 30px 20px; }
-.auth-card { width: min(430px, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 30px; box-shadow: var(--shadow-md); }
-.auth-card .brand { margin-bottom: 28px; }
-.auth-buttons { display: grid; gap: 10px; margin: 22px 0; }
-.divider { display: flex; align-items: center; gap: 12px; color: var(--muted-2); font-size: 12px; margin: 18px 0; }
-.divider::before,.divider::after { content: ''; height: 1px; flex: 1; background: var(--border); }
+/* Buttons */
+.btn {
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--text);
+  min-height: 38px; padding: 0 15px; border-radius: 8px; font-weight: 700; font-size: 14px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  transition: border-color .16s ease, background .16s ease, color .16s ease;
+}
+.btn:hover { border-color: #b7a99d; background: #fffdfa; }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--accent-dark); color: #fff; border-color: var(--accent-dark); }
+.btn.primary:hover { background: #a83200; border-color: #a83200; }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn.sm { min-height: 32px; padding: 0 11px; font-size: 13px; }
+.btn:disabled { opacity: .55; cursor: not-allowed; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 
-.workspace { display: grid; grid-template-columns: var(--sidebar) 1fr; min-height: calc(100vh - 64px); }
-.sidebar { border-right: 1px solid var(--border); background: var(--surface); padding: 20px 14px; }
-.side-title { padding: 0 10px 12px; color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
-.side-link { width: 100%; border: 0; background: transparent; color: var(--muted); text-align: left; padding: 9px 10px; border-radius: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.side-link:hover,.side-link.active { background: var(--surface-2); color: var(--text); }
-.workspace-main { min-width: 0; }
-.workspace .page { width: min(1040px, calc(100% - 48px)); }
+/* Forms */
+.form { display: grid; gap: 16px; }
+.field { display: grid; gap: 6px; }
+.field-row { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
+.label { font-weight: 700; }
+.help { color: var(--muted); font-size: 13px; max-width: 78ch; }
+.input, .textarea, .select {
+  width: 100%; border: 1px solid var(--border-strong); background: var(--surface);
+  border-radius: 8px; color: var(--text); padding: 0 12px;
+}
+.input, .select { height: 40px; }
+.textarea { min-height: 110px; padding: 10px 12px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12.5px; } /* taste-skill-ignore: hashes, ids and commands stay monospace */
+.form-note { color: var(--muted); font-size: 13px; }
+.form-limits { color: var(--muted); font-size: 13px; border-top: 1px solid var(--rule); padding-top: 10px; }
 
-.empty-state { min-height: 380px; display: grid; place-items: center; text-align: center; border: 1px dashed var(--border-strong); border-radius: 14px; background: linear-gradient(180deg,#fff,#fbfcfd); padding: 48px; }
-.empty-state .icon-box { margin: 0 auto 16px; width: 46px; height: 46px; }
+/* Scope panels */
+.scope-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 16px 0; }
+.scope { display: grid; gap: 8px; align-content: start; }
+.scope h2 { font-size: 14px; }
+.scope-list { display: grid; gap: 7px; }
+.scope-list li { position: relative; padding-left: 16px; color: var(--muted); font-size: 13px; }
+.scope-list li::before { content: ''; position: absolute; left: 0; top: 8px; width: 6px; height: 1px; background: var(--border-strong); }
+.scope-list.neg li::before { background: var(--failed-edge); }
 
-.stepper { display: grid; grid-template-columns: repeat(5,1fr); gap: 8px; margin: 18px 0 28px; }
-.step { position: relative; padding-top: 12px; color: var(--muted); font-size: 12px; font-weight: 700; }
-.step::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; border-radius: 999px; background: var(--surface-3); }
-.step.active { color: var(--text); }
-.step.done { color: var(--verified); }
-.step.active::before { background: var(--accent); }
-.step.done::before { background: var(--verified); }
+/* Result blocks */
+.artifact-list { display: grid; gap: 6px; }
+.artifact-list li { min-width: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); padding: 7px 10px; }
+.artifact-list .artifact-name { font-weight: 700; font-size: 13px; overflow-wrap: anywhere; }
+.local-log-block { max-height: 240px; overflow: auto; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+details > summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 0; }
+details > summary:hover { color: var(--text); }
+.inline-link { color: var(--accent-dark); text-decoration: underline; text-underline-offset: 2px; }
 
-.search { width: 100%; height: 44px; border: 1px solid var(--border-strong); border-radius: 9px; padding: 0 14px; background: white; color: var(--text); }
-.repo-row { display: grid; grid-template-columns: 1fr auto; gap: 14px; padding: 18px 20px; border-top: 1px solid var(--border); align-items: center; }
-.repo-row:first-child { border-top: 0; }
-.repo-name { font-weight: 760; }
-.repo-meta { display: flex; gap: 14px; color: var(--muted); font-size: 13px; margin-top: 5px; }
-
-.detect-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 12px; }
-.detect-item { padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: #fff; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.detect-label { color: var(--muted); font-size: 12px; margin-bottom: 3px; }
-.detect-value { font-weight: 700; }
-.check { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; color: var(--verified); background: var(--verified-soft); font-weight: 900; }
-
-.form-grid { display: grid; gap: 18px; }
-.form-row { display: grid; grid-template-columns: 180px 1fr; gap: 20px; align-items: start; padding: 18px 0; border-top: 1px solid var(--border); }
-.form-row:first-child { border-top: 0; padding-top: 0; }
-.label { font-weight: 720; }
-.help { color: var(--muted); font-size: 13px; margin-top: 3px; }
-.input,.textarea,.select { width: 100%; border: 1px solid var(--border-strong); background: white; border-radius: 9px; color: var(--text); }
-.input,.select { height: 42px; padding: 0 12px; }
-.textarea { min-height: 220px; resize: vertical; padding: 12px; }
-.secret-list { overflow: hidden; border: 1px solid var(--border); border-radius: 10px; }
-.secret-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--border); }
-.secret-row:first-child { border-top: 0; }
-.secret-key { font-family: ui-monospace,monospace; font-size: 13px; }
-.secret-value { color: var(--muted); letter-spacing: .12em; }
-
-.req-list { display: grid; gap: 12px; }
-.req-card { padding: 18px; border: 1px solid var(--border); border-radius: 11px; background: white; }
-.req-top { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
-.req-id { font-size: 12px; font-weight: 850; color: var(--accent); letter-spacing: .03em; }
-.tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
-.tag { display: inline-flex; padding: 4px 7px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--border); color: var(--muted); font-size: 11px; font-weight: 720; }
-
-.plan-group { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: white; margin-top: 14px; }
-.plan-head { padding: 16px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.experiment-list { counter-reset: experiment; padding: 8px 18px 14px; margin: 0; list-style: none; }
-.experiment-list li { counter-increment: experiment; display: grid; grid-template-columns: 28px 1fr; gap: 8px; padding: 9px 0; color: #303846; }
-.experiment-list li::before { content: counter(experiment); width: 22px; height: 22px; border-radius: 6px; background: var(--surface-2); display: grid; place-items: center; font-size: 11px; font-weight: 800; color: var(--muted); }
-.engine-row { display: flex; gap: 8px; flex-wrap: wrap; padding: 0 18px 18px; }
-.engine { border: 1px solid var(--border); border-radius: 999px; padding: 6px 9px; background: #fff; font-size: 12px; color: var(--muted); }
-
-.lab { width: min(1480px, calc(100% - 28px)); margin: 0 auto; padding: 20px 0 36px; }
-.lab-grid { display: grid; grid-template-columns: 245px minmax(420px,1fr) 330px; gap: 12px; align-items: start; }
-.panel { background: white; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; min-width: 0; }
-.panel-head { padding: 14px 15px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.panel-title { font-size: 13px; font-weight: 800; }
-.panel-body { padding: 14px 15px; }
-.lab-req { padding: 11px; border-radius: 8px; display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-bottom: 6px; color: var(--muted); }
-.lab-req.active { background: var(--failed-soft); color: var(--text); }
-.timeline { display: grid; }
-.timeline-row { display: grid; grid-template-columns: 78px 18px 1fr; gap: 8px; align-items: start; padding: 9px 0; border-bottom: 1px solid var(--border); animation: rowIn .22s ease both; animation-delay: calc(var(--i) * 55ms); }
-.timeline-row:last-child { border-bottom: 0; }
-.time { font-family: ui-monospace,monospace; font-size: 12px; color: var(--muted); }
-.event-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border-strong); margin-top: 7px; }
-.event-dot.done { background: var(--verified); }
-.event-dot.fail { background: var(--failed); }
-.event-dot.warn { background: var(--warning); }
-.event-dot.running { background: var(--running); box-shadow: 0 0 0 4px var(--running-soft); }
-@keyframes rowIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
-.evidence-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
-.desktop { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-top: 12px; background: #f8fafc; }
-.desktop-top { height: 34px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 5px; padding: 0 10px; background: white; }
-.desktop-body { padding: 18px; min-height: 172px; display: grid; place-items: center; }
-.checkout { width: min(320px,100%); background: white; border: 1px solid var(--border); border-radius: 10px; padding: 14px; box-shadow: var(--shadow-sm); }
-.checkout-line { height: 9px; border-radius: 999px; background: var(--surface-3); margin: 8px 0; }
-.checkout-line.short { width: 62%; }
-.spinner { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #dbe3ec; border-top-color: var(--failed); animation: spin 1s linear infinite; margin: 18px auto 6px; }
+/* Empty, error and busy states */
+.empty-state {
+  display: grid; gap: 6px; border: 1px dashed var(--border-strong); border-radius: var(--radius);
+  background: var(--surface); padding: 22px;
+}
+.empty-title { font-weight: 700; }
+.empty-note { color: var(--muted); font-size: 13px; max-width: 70ch; }
+.error-block { border-color: var(--failed-edge); background: var(--failed-soft); display: grid; gap: 8px; }
+.error-title { font-size: 16px; font-weight: 700; color: var(--failed); }
+.error-text { font-size: 14px; color: var(--text); overflow-wrap: anywhere; }
+.spinner-inline {
+  display: inline-block; width: 11px; height: 11px; border-radius: 50%;
+  border: 1.5px solid var(--running-edge); border-top-color: var(--running);
+  animation: spin .8s linear infinite; vertical-align: -1px;
+}
 @keyframes spin { to { transform: rotate(360deg); } }
-.engine-list { display: grid; gap: 8px; }
-.engine-status { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
-.engine-status:last-child { border-bottom: 0; }
+.busy-row { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
 
-.summary-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin: 20px 0; }
-.metric { padding: 18px; background: white; border: 1px solid var(--border); border-radius: 11px; }
-.metric strong { display: block; font-size: 26px; letter-spacing: -.03em; margin-top: 4px; }
-.result-section { margin-top: 22px; }
-.result-row { padding: 18px; border: 1px solid var(--border); background: white; border-radius: 11px; margin-top: 10px; }
-.result-row.failed { border-left: 4px solid var(--failed); }
-.result-row.verified { border-left: 4px solid var(--verified); }
-.result-row.unknown { border-left: 4px solid var(--unknown); }
-.result-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
-.local-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
-.local-summary-grid > div { min-width: 0; }
-#localRepoResult, #localRepoResult code, #localRepoResult pre, #localFindingDescription, #localProofArtifacts code, .wrap-anywhere { overflow-wrap: anywhere; word-break: break-word; max-width: 100%; }
-#localRepoResult pre { overflow-x: auto; white-space: pre-wrap; }
-#localRepoResult .status { max-width: 100%; white-space: normal; overflow-wrap: anywhere; line-height: 1.3; }
-#localRepoResult a { overflow-wrap: anywhere; word-break: break-all; }
-.local-log-block { max-height: 220px; overflow: auto; }
+/* Deep audit lanes */
+.observation-list { display: grid; gap: 8px; }
+.observation { border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); padding: 10px 12px; display: grid; gap: 4px; }
+.observation-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.observation-check { font-weight: 700; font-size: 12.5px; }
+.lane-list { border-top: 1px solid var(--border); }
+.lane-row {
+  display: grid; grid-template-columns: 150px 128px 1fr; gap: 12px; align-items: baseline;
+  padding: 10px 0; border-bottom: 1px solid var(--rule);
+}
+.lane-name { font-weight: 660; font-size: 13.5px; }
+.lane-meta { color: var(--muted); font-size: 12.5px; }
+.lane-reason { color: var(--muted); font-size: 13px; min-width: 0; }
+.lane-empty { color: var(--muted); font-size: 13px; padding: 10px 0; }
+.finding-list { display: grid; gap: 10px; }
+.finding { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); padding: 12px 14px; display: grid; gap: 6px; }
+.finding-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.finding-summary { font-weight: 660; font-size: 14px; }
+.event-list { display: grid; gap: 6px; }
+.event-row { display: grid; grid-template-columns: 118px 1fr; gap: 10px; font-size: 12.5px; color: var(--muted); }
+.event-row time { color: var(--muted-2); white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11.5px; } /* taste-skill-ignore: hashes, ids and commands stay monospace */
+.steer-row { display: grid; gap: 8px; }
+.human-approval { display: grid; gap: 8px; border-top: 1px solid var(--rule); padding-top: 12px; }
+.failure-block { display: grid; gap: 4px; border-left: 3px solid var(--failed); padding: 4px 0 4px 10px; }
+.human-approval h5 { font-size: 13px; font-weight: 700; }
+.check-row { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--text); cursor: pointer; }
+.check-row input { width: 16px; height: 16px; margin-top: 2px; flex: 0 0 auto; }
 
-.issue-header { display: flex; justify-content: space-between; gap: 18px; align-items: start; margin-bottom: 20px; }
-.issue-meta { display: flex; flex-wrap: wrap; gap: 8px 20px; color: var(--muted); font-size: 13px; }
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); overflow-x: auto; padding: 0 2px; }
-.tab { border: 0; background: transparent; padding: 10px 11px; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; }
-.tab.active { color: var(--text); border-bottom-color: var(--ink); font-weight: 700; }
-.evidence-view { padding: 20px 0; }
-.evidence-two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.callout { padding: 14px; border-radius: 10px; border: 1px solid var(--border); background: white; }
-.callout.fail { background: var(--failed-soft); border-color: #f1cfcc; }
-.callout.ok { background: var(--verified-soft); border-color: #ccebd5; }
-.steps { margin: 0; padding-left: 22px; }
-.steps li { padding: 4px 0; }
-.investigation { display: grid; gap: 10px; }
-.investigation-row { display: grid; grid-template-columns: 110px 1fr; gap: 12px; padding: 14px; background: white; border: 1px solid var(--border); border-radius: 10px; }
-.investigation-label { font-size: 11px; font-weight: 850; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
-.investigation-label.confirmed { color: var(--verified); }
-.code-block { background: #0e1420; color: #e7edf7; border-radius: 12px; padding: 18px; overflow: auto; font-size: 13px; line-height: 1.7; border: 1px solid #1a2332; }
-.diff-add { color: #85e89d; display: block; }
-.diff-neutral { color: #c8d1dc; display: block; }
-.diff-remove { color: #ff8a85; display: block; }
-.repair-layout { display: grid; grid-template-columns: 1.2fr .8fr; gap: 16px; }
-.safety-list { display: grid; gap: 9px; }
-.safety-item { display: flex; gap: 9px; align-items: flex-start; }
-
-.progress-list { display: grid; gap: 12px; }
-.progress-row { padding: 15px 16px; border: 1px solid var(--border); background: white; border-radius: 10px; }
-.progress-top { display: flex; justify-content: space-between; gap: 16px; }
-.progress-bar { height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; margin-top: 10px; }
-.progress-fill { height: 100%; background: var(--verified); border-radius: inherit; animation: fill 1.15s ease both; }
-@keyframes fill { from { width: 0 !important; } }
-
-.verified-hero { text-align: center; padding: 48px 20px 32px; }
-.verified-seal { width: 68px; height: 68px; border-radius: 50%; display: grid; place-items: center; margin: 0 auto 16px; background: var(--verified-soft); color: var(--verified); font-size: 30px; font-weight: 900; border: 1px solid #caecd5; }
-.before-after { display: grid; grid-template-columns: 1fr 36px 1fr; gap: 12px; align-items: stretch; margin: 24px 0; }
-.ba-card { padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: white; text-align: left; }
-.ba-card.fail { border-color: #f1cfcc; background: var(--failed-soft); }
-.ba-card.ok { border-color: #caecd5; background: var(--verified-soft); }
-.ba-arrow { display: grid; place-items: center; color: var(--muted); font-size: 24px; }
-
-.project-head { display: flex; align-items: start; justify-content: space-between; gap: 20px; }
-.project-meta { display: flex; gap: 10px 18px; flex-wrap: wrap; color: var(--muted); margin-top: 7px; }
-.activity { display: grid; gap: 0; }
-.activity-row { display: grid; grid-template-columns: 32px 1fr auto; gap: 10px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
-.activity-row:last-child { border-bottom: 0; }
-.activity-icon { width: 28px; height: 28px; border-radius: 8px; background: var(--surface-2); display: grid; place-items: center; font-size: 12px; }
-.history-row { display: grid; grid-template-columns: 120px 1fr auto; gap: 12px; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--border); }
-.history-row:last-child { border-bottom: 0; }
-
-.kicker-strip { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: white; padding: 18px 0; }
-.kicker-inner { width: min(var(--max), calc(100% - 40px)); margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
-.demo-steps { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; overflow-x: auto; }
-.demo-step { white-space: nowrap; display: flex; align-items: center; gap: 8px; }
-.demo-step:not(:last-child)::after { content: '→'; color: var(--muted-2); }
-
-.toast { position: fixed; right: 20px; bottom: 20px; background: var(--ink); color: white; border-radius: 10px; padding: 12px 14px; box-shadow: var(--shadow-md); opacity: 0; transform: translateY(8px); pointer-events: none; transition: .2s ease; z-index: 100; max-width: 340px; }
+/* Toast */
+.toast {
+  position: fixed; right: 20px; bottom: 20px; background: var(--ink); color: #fff;
+  border-radius: 8px; padding: 11px 14px; box-shadow: var(--shadow-float); /* taste-skill-ignore: the toast floats above the page */
+  opacity: 0; transform: translateY(8px); pointer-events: none; transition: .2s ease;
+  z-index: 100; max-width: 340px;
+}
 .toast.show { opacity: 1; transform: none; }
 
-@media (max-width: 1100px) {
-  .hero { grid-template-columns: 1fr; gap: 20px; }
-  .hero-preview,.flow-shell { max-width: 780px; }
-  .lab-grid { grid-template-columns: 210px 1fr; }
-  .lab-grid > .panel:last-child { grid-column: 1 / -1; }
-  .repair-layout { grid-template-columns: 1fr; }
-  .workspace { grid-template-columns: 190px 1fr; }
+@media (max-width: 860px) {
+  .scope-grid { grid-template-columns: 1fr; }
+  .local-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lane-row { grid-template-columns: 1fr; gap: 4px; }
 }
-
-@media (max-width: 900px) {
-  .header-nav { display: none; }
-  .cap-grid,.summary-grid,.detect-grid { grid-template-columns: 1fr; }
-  .workspace { display: block; }
-  .sidebar { display: flex; overflow-x: auto; gap: 4px; border-right: 0; border-bottom: 1px solid var(--border); padding: 10px; }
-  .side-title { display: none; }
-  .side-link { width: auto; white-space: nowrap; }
-  .lab-grid { grid-template-columns: 1fr; }
-  .lab-grid > .panel:last-child { grid-column: auto; }
-  .form-row { grid-template-columns: 1fr; gap: 8px; }
-  .evidence-two { grid-template-columns: 1fr; }
-  .before-after { grid-template-columns: 1fr; }
-  .ba-arrow { transform: rotate(90deg); }
-  .secret-row { grid-template-columns: 1fr auto; }
-  .secret-value { grid-column: 1 / -1; }
-}
-
 @media (max-width: 640px) {
-  .page,.header-inner,.kicker-inner { width: min(100% - 24px, var(--max)); }
-  .page { padding-top: 24px; }
-  h1 { font-size: 40px; }
-  .hero { min-height: 0; padding-top: 28px; }
-  .header-actions .btn:not(.primary) { display: none; }
-  .hero-preview { transform: none; }
-  .flow-shell { min-height: 650px; }
-  .flow-node { width: calc(100% - 36px); left:18px !important; right:auto !important; transform:none !important; }
-  .flow-node.repo { top:26px; }
-  .flow-node.requirements { top:126px; }
-  .flow-node.sandbox { top:226px; }
-  .flow-node.experiment { top:326px; }
-  .flow-node.failure { top:426px; }
-  .flow-node.repair { top:526px; }
-  .flow-lines { display:none; }
-  .flow-caption { display:none; }
-  .chain-row { grid-template-columns: 1fr auto; }
-  .chain-label { grid-column: 1 / -1; }
-  .stepper { grid-template-columns: 1fr; gap: 5px; }
-  .step { padding: 8px 10px 8px 16px; background: white; border: 1px solid var(--border); border-radius: 8px; }
-  .step::before { top: 0; bottom: 0; left: 0; width: 4px; height: auto; right: auto; }
-  .issue-header,.project-head,.result-head { display: grid; }
-  .repo-row { grid-template-columns: 1fr; }
-  .kicker-inner { display: grid; }
-  .workspace .page { width: calc(100% - 24px); }
-  .lab { width: calc(100% - 16px); }
+  .page, .header-inner { width: calc(100% - 32px); }
+  .header-inner { padding: 10px 0; }
+  .brand { order: 1; }
+  .header-actions { order: 2; margin-left: auto; }
+  .header-nav { order: 3; margin-left: 0; width: 100%; }
+  .nav-link { flex: 1 1 0; text-align: center; }
+  .fact-grid { grid-template-columns: 1fr; }
+  .result-head { display: grid; }
+  h1 { font-size: 24px; }
+  /* the job first: the input and the start action sit above the scope detail */
+  .page { display: flex; flex-direction: column; gap: 16px; }
+  .page > * { margin-top: 0; margin-bottom: 0; }
 }
-
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .001ms !important; }
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
 }
-
-/* --- Marketing UX upgrade: Zapier-inspired editorial rhythm, original VERIFAI visuals --- */
-.marketing-page { padding-top: 0; }
-.marketing-hero { text-align:center; padding:72px 0 44px; max-width:980px; margin:0 auto; }
-.marketing-hero .eyebrow { margin-bottom:14px; }
-.marketing-hero h1 { font-size:clamp(52px,7vw,92px); line-height:.94; letter-spacing:-.065em; margin:0 auto 22px; max-width:980px; }
-.marketing-hero .lede { max-width:780px; margin:0 auto; font-size:19px; }
-.marketing-hero .hero-actions { justify-content:center; margin-top:28px; }
-.hero-proof { display:flex; justify-content:center; gap:18px; flex-wrap:wrap; color:var(--muted); font-size:12px; margin-top:18px; }
-.hero-proof span { display:inline-flex; align-items:center; gap:7px; }
-.hero-proof i { width:7px; height:7px; border-radius:50%; background:var(--verified); }
-
-.particle-band { width:min(980px,100%); height:260px; margin:34px auto 0; border-radius:22px; overflow:hidden; position:relative; background:radial-gradient(circle at 50% 35%, rgba(255,79,0,.08), transparent 30%), linear-gradient(135deg,#f7f9ff 0%,#fffaf5 48%,#f2f6ff 100%); border:1px solid #d9dfe9; box-shadow:0 24px 58px rgba(45,32,25,.10); }
-.particle-band::after { content:'Hover over VERIFAI'; position:absolute; left:50%; bottom:18px; transform:translateX(-50%); color:#7a6f68; font-size:11px; z-index:2; pointer-events:none; white-space:nowrap; }
-.particle-text { position:relative; display:block; width:100%; height:100%; min-height:240px; overflow:hidden; touch-action:none; isolation:isolate; }
-.particle-text__canvas { position:absolute; inset:0; display:block; width:100%; height:100%; }
-.particle-text__sr { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
-
-.marketing-block { margin-top:92px; }
-.marketing-kicker { max-width:760px; margin-bottom:26px; }
-.marketing-kicker.centered { text-align:center; margin-inline:auto; }
-.marketing-kicker h2 { font-size:clamp(36px,4.6vw,60px); line-height:1; letter-spacing:-.045em; margin:8px 0 12px; }
-.marketing-kicker p { color:var(--muted); font-size:16px; }
-
-.product-demo-tabs { display:flex; width:max-content; max-width:100%; overflow:auto; margin:0 auto; border:1px solid var(--border); border-bottom:0; background:#fff; }
-.product-demo-tabs button { border:0; border-right:1px solid var(--border); background:#fff; padding:11px 18px; font-size:12px; color:var(--muted); min-width:max-content; }
-.product-demo-tabs button:last-child { border-right:0; }
-.product-demo-tabs button.active { color:var(--text); font-weight:800; box-shadow:inset 0 -2px 0 var(--accent); }
-.demo-video-shell { width:min(1020px,100%); margin:0 auto; background:#dfe6f0; border:1px solid #ccd2da; padding:56px 64px; position:relative; box-shadow:0 28px 70px rgba(45,32,25,.10); }
-.demo-video-frame { position:relative; border:1px solid #473a33; border-radius:4px; overflow:hidden; background:#111; box-shadow:0 22px 55px rgba(27,21,18,.23); aspect-ratio:16/9; }
-.demo-video-frame video { width:100%; height:100%; object-fit:cover; display:block; }
-.demo-play { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:76px; height:76px; border:0; border-radius:50%; background:rgba(45,32,25,.72); color:white; font-size:26px; display:grid; place-items:center; backdrop-filter:blur(6px); box-shadow:0 12px 28px rgba(0,0,0,.18); transition:.2s ease; }
-.demo-video-frame:hover .demo-play { transform:translate(-50%,-50%) scale(1.06); background:rgba(255,79,0,.90); }
-.demo-video-frame.playing .demo-play { opacity:0; pointer-events:none; }
-.demo-video-frame:hover.playing .demo-play { opacity:.75; pointer-events:auto; }
-.demo-video-caption { display:flex; justify-content:space-between; gap:20px; width:min(1020px,100%); margin:12px auto 0; font-size:12px; color:var(--muted); }
-
-.editorial-grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
-.editorial-card { background:#fbf8f3; border:1px solid var(--border); padding:26px; min-height:520px; display:flex; flex-direction:column; transition:transform .25s cubic-bezier(.2,.8,.2,1), box-shadow .25s ease, border-color .25s ease; overflow:hidden; }
-.editorial-card:hover { transform:translateY(-6px); box-shadow:var(--shadow-hover); border-color:#c9bbb0; }
-.editorial-card .orange-square { width:8px; height:8px; background:var(--accent); margin-bottom:18px; }
-.editorial-card h3 { font-family:Georgia, 'Times New Roman', serif; font-size:29px; line-height:1.08; font-weight:500; margin-bottom:10px; letter-spacing:-.025em; }
-.editorial-card > p { color:var(--muted); max-width:560px; font-size:13px; }
-.card-media { margin-top:auto; min-height:300px; border:1px solid #d7cec6; overflow:hidden; position:relative; background:linear-gradient(180deg,#bdc8c7,#e4c399 70%,#d3aa70); }
-.card-media.blue { background:linear-gradient(180deg,#b7c7d9,#e9e6d6 58%,#d1b38a); }
-.card-media.teal { background:linear-gradient(180deg,#aebfc1,#d6d3bc 60%,#d4b57a); }
-.card-media.ink { background:linear-gradient(180deg,#edeae3,#cdc8bd 55%,#a8a18f); }
-.media-window { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:72%; background:rgba(255,255,255,.90); border:1px solid rgba(90,75,64,.22); border-radius:12px; box-shadow:0 16px 34px rgba(45,32,25,.18); padding:16px; }
-.media-window .mini-head { display:flex; justify-content:space-between; font-size:10px; color:var(--muted); margin-bottom:14px; }
-.media-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 0; border-top:1px solid rgba(90,75,64,.12); font-size:11px; }
-.media-row:first-of-type { border-top:0; }
-.media-row b { font-size:11px; }
-.media-pill { padding:4px 7px; border-radius:999px; background:#fff; border:1px solid #ddd5cc; font-size:9px; font-weight:800; }
-.media-pill.live { color:var(--running); }
-.media-pill.fail { color:var(--failed); }
-.media-pill.ok { color:var(--verified); }
-.media-cursor { position:absolute; width:17px; height:22px; background:linear-gradient(145deg,#fff 0 48%,#2d2019 49% 54%,transparent 55%); clip-path:polygon(0 0,0 100%,36% 69%,54% 100%,68% 92%,50% 64%,100% 62%); filter:drop-shadow(0 1px 1px rgba(0,0,0,.35)); left:18%; top:75%; will-change:transform,left,top; }
-.card-media.motion-on .media-cursor { animation:cardCursor 5s ease-in-out infinite; }
-@keyframes cardCursor { 0%,12%{left:18%;top:75%} 36%,48%{left:62%;top:34%} 70%,82%{left:76%;top:70%} 100%{left:18%;top:75%} }
-.media-scan { position:absolute; left:8%; right:8%; height:2px; top:18%; background:linear-gradient(90deg,transparent,var(--accent),transparent); will-change:top; }
-.card-media.motion-on .media-scan { animation:mediaScan 2.3s ease-in-out infinite; }
-@keyframes mediaScan { 0%,100%{top:18%} 50%{top:82%} }
-.media-bars { height:118px; display:flex; align-items:flex-end; gap:7px; padding:18px; }
-.media-bars i { flex:1; min-width:6px; background:var(--accent); border-radius:5px 5px 0 0; height:var(--h); transform-origin:bottom; }
-.card-media.motion-on .media-bars i { animation:barBeat 1.5s ease-in-out infinite; animation-delay:var(--d); }
-@keyframes barBeat { 0%,100%{transform:scaleY(.78)} 50%{transform:scaleY(1.08)} }
-.media-diff { font-family:ui-monospace,monospace; font-size:10px; line-height:1.7; background:#201a17; color:#eee6df; border-radius:10px; padding:14px; }
-.media-diff .minus { color:#ff9b8f; }.media-diff .plus { color:#92e4a7; }
-.verified-stamp { position:absolute; right:18px; bottom:18px; padding:8px 10px; background:#ebf8f0; color:var(--verified); border:1px solid #bfe6ca; border-radius:999px; font-size:10px; font-weight:900; }
-.card-media.motion-on .verified-stamp { animation:stamp 2.4s ease-in-out infinite; }
-@keyframes stamp { 0%,65%{transform:scale(.92);opacity:.45} 80%,100%{transform:scale(1);opacity:1} }
-.latency-meter { width:148px; height:148px; border-radius:50%; margin:12px auto; position:relative; display:grid; place-items:center; }
-.latency-meter::before { content:''; position:absolute; inset:0; border-radius:50%; border:18px solid rgba(255,255,255,.64); border-top-color:var(--accent); box-sizing:border-box; will-change:transform; }
-.card-media.motion-on .latency-meter::before { animation:meterSpin 3s ease-in-out infinite; }
-.latency-meter::after { content:'+8,000ms'; position:relative; z-index:1; display:block; font-weight:900; font-size:14px; color:var(--failed); }
-@keyframes meterSpin { 0%,20%{transform:rotate(0deg)} 55%,100%{transform:rotate(270deg)} }
-
-.metric-strip { display:grid; grid-template-columns:repeat(4,1fr); margin-top:22px; border:1px solid var(--border); background:#fff; }
-.metric-strip > div { padding:24px; text-align:center; border-right:1px solid var(--border); }
-.metric-strip > div:last-child { border-right:0; }
-.metric-strip strong { display:block; font-size:34px; letter-spacing:-.04em; }
-.metric-strip span { color:var(--muted); font-size:11px; }
-
-.flow-feature { margin-top:100px; padding-top:18px; }
-.flow-feature .flow-shell { max-width:960px; margin:26px auto 0; }
-.flow-feature .marketing-kicker { margin-inline:auto; text-align:center; }
-
-.how-pro { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-top:28px; }
-.how-pro article { border-top:2px solid var(--border-strong); padding:22px 18px; transition:.22s ease; }
-.how-pro article:hover { border-color:var(--accent); transform:translateY(-3px); }
-.how-pro strong { display:block; color:var(--accent); font-size:12px; margin-bottom:18px; }
-.how-pro h3 { font-size:21px; }
-.how-pro p { color:var(--muted); font-size:12px; }
-.landing-cta { margin:100px 0 20px; padding:74px 30px; border-radius:24px; background:#2d2019; color:#fff; text-align:center; overflow:hidden; position:relative; }
-.landing-cta::before { content:''; position:absolute; width:360px; height:360px; border-radius:50%; background:rgba(255,79,0,.22); filter:blur(12px); left:-120px; top:-180px; }
-.landing-cta h2 { font-size:clamp(38px,5vw,64px); line-height:1; letter-spacing:-.05em; max-width:820px; margin:0 auto 16px; position:relative; }
-.landing-cta p { color:#d7cbc3; position:relative; }
-.landing-cta .hero-actions { justify-content:center; position:relative; }
-.landing-footer { display:flex; justify-content:space-between; gap:20px; padding:34px 0 10px; border-top:1px solid var(--border); color:var(--muted); font-size:12px; }
-
-@media(max-width:900px){
-  .marketing-hero{padding-top:44px}.marketing-hero h1{font-size:58px}.particle-band{height:220px}.demo-video-shell{padding:32px}.editorial-grid{grid-template-columns:1fr}.editorial-card{min-height:480px}.metric-strip{grid-template-columns:1fr 1fr}.metric-strip>div:nth-child(2){border-right:0}.metric-strip>div:nth-child(-n+2){border-bottom:1px solid var(--border)}.how-pro{grid-template-columns:1fr 1fr}
-}
-@media(max-width:640px){
-  .marketing-hero h1{font-size:44px}.marketing-hero .lede{font-size:16px}.particle-band{height:190px;border-radius:16px}.particle-band::after{font-size:9px}.demo-video-shell{padding:16px}.demo-video-caption{display:grid}.editorial-card{padding:18px;min-height:430px}.card-media{min-height:245px}.media-window{width:84%}.metric-strip{grid-template-columns:1fr}.metric-strip>div{border-right:0;border-bottom:1px solid var(--border)!important}.metric-strip>div:last-child{border-bottom:0!important}.how-pro{grid-template-columns:1fr}.landing-cta{padding:56px 20px}.landing-footer{display:grid}.flow-feature{margin-top:72px}
-}
-
-/* Final publish polish: scroll motion, active navigation, trust/developer content */
-.scroll-reveal { opacity:0; transform:translate3d(0,24px,0); transition:opacity .62s cubic-bezier(.22,.78,.24,1), transform .62s cubic-bezier(.22,.78,.24,1); transition-delay:var(--reveal-delay,0ms); }
-.scroll-reveal.revealed { opacity:1; transform:translate3d(0,0,0); }
-.scroll-reveal.reveal-scale { transform:translate3d(0,18px,0) scale(.985); }
-.scroll-reveal.reveal-scale.revealed { transform:translate3d(0,0,0) scale(1); }
-.product-demo-tabs button { cursor:pointer; transition:color .18s ease, background .18s ease, box-shadow .18s ease; }
-.product-demo-tabs button:hover { color:var(--text); background:#fff7f1; }
-.product-demo-tabs button:focus-visible { position:relative; z-index:2; }
-.trust-grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
-.trust-card { border:1px solid var(--border); background:#fff; padding:30px; min-height:310px; transition:transform .24s cubic-bezier(.2,.8,.2,1), box-shadow .24s ease, border-color .24s ease; }
-.trust-card:hover { transform:translateY(-5px); border-color:#c9bbb0; box-shadow:var(--shadow-hover); }
-.trust-icon { width:42px; height:42px; border-radius:12px; display:grid; place-items:center; background:var(--accent-soft); color:var(--accent); font-size:20px; font-weight:900; margin-bottom:34px; }
-.trust-card h3 { font-family:Georgia,'Times New Roman',serif; font-size:30px; line-height:1.08; font-weight:500; letter-spacing:-.025em; }
-.trust-card p { color:var(--muted); max-width:560px; }
-.trust-list { display:flex; flex-wrap:wrap; gap:8px; margin-top:24px; }
-.trust-list span { border:1px solid var(--border); background:#fbf8f3; border-radius:999px; padding:7px 10px; color:var(--muted); font-size:11px; font-weight:700; }
-.developer-section { display:grid; grid-template-columns:.92fr 1.08fr; gap:54px; align-items:center; padding:54px; background:#171512; color:#fff; border-radius:24px; overflow:hidden; position:relative; }
-.developer-section::after { content:''; position:absolute; width:300px; height:300px; border-radius:50%; background:rgba(255,79,0,.15); filter:blur(28px); right:-110px; top:-130px; pointer-events:none; }
-.developer-copy { position:relative; z-index:1; }
-.developer-copy .eyebrow { color:#ff8350; }
-.developer-copy h2 { font-size:clamp(38px,4.2vw,58px); line-height:1; letter-spacing:-.045em; }
-.developer-copy p { color:#c9c0b8; max-width:590px; }
-.developer-points { display:grid; gap:9px; margin-top:24px; color:#e8e1da; font-size:12px; }
-.developer-points span::before { content:'✓'; color:#7de39a; font-weight:900; margin-right:9px; }
-.developer-code { margin:0; background:#0e0d0c; border:1px solid #36312d; color:#e9e2dc; border-radius:14px; padding:24px; overflow:auto; font-size:12px; line-height:1.8; position:relative; z-index:1; box-shadow:0 22px 48px rgba(0,0,0,.22); }
-@media(max-width:900px){.trust-grid,.developer-section{grid-template-columns:1fr}.developer-section{padding:38px}.header-nav{gap:14px}}
-@media(max-width:640px){.developer-section{padding:28px 20px}.trust-card{padding:22px}.trust-card h3{font-size:25px}}
-@media(prefers-reduced-motion:reduce){.scroll-reveal,.scroll-reveal.reveal-scale{opacity:1!important;transform:none!important;transition:none!important}}
-
 </style>
-  <!-- Evidence, not AI guesses -->
 </head>
 <body>
   <a class="skip-link" href="#app">Skip to content</a>
   <main id="app" tabindex="-1"></main>
+  <p id="appAnnouncement" class="visually-hidden" role="status" aria-live="polite"></p>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script>
@@ -624,72 +326,12 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
       .replaceAll("'",'&#039;');
   }
 
-  function brand() {
-    return `<a class="brand" href="#/landing" data-nav="landing" aria-label="VERIFAI home"><span class="brand-mark" aria-hidden="true"></span><span>VERIFAI</span></a>`;
+  function announce(message) {
+    const node = document.getElementById('appAnnouncement');
+    if (node) node.textContent = message;
   }
 
-  function appHeader() {
-    return `<header class="app-header"><div class="header-inner">
-      ${brand()}
-      <div class="header-actions" style="margin-left:auto"><span class="muted small">Local only</span></div>
-    </div></header>`;
-  }
-
-  function localRepositoryFormMarkup() {
-    return `<form id="localRepositoryForm" class="card pad-lg" aria-describedby="localRepositoryHelp">
-      <label class="label" for="localRepoUrl">Public GitHub repository URL</label>
-      <input id="localRepoUrl" name="url" class="input" type="url" required autocomplete="url" placeholder="https://github.com/owner/repository" />
-      <p id="localRepositoryHelp" class="help">VERIFAI clones the public repository, one API-backed AI model reviews its files, and one bounded read-only command runs in an on-demand Docker sandbox. The finding includes actual executed evidence. This limited check is not full verification.</p>
-      <div class="actions"><button id="startLocalAudit" class="btn primary" type="submit">Start local check</button></div>
-      <div id="localRepoResult" role="status" aria-live="polite"></div>
-    </form>`;
-  }
-
-  function renderLocalLanding() {
-    return `${appHeader()}
-      <div class="page narrow compact">
-        <section class="card pad-lg" style="margin-top:8vh">
-          <div class="eyebrow">Local repository check</div>
-          <h1>Inspect a public GitHub repository.</h1>
-          <p class="lede">Paste a URL. VERIFAI clones it to a temporary directory, reads its tracked files, and shows what it found.</p>
-          ${localRepositoryFormMarkup()}
-          <p class="tiny muted" style="margin:16px 0 0">Base check: clone, one safe command and one AI call. No installs, repair or pull requests in that base check. Optional security, browser, repair, proof and human-approved PR actions are separately gated.</p>
-        </section>
-      </div>`;
-  }
-
-  async function startLocalRepositoryCheck(form) {
-    const buttonEl = form.querySelector('#startLocalAudit');
-    const resultEl = form.querySelector('#localRepoResult');
-    buttonEl.disabled = true;
-    buttonEl.textContent = 'Audit running…';
-    delete form.dataset.auditId;
-    resultEl.innerHTML = '<p class="muted small">Repository accepted for local audit. Cloning…</p>';
-    try {
-      const response = await fetch('/api/local/audits', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ url: form.querySelector('#localRepoUrl').value.trim() }),
-      });
-      const accepted = await response.json();
-      if (!response.ok) throw new Error(accepted.error || `HTTP ${response.status}`);
-      form.dataset.auditId = accepted.id;
-      const deadline = Date.now() + 150000;
-      while (Date.now() < deadline) {
-        const progress = await fetch(`/api/local/audits/${encodeURIComponent(accepted.id)}`);
-        const run = await progress.json();
-        if (!progress.ok) throw new Error(run.error || `HTTP ${progress.status}`);
-        renderMasterAudit(run, resultEl);
-        if (run.status !== 'Running') return;
-        await new Promise(resolve => setTimeout(resolve, 250));
-      }
-      throw new Error('Audit deadline exceeded; status and cleanup are unknown. Check API health.');
-    } catch (error) {
-      resultEl.innerHTML = `<p class="status failed">Incomplete: ${escapeHtml(error?.message || error)}</p>`;
-    } finally {
-      buttonEl.disabled = false;
-      buttonEl.textContent = 'Start local check';
-    }
-  }
+  /* ---------- presentation helpers (kept stable: the result tests extract them) ---------- */
 
   function resultTone(value) {
     return { Completed: 'verified', VerifiedRepair: 'verified', Running: 'running', Failed: 'failed', Incomplete: 'failed', RejectedRepair: 'failed' }[value] || 'unknown';
@@ -739,256 +381,1455 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     return `${monoChip(label, prefix)}<code class="wrap-anywhere">${escapeHtml(String(full))}</code>`;
   }
 
-  function renderMasterAudit(run, host) {
-    const statusText = run.status === 'Completed' ? 'Completed limited check' : run.status;
-    const stages = Object.entries(run.stages || {}).map(([name, stage]) => `<li class="fact ${factTone(stage.status)}"><strong>${escapeHtml(name)}: ${escapeHtml(stage.status)}</strong>${stage.detail ? `<p class="evidence-note">${escapeHtml(stage.detail)}${Number.isFinite(stage.durationMs) ? ` · ${escapeHtml(String(stage.durationMs))} ms` : ''}</p>` : ''}</li>`).join('');
-    const finding = run.finding;
-    const execution = run.execution;
-    const specialist = run.specialists?.results?.find(item => item.id === 'security');
-    const proof = run.proof;
-    const browser = run.browser;
+  function stageRows(stages) {
+    const order = ['clone', 'analysis', 'sandbox', 'execution', 'finding', 'cleanup'];
+    const known = order.map(name => [name, (stages && stages[name]) || { status: 'Pending' }]);
+    const extra = Object.entries(stages || {}).filter(([name]) => !order.includes(name));
+    return known.concat(extra);
+  }
+
+  function localStageRows(stages) {
+    return stageRows(stages).map(([name, stage]) => {
+      const status = (stage && stage.status) || 'Pending';
+      const tone = { Completed: 'good', Failed: 'bad', Incomplete: 'bad', Running: 'warn' }[status] || '';
+      const busy = status === 'Running' ? ' <span class="spinner-inline" aria-hidden="true"></span>' : '';
+      const detail = stage && stage.detail
+        ? `<p class="evidence-note">${escapeHtml(stage.detail)}${Number.isFinite(stage.durationMs) ? ` · ${escapeHtml(String(stage.durationMs))} ms` : ''}</p>`
+        : '';
+      return `<li class="fact ${tone}"><strong>${escapeHtml(name)}: ${escapeHtml(status)}</strong>${busy}${detail}</li>`;
+    }).join('');
+  }
+
+  function localAuditHeadline(run) {
+    if (run.status === 'Running') return 'The clone, the model review, the sandbox command and the cleanup run in that order.';
+    if (run.status === 'Completed') {
+      const exit = Number.isInteger(run.execution && run.execution.exitCode)
+        ? `The bounded command exited ${run.execution.exitCode} in the Docker sandbox.`
+        : 'The bounded command finished.';
+      const state_ = (run.finding && run.finding.assessment && run.finding.assessment.findingState) || 'Unconfirmed';
+      return `${exit} The model hypothesis stays ${state_}, so nothing here is a verification of the claim.`;
+    }
+    const failed = run.failedStage || 'unknown';
+    return `The run stopped at the ${failed} stage. Only the evidence below was produced.`;
+  }
+
+  /* ---------- shell ---------- */
+
+  function brand() {
+    return `<a class="brand" href="#/landing" data-nav="landing" aria-label="VERIFAI home"><span class="brand-mark" aria-hidden="true"></span><span>VERIFAI</span></a>`;
+  }
+
+  const SCREENS = {
+    landing: { label: 'Local audit', docTitle: 'Local repository check | VERIFAI', render: renderLocalAuditScreen },
+    'deep-audit': { label: 'Deep audit', docTitle: 'Deep audit | VERIFAI', render: renderDeepAuditScreen },
+    'pr-verification': { label: 'PR verification', docTitle: 'PR verification | VERIFAI', render: renderPrVerificationScreen },
+  };
+
+  function appHeader() {
+    const links = Object.keys(SCREENS).map(key => {
+      const screen = SCREENS[key];
+      const active = state.screen === key;
+      return `<a class="nav-link${active ? ' active' : ''}" href="#/${key}" data-nav="${key}"${active ? ' aria-current="page"' : ''}>${escapeHtml(screen.label)}</a>`;
+    }).join('');
+    return `<header class="app-header"><div class="header-inner">
+      ${brand()}
+      <nav class="header-nav" aria-label="Verification modes">${links}</nav>
+      <div class="header-actions"><span class="scope-chip">Local controller</span></div>
+    </div></header>`;
+  }
+
+  /* ---------- local audit screen ---------- */
+
+  function localRepositoryFormMarkup() {
+    return `<form id="localRepositoryForm" class="card pad form" aria-describedby="localRepositoryHelp">
+      <div class="field">
+        <label class="label" for="localRepoUrl">Public GitHub repository URL</label>
+        <input id="localRepoUrl" name="url" class="input" type="url" required autocomplete="url" placeholder="https://github.com/owner/repository" aria-describedby="localRepositoryHelp" />
+        <p id="localRepositoryHelp" class="help">VERIFAI clones the public repository, sends the tracked files to one API-backed model, and runs one bounded read-only command in an on-demand Docker sandbox. The finding carries the executed evidence. This limited check is not full verification.</p>
+        <p class="form-limits">A limited check. It does not run your test suite, does not review security, and repairs nothing.</p>
+      </div>
+      <div class="actions">
+        <button id="startLocalAudit" class="btn primary" type="submit">Start local check</button>
+        <span class="form-note">One clone, one model call, one command. The temporary clone is removed when the run ends.</span>
+      </div>
+    </form>`;
+  }
+
+  function renderLocalAuditScreen() {
+    return `${appHeader()}
+      <div class="page">
+        <div class="page-head">
+          <h1 id="localAuditTitle" tabindex="-1">Local repository check</h1>
+          <p class="lede">The supported local path: clone a public repository, let one model read its tracked files, run one bounded command in a Docker sandbox, then read the evidence the run actually produced.</p>
+        </div>
+        ${localRepositoryFormMarkup()}
+        <div id="localRepoResult" class="result-host section" role="region" aria-label="Check result">
+          <div class="empty-state">
+            <p class="empty-title">No check has run yet</p>
+            <p class="empty-note">Paste a public repository URL above and start a check. The stage trace, the model hypothesis, the executed command and the cleanup facts land here.</p>
+          </div>
+        </div>
+        <div class="scope-grid">
+          <section class="card pad scope">
+            <h2>This run does</h2>
+            <ul class="scope-list">
+              <li>Clone the public repository into a temporary directory</li>
+              <li>Send the tracked files to one API-backed model for a hypothesis</li>
+              <li>Run one bounded read-only command in a Docker sandbox</li>
+              <li>Remove the temporary clone and the sandbox when the run ends</li>
+            </ul>
+          </section>
+          <section class="card pad scope">
+            <h2>This run does not</h2>
+            <ul class="scope-list neg">
+              <li>Run your test suite or a full security review</li>
+              <li>Confirm the model's hypothesis</li>
+              <li>Repair code or open a pull request on its own</li>
+              <li>Keep anything behind after the cleanup</li>
+            </ul>
+          </section>
+        </div>
+        <p class="section muted small">The wider ten-lane engine run is on the <a class="inline-link" href="#/deep-audit" data-nav="deep-audit">Deep audit</a> screen.</p>
+      </div>`;
+  }
+
+  function localProgressMarkup() {
+    return `<section class="card pad result-root" aria-label="Check in progress">
+      <div class="result-head">
+        <div class="result-head-text">
+          <h2 class="result-title">Check running</h2>
+          <p class="result-lede">The clone, the model review, the sandbox command and the cleanup run in that order. The stage list updates as each stage reports.</p>
+        </div>
+        <p class="status running">Running</p>
+      </div>
+      <section class="evidence-card">
+        <h4>Stages</h4>
+        <ol id="localAuditStages" class="fact-grid stage-facts">${localStageRows(null)}</ol>
+      </section>
+    </section>`;
+  }
+
+  function localErrorMarkup(message, detail) {
+    return `<section class="card pad error-block" role="alert">
+      <p class="error-title">The check did not finish</p>
+      <p class="error-text">${escapeHtml(message)}</p>
+      ${detail ? `<p class="evidence-note">${escapeHtml(detail)}</p>` : ''}
+      <div class="actions"><button class="btn" type="button" data-action="retry-local-audit">Run the check again</button></div>
+    </section>`;
+  }
+
+  function localResultHead(run, statusText) {
+    const tone = run.status === 'Running' ? 'running' : run.status === 'Completed' ? 'unknown' : 'failed';
+    const name = (run.repository && run.repository.fullName) || 'Public GitHub repository';
+    return `<div class="result-head">
+        <div class="result-head-text">
+          <h2 class="result-title wrap-anywhere">${escapeHtml(name)}</h2>
+          <p class="result-lede">${escapeHtml(localAuditHeadline(run))}</p>
+        </div>
+        <p id="localAuditStatus" class="status ${tone}">${escapeHtml(statusText)}</p>
+      </div>
+      ${run.error ? `<div><p class="status failed wrap-anywhere">${escapeHtml(run.failedStage || 'run')}: ${escapeHtml(run.error)}</p></div>` : ''}
+      ${run.status && run.status !== 'Running' && run.status !== 'Completed' ? `<div class="actions"><button class="btn sm" type="button" data-action="retry-local-audit">Run the check again</button></div>` : ''}`;
+  }
+
+  function localSummaryBlock(run) {
     const repair = run.repair;
-    const stdoutText = execution?.stdout || '';
-    const stderrText = execution?.stderr || '';
+    return `<section id="localSummary" class="card pad section evidence-card" aria-label="Run facts">
+        <h4>Run facts${repair && repair.verdict ? resultBadge(repair.verdict, `Repair ${repair.verdict}`) : ''}</h4>
+        <div class="result-chips">
+          ${chip('Audit id', run.id || 'Missing')}
+          ${chip('Commit', (run.repository && run.repository.commit) || 'Missing')}
+          ${chip('Tracked files', String((run.files && run.files.count) != null ? run.files.count : 'Missing'))}
+          ${chip('Model', run.model ? `${run.model.provider} · ${run.model.model}` : 'Missing')}
+          ${chip('Duration', run.durationMs != null ? `${run.durationMs} ms` : 'Missing')}
+        </div>
+      </section>`;
+  }
+
+  function localStagesBlock(run) {
+    return evidenceCard('localAuditStagesCard', 'Stages', '', `<ol id="localAuditStages" class="fact-grid stage-facts">${localStageRows(run.stages)}</ol>`);
+  }
+
+  function localFindingBlock(run) {
+    const finding = run.finding;
+    if (!finding) return '';
+    const findingState = (finding.assessment && finding.assessment.findingState) || 'Unconfirmed';
+    return `<section id="localHypothesis" class="card pad section">
+        <h4>Model hypothesis · Unconfirmed (opinion, not verification)</h4>
+        <h3 id="localFindingTitle" class="wrap-anywhere">${escapeHtml(finding.title)}</h3>
+        <span id="localFindingSeverity" class="status warning">${escapeHtml(finding.severity)}</span>
+        <p class="evidence-note">Confidence: Unconfirmed · finding state: ${escapeHtml(findingState)}</p>
+        <p id="localFindingDescription" class="wrap-anywhere" style="white-space:pre-wrap">${escapeHtml(finding.description)}</p>
+        <p id="localFindingEvidence">Evidence file: <code class="wrap-anywhere">${escapeHtml((finding.evidence && finding.evidence.file) || 'missing')}</code></p>
+        ${finding.assessment && finding.assessment.reason ? `<p class="evidence-note wrap-anywhere">${escapeHtml(finding.assessment.reason)}</p>` : ''}
+        ${run.model ? `<p class="evidence-note wrap-anywhere">Base model · ${escapeHtml(run.model.provider)} · ${escapeHtml(run.model.model)}</p>` : ''}
+      </section>`;
+  }
+
+  function localExecutionBlock(run) {
+    const execution = run.execution;
+    if (!execution) return '';
+    const stdoutText = execution.stdout || '';
+    const stderrText = execution.stderr || '';
     const stdoutLines = stdoutText ? stdoutText.split('\n').length : 0;
     const stderrLines = stderrText ? stderrText.split('\n').length : 0;
-    const scopeText = finding?.assessment?.scope || finding?.executedCheck?.scope || 'limited-check: single bounded command — not a test suite, not security verification';
-    const coverageText = repair?.coverage?.label || '';
-    const findingState = finding?.assessment?.findingState || 'Unconfirmed';
-    const repairFiles = Array.isArray(repair?.changedFiles) ? repair.changedFiles : [];
-    const repairFilesMarkup = repairFiles.length ? `<p class="evidence-sub">Changed files (${repairFiles.length})</p><ul class="artifact-list">${repairFiles.map(file => `<li><span class="artifact-name">${escapeHtml(file.path || 'missing')}</span>${file.beforeHash ? hashChip('before',file.beforeHash) : '<span class="evidence-note">before hash Missing</span>'}${file.afterHash ? hashChip('after',file.afterHash) : '<span class="evidence-note">after hash Missing</span>'}</li>`).join('')}</ul>` : '<p class="evidence-note">No changed file was recorded.</p>';
-    const repairDiffMarkup = repair?.diff ? `<details><summary>Diff · ${escapeHtml(String(repair.diff.length))} chars</summary><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(repair.diff.slice(0, 4000))}${repair.diff.length > 4000 ? '\n...[truncated]' : ''}</pre></details>` : '';
-    const repairMarkup = repair?.verdict === 'VerifiedRepair' ? `<section id="localRepairAction" class="card pad section">
-      <h4>Verified repair</h4>
-      <p class="status verified">VerifiedRepair · before exit ${escapeHtml(String(repair.before?.exitCode))} · after exit ${escapeHtml(String(repair.after?.exitCode))}</p>
-      <p class="tiny muted wrap-anywhere">Verified target: <code class="wrap-anywhere">${escapeHtml(repair.verifiedTarget?.command || repair.before?.command || run.selectedCommand || '')}</code> · exit ${escapeHtml(String(repair.verifiedTarget?.exitCode ?? repair.before?.exitCode ?? ''))}</p>
-      ${repair.verifiedBaseCommitSha ? `<p class="tiny muted wrap-anywhere">Verified base: <code class="wrap-anywhere">${escapeHtml(repair.verifiedBaseCommitSha)}</code></p>` : '<p class="tiny muted wrap-anywhere">Verified base: Missing</p>'}
-      <p class="tiny muted wrap-anywhere">Original unchanged: ${repair.originalUnchanged === true ? 'yes' : repair.originalUnchanged === false ? 'no' : 'Not reported'}</p>
-      ${coverageText ? `<p class="tiny muted wrap-anywhere">${escapeHtml(coverageText)}</p>` : `<p class="tiny muted wrap-anywhere">Regressions run: ${escapeHtml(String(repair.regressions?.length ?? 0))} · coverage Not reported (not assumed SAME-COMMAND)</p>`}
-      ${repair.error ? `<p class="status failed wrap-anywhere">${escapeHtml(repair.error)}</p>` : ''}
-      ${repairFilesMarkup}
-      ${repairDiffMarkup}
-      <p class="tiny muted">Review proof first. Creating a PR requires this explicit human action and revalidates the immutable repair, proof manifest, and remote base.</p>
-      <div class="actions"><button class="btn primary sm" data-action="create-local-pr" data-audit-id="${escapeHtml(run.id)}">Create PR</button></div>
-      <div id="localPrResult" role="status" aria-live="polite">${run.pullRequest?.pullRequest?.url ? `<a class="wrap-anywhere" href="${escapeHtml(run.pullRequest.pullRequest.url)}" target="_blank" rel="noopener">Open created PR</a>` : ''}</div>
-    </section>` : execution?.status === 'Failed' && execution?.sandbox?.started === true && execution.executed !== false && execution.timedOut !== true && execution.aborted !== true && Number.isInteger(execution?.exitCode) && execution.exitCode !== 0 ? `<section id="localRepairAction" class="card pad section">
-      <h4>Repair candidate</h4>
-      <p class="tiny muted">Deliberate action only. Paste one bounded candidate patch; VERIFAI tests it in an isolated copy and never edits the original checkout.</p>
-      <textarea id="localRepairPatch" rows="5" class="input" spellcheck="false" placeholder='{"files":[{"path":"file.js","expected":"old","replacement":"new"}]}'></textarea>
-      <div class="actions"><button class="btn primary sm" data-action="repair-local-audit" data-audit-id="${escapeHtml(run.id)}">Verify repair</button></div>
-      <div id="localRepairResult" role="status" aria-live="polite"></div>
-    </section>` : '';
-    const proofPresent = proof?.artifacts ? proof.artifacts.filter(item => item.status === 'Present').length : 0;
-    const proofMissing = proof?.artifacts ? proof.artifacts.filter(item => item.status === 'Missing').length : 0;
-    const proofBadge = !proof?.artifacts ? '' : proofPresent > 0 && proofMissing === 0 ? ' <span class="status verified">Complete</span>' : proofPresent === 0 ? ' <span class="status failed">Missing</span>' : ' <span class="status warning">Partial</span>';
-    const proofMarkup = proof?.artifacts ? `<section id="localProofArtifacts" class="card pad section">
-      <h4>Proof artifacts${proofBadge}</h4>
-      <p class="tiny muted wrap-anywhere">Proof manifest <code class="wrap-anywhere">${escapeHtml(proof.manifest?.id || 'missing')}</code></p>
-      <p class="tiny muted wrap-anywhere">SHA-256 <code class="wrap-anywhere">${escapeHtml(proof.manifest?.sha256 || 'missing')}</code> · ${proofPresent} present · ${proofMissing} missing</p>
-      <p class="tiny muted">Materialized server-owned report data is downloadable; this includes unconfirmed hypotheses, not independent proof of their claims. Missing steps stay labelled Missing.</p>
-      <ul>${proof.artifacts.map(item => item.status === 'Present'
-        ? `<li><span class="status verified">Present</span> ${escapeHtml(item.name)} · ${escapeHtml(item.path || '')} · <span>SHA-256</span> <code class="wrap-anywhere">${escapeHtml(item.sha256 || '')}</code> · <a class="wrap-anywhere" href="/api/local/audits/${encodeURIComponent(run.id)}/artifacts/${encodeURIComponent(item.path)}" target="_blank" rel="noopener">Download ${escapeHtml(item.name)}</a></li>`
-        : `<li><span class="status unknown">Missing</span> ${escapeHtml(item.name)}${item.reason ? ` — ${escapeHtml(item.reason)}` : ''}</li>`).join('')}</ul>
-    </section>` : proof ? `<section id="localProofArtifacts" class="card pad section">
-      <h4>Proof artifacts <span class="status failed">Incomplete</span></h4>
-      <p class="status failed wrap-anywhere">Incomplete: ${escapeHtml(proof.error || 'proof bundle not published')}</p>
-    </section>` : '';
-    const cleanup = run.cleanup || {};
-    const repairCleanup = repair?.cleanup || {};
-    const cleanupRow = (label, value) => `<div><span class="tiny muted">${escapeHtml(label)}</span><br><strong>${value === true ? 'true' : value === false ? 'false' : 'missing'}</strong></div>`;
-    const MAX_BROWSER_ROWS = 20;
-    const browserConsole = browser?.consoleErrors || browser?.console || [];
-    const browserNetwork = browser?.networkEvidence || browser?.network || [];
-    const KNOWN_CONSOLE_KEYS = ['method', 'level', 'text', 'message', 'url', 'location'];
-    const consoleShown = browserConsole.slice(0, MAX_BROWSER_ROWS);
-    const consoleMarkup = consoleShown.map((entry, i) => {
-      const log = entry?.params?.entry;
-      const args = entry?.params?.args;
-      const argumentText = Array.isArray(args) ? args.map(arg => arg?.value ?? arg?.description ?? '').join(' ') : undefined;
-      const text = entry?.text ?? entry?.message ?? log?.text ?? argumentText ?? (typeof entry === 'string' ? entry : 'Missing text');
-      const location = entry?.url ?? entry?.location ?? log?.url ?? entry?.params?.stackTrace?.callFrames?.[0]?.url ?? 'Missing location';
-      const level = entry?.level ?? log?.level ?? entry?.params?.type ?? entry?.method ?? 'Missing level';
-      const rest = entry && typeof entry === 'object' ? Object.fromEntries(Object.entries(entry).filter(([k]) => !KNOWN_CONSOLE_KEYS.includes(k))) : null;
-      const fullPretty = rest && Object.keys(rest).length ? JSON.stringify(rest, null, 2) : '';
-      const pretty = fullPretty.slice(0, 2000);
-      return `<div><p class="tiny muted wrap-anywhere">Row ${i + 1} · ${escapeHtml(String(level))}</p><p class="wrap-anywhere">${escapeHtml(String(text))}</p><p class="tiny muted wrap-anywhere">${escapeHtml(String(location))}</p>${pretty ? `<details><summary>Row ${i + 1} full fields</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(pretty)}${fullPretty.length > 2000 ? '\n...[truncated]' : ''}</pre></details>` : ''}</div>`;
-    }).join('');
-    const consoleExtra = browserConsole.length > consoleShown.length ? `<p class="tiny muted">${browserConsole.length - consoleShown.length} more console rows not shown (showing ${consoleShown.length} of ${browserConsole.length}).</p>` : '';
-    const networkShown = browserNetwork.slice(0, MAX_BROWSER_ROWS);
-    const networkMarkup = networkShown.map((row, i) => {
-      const status = row?.status ?? row?.params?.response?.status ?? row?.response?.status;
-      const url = row?.url ?? row?.params?.request?.url ?? row?.params?.response?.url ?? row?.request?.url;
-      const method = row?.method ?? row?.params?.request?.method ?? row?.request?.method;
-      const fullPretty = JSON.stringify(row ?? null, null, 2);
-      const pretty = fullPretty.slice(0, 2000);
-      return `<div><p class="wrap-anywhere">${escapeHtml(url != null ? String(url) : 'Missing')}</p><p class="tiny muted wrap-anywhere">Status: ${escapeHtml(status != null ? String(status) : 'not-reported')}${method ? ` · ${escapeHtml(String(method))}` : ''}</p><details><summary>Row ${i + 1} full fields</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(pretty)}${fullPretty.length > 2000 ? '\n...[truncated]' : ''}</pre></details></div>`;
-    }).join('');
-    const networkExtra = browserNetwork.length > networkShown.length ? `<p class="tiny muted">${browserNetwork.length - networkShown.length} more network rows not shown (showing ${networkShown.length} of ${browserNetwork.length}).</p>` : '';
-    const browserCleanup = browser?.cleanup && typeof browser.cleanup === 'object' ? browser.cleanup : null;
-    const cleanupFact = (label, value) => `<div><span class="tiny muted">${escapeHtml(label)}</span><br><strong>${value === true ? 'true' : value === false ? 'false' : 'missing'}</strong></div>`;
-    const browserAssertion = browser?.assertion || (Array.isArray(browser?.assertions) ? browser.assertions[0] : null);
-    host.innerHTML = `<section class="card pad section result-root" data-audit-id="${escapeHtml(run.id)}">
-      <h3 class="wrap-anywhere">${escapeHtml(run.repository?.fullName || 'Public GitHub repository')}</h3>
-      <p id="localAuditStatus" class="status ${run.status === 'Running' ? 'running' : run.status === 'Completed' ? 'unknown' : 'failed'}">${escapeHtml(statusText)}</p>
-      <section id="localSummary" class="card pad section result-summary evidence-card" aria-label="Result summary">
-        <h4>Summary ${resultBadge(run.status,statusText)} ${repair?.verdict ? resultBadge(repair.verdict,`Repair ${repair.verdict}`) : ''}</h4>
-        <div class="result-chips">
-          ${chip('Audit id',run.id || 'Missing')}
-          ${chip('Commit',run.repository?.commit || 'Missing')}
-          ${chip('Tracked files',String(run.files?.count ?? 'Missing'))}
-          ${chip('Model',run.model ? `${run.model.provider} · ${run.model.model}` : 'Missing')}
-          ${chip('Duration',run.durationMs != null ? `${run.durationMs} ms` : 'Missing')}
-        </div>
-      </section>
-      ${run.clone?.success ? `<p id="localCloneStatus">Clone succeeded · ${run.files.count} tracked files${run.stages?.cleanup?.status === 'Completed' ? ' · temporary repository cleaned' : ''}</p>` : ''}
-      ${evidenceCard('localAuditStagesCard','Stages',resultBadge(run.status),`<ol id="localAuditStages" class="fact-grid stage-facts">${stages}</ol>`)}
-      ${run.error ? `<p class="status failed wrap-anywhere">${escapeHtml(run.failedStage)}: ${escapeHtml(run.error)}</p>` : ''}
-      <div id="localFinding" role="status" aria-live="polite">
-        ${finding ? `<section id="localHypothesis" class="card pad section">
-          <h4>Model hypothesis · Unconfirmed (opinion, not verification)</h4>
-          <h3 id="localFindingTitle" class="wrap-anywhere">${escapeHtml(finding.title)}</h3>
-          <span id="localFindingSeverity" class="status warning">${escapeHtml(finding.severity)}</span>
-          <p class="tiny muted">Confidence: Unconfirmed · finding state: ${escapeHtml(findingState)}</p>
-          <p id="localFindingDescription" class="wrap-anywhere" style="white-space:pre-wrap">${escapeHtml(finding.description)}</p>
-          <p id="localFindingEvidence">Evidence file: <code class="wrap-anywhere">${escapeHtml(finding.evidence?.file || 'missing')}</code></p>
-          ${finding?.assessment?.reason ? `<p class="tiny muted wrap-anywhere">${escapeHtml(finding.assessment.reason)}</p>` : ''}
-        </section>` : ''}
-        ${run.model ? `<p class="wrap-anywhere">Base model · ${escapeHtml(run.model.provider)} · ${escapeHtml(run.model.model)}</p>` : ''}
-      </div>
-      ${specialist ? `<section id="localSecuritySpecialist" class="card pad section">
+    const scopeText = (run.finding && run.finding.assessment && run.finding.assessment.scope)
+      || (run.finding && run.finding.executedCheck && run.finding.executedCheck.scope)
+      || 'limited-check: single bounded command, not a test suite, not security verification';
+    return `<section id="localExecutionEvidence" class="card pad section">
+        <h4>Executed check (server-owned)</h4>
+        <p class="evidence-note wrap-anywhere">${escapeHtml(scopeText)}</p>
+        <p id="localExecutionSource" class="evidence-note wrap-anywhere">Source: ${escapeHtml(execution.source || 'Missing')}</p>
+        <p class="evidence-note">Command</p>
+        <pre class="local-log-block wrap-anywhere"><code class="wrap-anywhere">${escapeHtml(execution.command || 'missing')}</code></pre>
+        <p>Exit: ${escapeHtml(String(execution.exitCode))} · ${escapeHtml(String(execution.durationMs))} ms · ${escapeHtml(execution.status)}</p>
+        <p id="localSandboxEvidence" class="wrap-anywhere">Docker sandbox ${execution.sandbox && execution.sandbox.started === true ? 'started' : execution.sandbox && execution.sandbox.started === false ? 'not started' : 'status Not reported'} · ${execution.sandbox && execution.sandbox.removed === true ? 'Removed after execution' : execution.sandbox && execution.sandbox.removed === false ? 'Incomplete cleanup' : 'Cleanup Not reported'}</p>
+        ${factGrid([
+          fact('container', execution.sandbox && execution.sandbox.name, undefined, true),
+          fact('started', sandboxDisplay(execution.sandbox && execution.sandbox.started)),
+          fact('removed', sandboxDisplay(execution.sandbox && execution.sandbox.removed)),
+          fact('memory', execution.sandbox && execution.sandbox.memoryBytes ? `${execution.sandbox.memoryBytes / 1048576} MiB limit` : 'Not reported'),
+          fact('CPU', execution.sandbox && execution.sandbox.nanoCpus ? `${execution.sandbox.nanoCpus / 1e9} CPUs` : 'Not reported'),
+          fact('privileged', sandboxDisplay(execution.sandbox && execution.sandbox.privileged)),
+          fact('network', (execution.sandbox && execution.sandbox.network) || 'Not reported'),
+        ])}
+        <details><summary>stdout · ${stdoutText.length} chars · ${stdoutLines} lines</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(execution.stdout || '(empty)')}</pre></details>
+        <details><summary>stderr · ${stderrText.length} chars · ${stderrLines} lines</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(execution.stderr || '(empty)')}</pre></details>
+        ${execution.truncated ? '<p class="evidence-note">Output capped: showing tail only.</p>' : ''}
+        <p class="wrap-anywhere">Executed-output SHA-256: <code class="wrap-anywhere">${escapeHtml(run.outputHash || 'missing')}</code></p>
+      </section>`;
+  }
+
+  function localSpecialistBlock(run) {
+    const specialist = run.specialists && run.specialists.results && run.specialists.results.find(item => item.id === 'security');
+    if (!specialist) return '';
+    return `<section id="localSecuritySpecialist" class="card pad section">
         <h4>Security specialist</h4>
         <p class="status ${specialist.status === 'Completed' ? 'unknown' : 'failed'}">${escapeHtml(specialist.status)}</p>
         ${specialist.model ? `<p class="wrap-anywhere">${escapeHtml(specialist.model.provider)} · ${escapeHtml(specialist.model.model)}</p>` : ''}
         ${specialist.error ? `<p class="status failed wrap-anywhere">${escapeHtml(specialist.error)}</p>` : ''}
-        <p>${specialist.findings?.length || 0} persisted finding(s) · ${specialist.evidenceRefs?.length || 0} evidence ref(s)</p>
-      </section>` : ''}
-      ${execution ? `<section id="localExecutionEvidence" class="card pad section">
-        <h4>Executed check (server-owned)</h4>
-        <p class="tiny muted wrap-anywhere">${escapeHtml(scopeText)}</p>
-        <p id="localExecutionSource" class="tiny muted wrap-anywhere">Source: ${escapeHtml(execution.source || 'Missing')}</p>
-        <p><span class="tiny muted">Command</span></p><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere"><code class="wrap-anywhere">${escapeHtml(execution.command || 'missing')}</code></pre>
-        <p>Exit: ${escapeHtml(String(execution.exitCode))} · ${execution.durationMs} ms · ${escapeHtml(execution.status)}</p>
-        <p id="localSandboxEvidence" class="wrap-anywhere">Docker sandbox ${execution.sandbox?.started === true ? 'started' : execution.sandbox?.started === false ? 'not started' : 'status Not reported'} · ${execution.sandbox?.removed === true ? 'Removed after execution' : execution.sandbox?.removed === false ? 'Incomplete cleanup' : 'Cleanup Not reported'}</p>
-        ${factGrid([
-          fact('container',execution.sandbox?.name,undefined,true),
-          fact('started',sandboxDisplay(execution.sandbox?.started)),
-          fact('removed',sandboxDisplay(execution.sandbox?.removed)),
-          fact('memory',execution.sandbox?.memoryBytes ? `${execution.sandbox.memoryBytes / 1048576} MiB limit` : 'Not reported'),
-          fact('CPU',execution.sandbox?.nanoCpus ? `${execution.sandbox.nanoCpus / 1e9} CPUs` : 'Not reported'),
-          fact('privileged',sandboxDisplay(execution.sandbox?.privileged)),
-          fact('network',execution.sandbox?.network || 'Not reported'),
-        ])}
-        <details><summary>stdout · ${stdoutText.length} chars · ${stdoutLines} lines</summary><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stdout || '(empty)')}</pre></details>
-        <details><summary>stderr · ${stderrText.length} chars · ${stderrLines} lines</summary><pre class="local-log-block wrap-anywhere" style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(execution.stderr || '(empty)')}</pre></details>
-        ${execution.truncated ? '<p>Output capped: showing tail only.</p>' : ''}
-        <p class="wrap-anywhere">Executed-output SHA-256: <code class="wrap-anywhere">${escapeHtml(run.outputHash || 'missing')}</code></p>
-      </section>` : ''}
-      ${coverageText && !repair ? `<p class="tiny muted wrap-anywhere">${escapeHtml(coverageText)}</p>` : ''}
-      ${browser ? `<section id="localBrowserJourney" class="card pad section"><h4>Browser journey <span class="status unknown">Fixture only</span></h4><p class="wrap-anywhere">${escapeHtml(browser.status)} · Local integration fixture; not verification of the cloned application</p>${browser.error ? `<p class="status failed wrap-anywhere">${escapeHtml(browser.error)}</p>` : ''}${browserAssertion ? `<p class="wrap-anywhere">Click assertion: expected ${escapeHtml(String(browserAssertion.expected ?? 'Missing'))} · observed ${escapeHtml(String(browserAssertion.observed ?? 'Missing'))} · ${browserAssertion.passed === true ? 'Passed' : 'Incomplete'}</p>` : '<p class="tiny muted">Click assertion: Missing (not reported)</p>'}${browser.screenshotRefs?.[0] ? `<a class="btn sm wrap-anywhere" href="${escapeHtml(browser.screenshotRefs[0])}" target="_blank" rel="noopener">Open server screenshot (fixture scope only)</a>` : '<p>Screenshot: Missing (not captured)</p>'}<details><summary>Console rows (${browserConsole.length})</summary>${consoleMarkup || '<p class="tiny muted">No console rows reported.</p>'}${consoleExtra}</details><details><summary>Network rows (${browserNetwork.length})</summary>${networkMarkup || '<p class="tiny muted">No network rows reported.</p>'}${networkExtra}</details><div class="local-summary-grid">${cleanupFact('browserClosed', browserCleanup?.browserClosed)}${cleanupFact('profileRemoved', browserCleanup?.profileRemoved)}${cleanupFact('fixtureStopped', browserCleanup?.fixtureStopped)}</div>${browserCleanup?.error ? `<p class="status failed wrap-anywhere">${escapeHtml(browserCleanup.error)}</p>` : ''}</section>` : ''}
-      ${repairMarkup}
-      ${proofMarkup}
-      <section id="localCleanup" class="card pad section" aria-label="Cleanup facts">
+        <p>${specialist.findings && specialist.findings.length || 0} persisted finding(s) · ${specialist.evidenceRefs && specialist.evidenceRefs.length || 0} evidence ref(s)</p>
+      </section>`;
+  }
+
+  function localBrowserBlock(run) {
+    const browser = run.browser;
+    if (!browser) return '';
+    const browserConsole = browser.consoleErrors || browser.console || [];
+    const browserNetwork = browser.networkEvidence || browser.network || [];
+    const KNOWN_CONSOLE_KEYS = ['method', 'level', 'text', 'message', 'url', 'location'];
+    const MAX_BROWSER_ROWS = 20;
+    const consoleShown = browserConsole.slice(0, MAX_BROWSER_ROWS);
+    const consoleMarkup = consoleShown.map((entry, i) => {
+      const log = entry && entry.params && entry.params.entry;
+      const args = entry && entry.params && entry.params.args;
+      const argumentText = Array.isArray(args) ? args.map(arg => (arg && arg.value != null ? arg.value : (arg && arg.description) || '')).join(' ') : undefined;
+      const text = (entry && (entry.text ?? entry.message)) || (log && log.text) || argumentText || (typeof entry === 'string' ? entry : 'Missing text');
+      const location = (entry && (entry.url ?? entry.location)) || (log && log.url) || (entry && entry.params && entry.params.stackTrace && entry.params.stackTrace.callFrames && entry.params.stackTrace.callFrames[0] && entry.params.stackTrace.callFrames[0].url) || 'Missing location';
+      const level = (entry && (entry.level ?? entry.method)) || (log && log.level) || (entry && entry.params && entry.params.type) || 'Missing level';
+      const rest = entry && typeof entry === 'object' ? Object.fromEntries(Object.entries(entry).filter(([k]) => !KNOWN_CONSOLE_KEYS.includes(k))) : null;
+      const fullPretty = rest && Object.keys(rest).length ? JSON.stringify(rest, null, 2) : '';
+      const pretty = fullPretty.slice(0, 2000);
+      return `<div><p class="evidence-note wrap-anywhere">Row ${i + 1} · ${escapeHtml(String(level))}</p><p class="wrap-anywhere">${escapeHtml(String(text))}</p><p class="evidence-note wrap-anywhere">${escapeHtml(String(location))}</p>${pretty ? `<details><summary>Row ${i + 1} full fields</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(pretty)}${fullPretty.length > 2000 ? '\n...[truncated]' : ''}</pre></details>` : ''}</div>`;
+    }).join('');
+    const consoleExtra = browserConsole.length > consoleShown.length ? `<p class="evidence-note">${browserConsole.length - consoleShown.length} more console rows not shown (showing ${consoleShown.length} of ${browserConsole.length}).</p>` : '';
+    const networkShown = browserNetwork.slice(0, MAX_BROWSER_ROWS);
+    const networkMarkup = networkShown.map((row, i) => {
+      const status = (row && (row.status ?? (row.params && row.params.response && row.params.response.status))) || (row && row.response && row.response.status);
+      const url = (row && (row.url ?? (row.params && row.params.request && row.params.request.url))) || (row && row.params && row.params.response && row.params.response.url) || (row && row.request && row.request.url);
+      const method = (row && (row.method ?? (row.params && row.params.request && row.params.request.method))) || (row && row.request && row.request.method);
+      const fullPretty = JSON.stringify(row == null ? null : row, null, 2);
+      const pretty = fullPretty.slice(0, 2000);
+      return `<div><p class="wrap-anywhere">${escapeHtml(url != null ? String(url) : 'Missing')}</p><p class="evidence-note wrap-anywhere">Status: ${escapeHtml(status != null ? String(status) : 'not-reported')}${method ? ` · ${escapeHtml(String(method))}` : ''}</p><details><summary>Row ${i + 1} full fields</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(pretty)}${fullPretty.length > 2000 ? '\n...[truncated]' : ''}</pre></details></div>`;
+    }).join('');
+    const networkExtra = browserNetwork.length > networkShown.length ? `<p class="evidence-note">${browserNetwork.length - networkShown.length} more network rows not shown (showing ${networkShown.length} of ${browserNetwork.length}).</p>` : '';
+    const browserCleanup = browser.cleanup && typeof browser.cleanup === 'object' ? browser.cleanup : null;
+    const cleanupFact = (label, value) => `<div><span class="tiny muted">${escapeHtml(label)}</span><br><strong>${value === true ? 'true' : value === false ? 'false' : 'missing'}</strong></div>`;
+    const browserAssertion = browser.assertion || (Array.isArray(browser.assertions) ? browser.assertions[0] : null);
+    return `<section id="localBrowserJourney" class="card pad section">
+        <h4>Browser journey <span class="status unknown">Fixture only</span></h4>
+        <p class="wrap-anywhere">${escapeHtml(browser.status)} · Local integration fixture; not verification of the cloned application</p>
+        ${browser.error ? `<p class="status failed wrap-anywhere">${escapeHtml(browser.error)}</p>` : ''}
+        ${browserAssertion ? `<p class="wrap-anywhere">Click assertion: expected ${escapeHtml(String(browserAssertion.expected != null ? browserAssertion.expected : 'Missing'))} · observed ${escapeHtml(String(browserAssertion.observed != null ? browserAssertion.observed : 'Missing'))} · ${browserAssertion.passed === true ? 'Passed' : 'Incomplete'}</p>` : '<p class="evidence-note">Click assertion: Missing (not reported)</p>'}
+        ${browser.screenshotRefs && browser.screenshotRefs[0] ? `<a class="btn sm wrap-anywhere" href="${escapeHtml(browser.screenshotRefs[0])}" target="_blank" rel="noopener">Open server screenshot (fixture scope only)</a>` : '<p>Screenshot: Missing (not captured)</p>'}
+        <details><summary>Console rows (${browserConsole.length})</summary>${consoleMarkup || '<p class="evidence-note">No console rows reported.</p>'}${consoleExtra}</details>
+        <details><summary>Network rows (${browserNetwork.length})</summary>${networkMarkup || '<p class="evidence-note">No network rows reported.</p>'}${networkExtra}</details>
+        <div class="local-summary-grid">${cleanupFact('browserClosed', browserCleanup && browserCleanup.browserClosed)}${cleanupFact('profileRemoved', browserCleanup && browserCleanup.profileRemoved)}${cleanupFact('fixtureStopped', browserCleanup && browserCleanup.fixtureStopped)}</div>
+        ${browserCleanup && browserCleanup.error ? `<p class="status failed wrap-anywhere">${escapeHtml(browserCleanup.error)}</p>` : ''}
+      </section>`;
+  }
+
+  function localRepairBlock(run) {
+    const repair = run.repair;
+    const execution = run.execution;
+    if (repair && repair.verdict === 'VerifiedRepair') {
+      const coverageText = (repair.coverage && repair.coverage.label) || '';
+      const repairFiles = Array.isArray(repair.changedFiles) ? repair.changedFiles : [];
+      const repairFilesMarkup = repairFiles.length
+        ? `<p class="evidence-sub">Changed files (${repairFiles.length})</p><ul class="artifact-list">${repairFiles.map(file => `<li><span class="artifact-name">${escapeHtml(file.path || 'missing')}</span>${file.beforeHash ? hashChip('before', file.beforeHash) : '<span class="evidence-note">before hash Missing</span>'}${file.afterHash ? hashChip('after', file.afterHash) : '<span class="evidence-note">after hash Missing</span>'}</li>`).join('')}</ul>`
+        : '<p class="evidence-note">No changed file was recorded.</p>';
+      const repairDiffMarkup = repair.diff
+        ? `<details><summary>Diff · ${escapeHtml(String(repair.diff.length))} chars</summary><pre class="local-log-block wrap-anywhere">${escapeHtml(repair.diff.slice(0, 4000))}${repair.diff.length > 4000 ? '\n...[truncated]' : ''}</pre></details>`
+        : '';
+      return `<section id="localRepairAction" class="card pad section">
+        <h4>Verified repair</h4>
+        <p class="status verified">VerifiedRepair · before exit ${escapeHtml(String(repair.before && repair.before.exitCode))} · after exit ${escapeHtml(String(repair.after && repair.after.exitCode))}</p>
+        <p class="tiny muted wrap-anywhere">Verified target: <code class="wrap-anywhere">${escapeHtml((repair.verifiedTarget && repair.verifiedTarget.command) || (repair.before && repair.before.command) || run.selectedCommand || '')}</code> · exit ${escapeHtml(String((repair.verifiedTarget && repair.verifiedTarget.exitCode) != null ? repair.verifiedTarget.exitCode : (repair.before && repair.before.exitCode) != null ? repair.before.exitCode : ''))}</p>
+        ${repair.verifiedBaseCommitSha ? `<p class="tiny muted wrap-anywhere">Verified base: <code class="wrap-anywhere">${escapeHtml(repair.verifiedBaseCommitSha)}</code></p>` : '<p class="tiny muted wrap-anywhere">Verified base: Missing</p>'}
+        <p class="tiny muted wrap-anywhere">Original unchanged: ${repair.originalUnchanged === true ? 'yes' : repair.originalUnchanged === false ? 'no' : 'Not reported'}</p>
+        ${coverageText ? `<p class="tiny muted wrap-anywhere">${escapeHtml(coverageText)}</p>` : `<p class="tiny muted wrap-anywhere">Regressions run: ${escapeHtml(String((repair.regressions && repair.regressions.length) != null ? repair.regressions.length : 0))} · coverage Not reported (not assumed SAME-COMMAND)</p>`}
+        ${repair.error ? `<p class="status failed wrap-anywhere">${escapeHtml(repair.error)}</p>` : ''}
+        ${repairFilesMarkup}
+        ${repairDiffMarkup}
+        <p class="tiny muted">Review proof first. Creating a PR requires this explicit human action and revalidates the immutable repair, proof manifest, and remote base.</p>
+        <div class="human-approval">
+          <h5>Human approval</h5>
+          <p class="evidence-note">A human token is needed twice: once to approve the repair, once to open the pull request. The token is sent as an Authorization header and is held in memory for this session only. It is never written to storage, a URL, the log or the page.</p>
+          <label class="label" for="localApprovalToken">Human token</label>
+          <input id="localApprovalToken" class="input" type="password" autocomplete="off" aria-describedby="localApprovalHelp" />
+          <label class="check-row" for="localApprovalReviewed">
+            <input id="localApprovalReviewed" type="checkbox" />
+            <span>I reviewed the immutable proof and the patch above.</span>
+          </label>
+          <p id="localApprovalHelp" class="help">Approving and publishing are two separate actions. The approval is single use: if it goes stale the server rejects it and the repair has to be approved again.</p>
+          <div class="actions">
+            <button class="btn primary sm" type="button" data-action="approve-local-repair" data-audit-id="${escapeHtml(run.id)}">Approve repair</button>
+            <button id="localCreatePr" class="btn sm" type="button" data-action="create-local-pr" data-audit-id="${escapeHtml(run.id)}" disabled>Create PR</button>
+          </div>
+          <div id="localApprovalState" role="status" aria-live="polite"></div>
+        </div>
+        <div id="localPrResult" role="status" aria-live="polite">${run.pullRequest && run.pullRequest.pullRequest && run.pullRequest.pullRequest.url ? `<a class="wrap-anywhere" href="${escapeHtml(run.pullRequest.pullRequest.url)}" target="_blank" rel="noopener">Open created PR</a>` : ''}</div>
+      </section>`;
+    }
+    const repairable = execution && execution.status === 'Failed' && execution.sandbox && execution.sandbox.started === true
+      && execution.executed !== false && execution.timedOut !== true && execution.aborted !== true
+      && Number.isInteger(execution.exitCode) && execution.exitCode !== 0;
+    if (!repairable) return '';
+    return `<section id="localRepairAction" class="card pad section">
+      <h4>Repair candidate</h4>
+      <p class="evidence-note">Deliberate action only. Paste one bounded candidate patch; VERIFAI tests it in an isolated copy and never edits the original checkout.</p>
+      <textarea id="localRepairPatch" rows="5" class="textarea" spellcheck="false" placeholder='{"files":[{"path":"file.js","expected":"old","replacement":"new"}]}'></textarea>
+      <div class="actions"><button class="btn primary sm" data-action="repair-local-audit" data-audit-id="${escapeHtml(run.id)}">Verify repair</button></div>
+      <div id="localRepairResult" role="status" aria-live="polite"></div>
+    </section>`;
+  }
+
+  function localProofBlock(run) {
+    const proof = run.proof;
+    if (!proof) return '';
+    if (proof.artifacts) {
+      const proofPresent = proof.artifacts.filter(item => item.status === 'Present').length;
+      const proofMissing = proof.artifacts.filter(item => item.status === 'Missing').length;
+      const proofBadge = proofPresent > 0 && proofMissing === 0 ? ' <span class="status verified">Complete</span>' : proofPresent === 0 ? ' <span class="status failed">Missing</span>' : ' <span class="status warning">Partial</span>';
+      return `<section id="localProofArtifacts" class="card pad section">
+        <h4>Proof artifacts${proofBadge}</h4>
+        <p class="tiny muted wrap-anywhere">Proof manifest <code class="wrap-anywhere">${escapeHtml((proof.manifest && proof.manifest.id) || 'missing')}</code></p>
+        <p class="tiny muted wrap-anywhere">SHA-256 <code class="wrap-anywhere">${escapeHtml((proof.manifest && proof.manifest.sha256) || 'missing')}</code> · ${proofPresent} present · ${proofMissing} missing</p>
+        <p class="tiny muted">Materialized server-owned report data is downloadable; this includes unconfirmed hypotheses, not independent proof of their claims. Missing steps stay labelled Missing.</p>
+        <ul>${proof.artifacts.map(item => item.status === 'Present'
+          ? `<li><span class="status verified">Present</span> ${escapeHtml(item.name)} · ${escapeHtml(item.path || '')} · <span>SHA-256</span> <code class="wrap-anywhere">${escapeHtml(item.sha256 || '')}</code> · <a class="wrap-anywhere" href="/api/local/audits/${encodeURIComponent(run.id)}/artifacts/${encodeURIComponent(item.path)}" target="_blank" rel="noopener">Download ${escapeHtml(item.name)}</a></li>`
+          : `<li><span class="status unknown">Missing</span> ${escapeHtml(item.name)}${item.reason ? `: ${escapeHtml(item.reason)}` : ''}</li>`).join('')}</ul>
+      </section>`;
+    }
+    return `<section id="localProofArtifacts" class="card pad section">
+      <h4>Proof artifacts <span class="status failed">Incomplete</span></h4>
+      <p class="status failed wrap-anywhere">Incomplete: ${escapeHtml(proof.error || 'proof bundle not published')}</p>
+    </section>`;
+  }
+
+  function localCleanupBlock(run) {
+    const cleanup = run.cleanup || {};
+    const repairCleanup = (run.repair && run.repair.cleanup) || {};
+    const cleanupRow = (label, value) => `<div><span class="tiny muted">${escapeHtml(label)}</span><br><strong>${value === true ? 'true' : value === false ? 'false' : 'missing'}</strong></div>`;
+    return `<section id="localCleanup" class="card pad section" aria-label="Cleanup facts">
         <h4>Cleanup</h4>
         <div class="local-summary-grid">
           ${cleanupRow('repositoryRemoved', cleanup.repositoryRemoved)}
           ${cleanupRow('sandboxRemoved', cleanup.sandboxRemoved)}
-          ${cleanupRow('candidateRemoved', repairCleanup.candidateRemoved ?? cleanup.candidateRemoved)}
-          ${cleanupRow('originalUnchanged', repair?.originalUnchanged ?? cleanup.originalUnchanged)}
+          ${cleanupRow('candidateRemoved', repairCleanup.candidateRemoved != null ? repairCleanup.candidateRemoved : cleanup.candidateRemoved)}
+          ${cleanupRow('originalUnchanged', run.repair && run.repair.originalUnchanged != null ? run.repair.originalUnchanged : cleanup.originalUnchanged)}
         </div>
-      </section>
-      <p class="tiny muted">A completed limited check is not a full test-suite or security verification. Cleanup is automatic.</p>
-      ${run.status === 'Completed' ? `<section class="card pad section">
-        <button class="btn" type="button" data-action="run-fixture-browser" data-audit-id="${escapeHtml(run.id)}">Run fixture browser journey</button>
-        <p class="tiny muted">One button-click integration fixture, not verification of the cloned application. Chrome starts on demand and closes after evidence capture.</p>
-        <div id="localBrowserEvidence" role="status" aria-live="polite"></div>
-      </section>` : ''}
-    </section>`;
-
+      </section>`;
   }
+
+  function localFixtureActionBlock(run) {
+    if (run.status !== 'Completed') return '';
+    return `<section class="card pad section">
+        <h4>Fixture browser journey</h4>
+        <p class="evidence-note">One button-click integration fixture, not verification of the cloned application. Chrome starts on demand and closes after evidence capture.</p>
+        <div class="actions"><button class="btn" type="button" data-action="run-fixture-browser" data-audit-id="${escapeHtml(run.id)}">Run fixture browser journey</button></div>
+        <div id="localBrowserEvidence" role="status" aria-live="polite"></div>
+      </section>`;
+  }
+
+  function renderMasterAudit(run, host) {
+    clearRepairHuman();
+    const statusText = run.status === 'Completed' ? 'Completed limited check' : run.status;
+    host.innerHTML = `<section class="card pad result-root" data-audit-id="${escapeHtml(run.id)}">
+      ${localResultHead(run, statusText)}
+      ${localSummaryBlock(run)}
+      ${localFindingBlock(run)}
+      ${localExecutionBlock(run)}
+      ${localStagesBlock(run)}
+      ${localSpecialistBlock(run)}
+      ${localBrowserBlock(run)}
+      ${localRepairBlock(run)}
+      ${localProofBlock(run)}
+      ${localCleanupBlock(run)}
+      ${localFixtureActionBlock(run)}
+      <p class="tiny muted">A completed limited check is not a full test-suite or security verification. Cleanup is automatic.</p>
+    </section>`;
+  }
+
+  function updateLocalProgress(run) {
+    const list = document.getElementById('localAuditStages');
+    if (list) {
+      list.innerHTML = localStageRows(run.stages);
+      return;
+    }
+    const host = document.getElementById('localRepoResult');
+    if (host) host.innerHTML = localProgressMarkup();
+  }
+
+  async function startLocalRepositoryCheck(form) {
+    const buttonEl = form.querySelector('#startLocalAudit');
+    const resultEl = document.getElementById('localRepoResult');
+    const url = (form.querySelector('#localRepoUrl') && form.querySelector('#localRepoUrl').value || '').trim();
+    if (!url) {
+      if (resultEl) resultEl.innerHTML = localErrorMarkup('Enter a public GitHub repository URL before starting a check.', 'Nothing was cloned and no model was called.');
+      return;
+    }
+    buttonEl.disabled = true;
+    buttonEl.setAttribute('aria-busy', 'true');
+    buttonEl.textContent = 'Check running…';
+    delete form.dataset.auditId;
+    if (resultEl) resultEl.innerHTML = localProgressMarkup();
+    announce('Local check running.');
+    try {
+      const response = await fetch('/api/local/audits', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      const accepted = await response.json();
+      if (!response.ok) throw new Error(accepted.error || `HTTP ${response.status}`);
+      form.dataset.auditId = accepted.id;
+      const deadline = Date.now() + 150000;
+      while (Date.now() < deadline) {
+        const progress = await fetch(`/api/local/audits/${encodeURIComponent(accepted.id)}`);
+        const run = await progress.json();
+        if (!progress.ok) throw new Error(run.error || `HTTP ${progress.status}`);
+        if (run.status === 'Running') {
+          updateLocalProgress(run);
+        } else {
+          renderMasterAudit(run, resultEl);
+          announce(run.status === 'Completed' ? 'Local check completed.' : `Local check ${run.status}.`);
+        }
+        if (run.status !== 'Running') return;
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      throw new Error('Audit deadline exceeded; status and cleanup are unknown. Check API health.');
+    } catch (error) {
+      const message = String(error && error.message ? error.message : error);
+      if (resultEl) resultEl.innerHTML = localErrorMarkup(message, 'The run did not reach a verdict. Nothing below is proven.');
+      announce(`Local check failed: ${message}`);
+    } finally {
+      buttonEl.disabled = false;
+      buttonEl.removeAttribute('aria-busy');
+      buttonEl.textContent = 'Start local check';
+    }
+  }
+
+  /* ---------- deep audit screen ---------- */
+
+  function renderDeepAuditScreen() {
+    return `${appHeader()}
+      <div class="page">
+        <div class="page-head">
+          <h1 id="deepAuditTitle" tabindex="-1">Deep audit</h1>
+          <p class="lede">The legacy engine set: ten lanes run against a local target, covering security, leakage, API, browser, computer use, customer simulation, chaos, performance, one deployed URL and one installable package. A lane that cannot run stays Unknown or Incomplete, with the reason, instead of turning into a pass.</p>
+        </div>
+        <form id="deepAuditForm" class="card pad form" aria-describedby="deepAuditHelp">
+          <div class="field">
+            <label class="label" for="deepAuditRepository">Target</label>
+            <input id="deepAuditRepository" name="repository" class="input" type="text" autocomplete="off" value="${deepAuditFixture()}" aria-describedby="deepAuditHelp" />
+            <p id="deepAuditHelp" class="help">The default is the checkout demo fixture that ships with the app. It runs on this machine, with no network call and no account. Any other target makes VERIFAI probe that repository's manifests and try one discovered deployed URL.</p>
+            <p class="form-limits">The legacy engine set. It cannot repair a finding, and its pull request gate stays closed.</p>
+          </div>
+          <div class="actions">
+            <button id="startDeepAudit" class="btn primary" type="submit">Run deep audit</button>
+            <span class="form-note">Ten lanes, one request budget, no repair and no pull request.</span>
+          </div>
+        </form>
+        <div id="deepAuditResult" class="result-host section" role="region" aria-label="Deep audit result">
+          <div class="empty-state">
+            <p class="empty-title">No deep audit has run yet</p>
+            <p class="empty-note">Start one to see the lane states, the coverage, the findings and the run budget. Every lane reports on its own, and the ones that could not run say so.</p>
+          </div>
+        </div>
+        <div class="scope-grid">
+          <section class="card pad scope">
+            <h2>This run does</h2>
+            <ul class="scope-list">
+              <li>Run every lane and keep a failing lane from cancelling the others</li>
+              <li>Report each lane with its own evidence, reason and confidence</li>
+              <li>Cap the run with a request, duration and spend budget</li>
+              <li>Take one bounded steering instruction against the same run</li>
+            </ul>
+          </section>
+          <section class="card pad scope">
+            <h2>This run does not</h2>
+            <ul class="scope-list neg">
+              <li>Use the model the local check uses</li>
+              <li>Repair code or verify a fix</li>
+              <li>Open a pull request: that gate stays closed</li>
+              <li>Say anything about your repository unless you point it at one</li>
+            </ul>
+          </section>
+        </div>
+        <p class="section muted small">The single bounded repository check is on the <a class="inline-link" href="#/landing" data-nav="landing">Local audit</a> screen.</p>
+      </div>`;
+  }
+
+  function deepAuditFixture() {
+    return 'acme/checkout';
+  }
+
+  function deepTargetLabel(repository) {
+    const value = String(repository || '').trim();
+    if (!value) return 'local target';
+    if (value.toLowerCase() === deepAuditFixture()) return 'the built-in demo fixture';
+    return value;
+  }
+
+  function deepLaneTone(engine) {
+    if (!engine) return 'unknown';
+    if (engine.state === 'incomplete') return 'failed';
+    if (engine.status === 'pass') return 'verified';
+    if (engine.status === 'fail') return 'failed';
+    return 'unknown';
+  }
+
+  function deepLaneLabel(engine) {
+    if (!engine) return 'Not reported';
+    if (engine.state === 'incomplete') return 'Incomplete';
+    if (engine.status === 'pass') return 'Pass';
+    if (engine.status === 'fail') return 'Fail';
+    return 'Unknown';
+  }
+
+  function deepLaneRows(engines) {
+    if (!Array.isArray(engines) || !engines.length) return '<li class="lane-empty">No lane has reported yet.</li>';
+    return engines.map(engine => {
+      const reason = engine.reason || (Array.isArray(engine.observations) && engine.observations.length ? engine.observations.join('; ') : '') || 'No reason reported';
+      return `<li class="lane-row">
+        <span class="lane-name">${escapeHtml(engine.name)}</span>
+        <span><span class="status ${deepLaneTone(engine)}">${escapeHtml(deepLaneLabel(engine))}</span></span>
+        <span class="lane-reason wrap-anywhere">${escapeHtml(reason)}</span>
+      </li>`;
+    }).join('');
+  }
+
+  function deepFindingTone(state_) {
+    return { Confirmed: 'failed', Unconfirmed: 'warning', Unknown: 'unknown', Incomplete: 'unknown' }[state_] || 'unknown';
+  }
+
+  function deepFindingBlock(findings) {
+    if (!Array.isArray(findings) || !findings.length) {
+      return `<section class="card pad section evidence-card"><h4>Findings</h4><p class="evidence-note">No finding was raised by the lanes that completed.</p></section>`;
+    }
+    return `<section class="card pad section evidence-card"><h4>Findings (${findings.length})</h4>
+      <ul class="finding-list">${findings.map(finding => `<li class="finding">
+        <div class="finding-head">
+          <span class="status ${deepFindingTone(finding.state)}">${escapeHtml(finding.state || 'Unknown')}</span>
+          <span class="tiny muted">${escapeHtml(finding.category || 'Uncategorised')}</span>
+          <span class="tiny muted">${escapeHtml(finding.impact || 'Unknown impact')}</span>
+          <code class="tiny muted wrap-anywhere">${escapeHtml(finding.id || '')}</code>
+        </div>
+        <p class="finding-summary">${escapeHtml(finding.summary || 'No summary reported')}</p>
+        ${finding.rootCause ? `<p class="evidence-note">${escapeHtml(finding.rootCause)}</p>` : ''}
+      </li>`).join('')}</ul>
+    </section>`;
+  }
+
+  function deepCoverageBlock(coverage) {
+    const data = coverage || {};
+    return `<section class="card pad section evidence-card"><h4>Coverage</h4>
+      ${factGrid([
+        fact('lanes', data.total != null ? data.total : 'Missing'),
+        fact('completed', data.tested != null ? data.tested : 'Missing'),
+        fact('incomplete', data.incomplete != null ? data.incomplete : 'Missing'),
+        fact('unknown', data.unknown != null ? data.unknown : 'Missing'),
+        fact('confirmed lanes', data.confirmed != null ? data.confirmed : 'Missing'),
+      ])}
+      ${Array.isArray(data.limitations) && data.limitations.length ? `<p class="evidence-sub">Limitations</p><ul class="artifact-list">${data.limitations.map(item => `<li><span class="artifact-name">${escapeHtml(item.engine || 'lane')}</span><span class="evidence-note">${escapeHtml(item.reason || item.state || 'No reason reported')}</span></li>`).join('')}</ul>` : ''}
+    </section>`;
+  }
+
+  function deepBudgetBlock(guardrails) {
+    const data = guardrails || {};
+    return `<section class="card pad section evidence-card"><h4>Run budget</h4>
+      ${factGrid([
+        fact('estimated run cost', data.estimatedRunSpendUsd != null ? `$${Number(data.estimatedRunSpendUsd).toFixed(2)}` : 'Not reported'),
+        fact('run cost cap', data.hardRunCapUsd != null ? `$${Number(data.hardRunCapUsd).toFixed(2)}` : 'Not reported'),
+        fact('requests', data.httpRequests != null ? `${data.httpRequests} of ${data.maxHttpRequests != null ? data.maxHttpRequests : '?'}` : 'Not reported'),
+        fact('duration cap', data.maxDurationMs != null ? `${Math.round(data.maxDurationMs / 1000)} s` : 'Not reported'),
+      ])}
+      <p class="evidence-note">Within guardrails: ${data.withinGuardrails === true ? 'yes' : data.withinGuardrails === false ? 'no' : 'Not reported'}</p>
+      <p class="evidence-note">The estimated run cost is what the controller expects this run to cost. It is an estimate, not a record of a charge.</p>
+    </section>`;
+  }
+
+  function deepEventBlock(events) {
+    const rows = Array.isArray(events) ? events.slice(-12).reverse() : [];
+    if (!rows.length) return `<section class="card pad section evidence-card"><h4>Events</h4><p class="evidence-note">No event was recorded.</p></section>`;
+    return `<section class="card pad section evidence-card"><h4>Events</h4>
+      <ul class="event-list">${rows.map(event => `<li class="event-row"><time>${escapeHtml(String(event.at || '').replace('T', ' ').slice(0, 19))}</time><span class="wrap-anywhere">${escapeHtml(event.message || event.type || 'No message')}</span></li>`).join('')}</ul>
+    </section>`;
+  }
+
+  function deepFixBlock(fix) {
+    const data = fix || {};
+    const ready = data.pr && data.pr.ready === true;
+    return `<section class="card pad section evidence-card"><h4>Repair and pull request</h4>
+      <div><span class="status ${ready ? 'verified' : 'unknown'}">${ready ? 'Pull request ready' : 'Pull request gate closed'}</span></div>
+      <p class="evidence-note">${escapeHtml(data.reason || 'No repair was attempted.')}</p>
+      ${ready ? `<div class="actions"><button class="btn primary sm" data-action="create-deep-pr" data-run-id="${escapeHtml(data.runId || '')}">Create PR</button></div>` : ''}
+    </section>`;
+  }
+
+  function deepProgressMarkup(repository, runId) {
+    return `<section class="card pad result-root" id="deepAuditProgress" aria-label="Deep audit running">
+      <div class="result-head">
+        <div class="result-head-text">
+          <h2 class="result-title">Deep audit running</h2>
+          <p class="result-sub wrap-anywhere">Target ${escapeHtml(deepTargetLabel(repository))} · run <code class="mono">${escapeHtml(runId)}</code></p>
+          <p class="result-lede">The lanes run in parallel under one request budget. Each lane reports as it finishes.</p>
+        </div>
+        <p class="status running">Running</p>
+      </div>
+      <section class="evidence-card">
+        <h4>Engine lanes</h4>
+        <ul class="lane-list" id="deepAuditLaneList"><li class="lane-empty">No lane has reported yet.</li></ul>
+      </section>
+    </section>`;
+  }
+
+  function deepErrorMarkup(message, detail) {
+    return `<section class="card pad error-block" role="alert">
+      <p class="error-title">The deep audit did not finish</p>
+      <p class="error-text">${escapeHtml(message)}</p>
+      ${detail ? `<p class="evidence-note">${escapeHtml(detail)}</p>` : ''}
+      <div class="actions"><button class="btn" type="button" data-action="retry-deep-audit">Run the deep audit again</button></div>
+    </section>`;
+  }
+
+  function renderDeepAuditRun(run, host) {
+    const coverage = run.coverage || {};
+    host.innerHTML = `<section class="card pad result-root" data-run-id="${escapeHtml(run.runId || '')}">
+      <div class="result-head">
+        <div class="result-head-text">
+          <h2 class="result-title wrap-anywhere">Deep audit · ${escapeHtml(deepTargetLabel(run.repository))}</h2>
+          <p class="result-lede">${escapeHtml(run.overall || 'The run reported no overall verdict.')}</p>
+        </div>
+        <p class="status ${run.status === 'completed' ? 'unknown' : 'failed'}">${escapeHtml(run.status || 'Unknown')}</p>
+      </div>
+      ${run.status && run.status !== 'completed' ? `<div class="actions"><button class="btn sm" type="button" data-action="retry-deep-audit">Run the deep audit again</button></div>` : ''}
+      ${deepCoverageBlock(coverage)}
+      <section class="card pad section evidence-card">
+        <h4>Engine lanes (${Array.isArray(run.engines) ? run.engines.length : 0})</h4>
+        <ul class="lane-list" id="deepAuditLaneList">${deepLaneRows(run.engines)}</ul>
+      </section>
+      ${deepFindingBlock(run.findings)}
+      ${deepBudgetBlock(run.guardrails)}
+      ${deepEventBlock(run.events)}
+      <section class="card pad section evidence-card steer-row">
+        <h4>Steer this run</h4>
+        <p class="evidence-note">One bounded instruction is recorded against this run and its evidence. It cannot turn a lane into a pass.</p>
+        <label class="visually-hidden" for="deepAuditInstruction">Steering instruction</label>
+        <input id="deepAuditInstruction" class="input" type="text" autocomplete="off" placeholder="Investigate the duplicate payment path after a late webhook" />
+        <div class="actions"><button class="btn" type="button" data-action="steer-deep-audit" data-run-id="${escapeHtml(run.runId || '')}">Send instruction</button></div>
+        <div id="deepAuditSteerResult" role="status" aria-live="polite"></div>
+      </section>
+      ${deepFixBlock(run.fix)}
+    </section>`;
+  }
+
+  function updateDeepLanes(run) {
+    const list = document.getElementById('deepAuditLaneList');
+    if (list) list.innerHTML = deepLaneRows(run.engines);
+  }
+
+  async function refreshDeepRun(runId) {
+    try {
+      const response = await fetch(`/api/demo/deep-audit/${encodeURIComponent(runId)}`);
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (!payload || !payload.run) return;
+        updateDeepLanes(payload.run);
+    } catch (error) {
+      // The live view is an extra, not the source of truth: the POST response decides.
+    }
+  }
+
+  async function startDeepAudit(form) {
+    const button = form.querySelector('#startDeepAudit');
+    const host = document.getElementById('deepAuditResult');
+    const input = form.querySelector('#deepAuditRepository');
+    const repository = ((input && input.value) || '').trim() || deepAuditFixture();
+    const runId = `deep-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.textContent = 'Running lanes…';
+    if (host) host.innerHTML = deepProgressMarkup(repository, runId);
+    announce('Deep audit running.');
+    const poll = setInterval(() => { refreshDeepRun(runId); }, 800);
+    try {
+      const response = await fetch('/api/demo/deep-audit', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ runId, repository }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error((payload && payload.error) || `HTTP ${response.status}`);
+        renderDeepAuditRun(payload.run, host);
+      announce('Deep audit finished.');
+    } catch (error) {
+      const message = String(error && error.message ? error.message : error);
+      if (host) host.innerHTML = deepErrorMarkup(message, 'No lane result is proven for this run.');
+      announce(`Deep audit failed: ${message}`);
+    } finally {
+      clearInterval(poll);
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      button.textContent = 'Run deep audit';
+    }
+  }
+
+  async function steerDeepAudit(runId, button) {
+    const host = document.getElementById('deepAuditSteerResult');
+    const input = document.getElementById('deepAuditInstruction');
+    const instruction = ((input && input.value) || '').trim();
+    if (!instruction) {
+      if (host) host.innerHTML = '<p class="status failed">An instruction is required before the run can be steered.</p>';
+      return;
+    }
+    button.disabled = true;
+    try {
+      const response = await fetch(`/api/demo/deep-audit/${encodeURIComponent(runId)}/steer`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ instruction }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error((payload && payload.error) || `HTTP ${response.status}`);
+      if (host) host.innerHTML = `<p class="status verified">Instruction recorded</p><p class="evidence-note">${escapeHtml((payload.event && payload.event.message) || 'The run accepted the instruction.')}</p>`;
+      if (input) input.value = '';
+      await refreshDeepRun(runId);
+    } catch (error) {
+      if (host) host.innerHTML = `<p class="status failed">Incomplete: ${escapeHtml(String(error && error.message ? error.message : error))}</p>`;
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  /* ---------- gated local actions ---------- */
 
   async function runFixtureBrowser(button) {
     let host = document.getElementById('localBrowserEvidence');
     const masterButton = document.getElementById('startLocalAudit');
     button.disabled = true;
+    button.textContent = 'Running fixture journey…';
     if (masterButton) masterButton.disabled = true;
-    host.textContent = 'Running isolated fixture browser journey…';
+    if (host) host.innerHTML = '<p class="busy-row"><span class="spinner-inline" aria-hidden="true"></span>Running isolated fixture browser journey…</p>';
+    announce('Fixture browser journey running.');
     try {
       const response = await fetch(`/api/local/audits/${encodeURIComponent(button.dataset.auditId)}/browser`, { method: 'POST' });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
       const latestResponse = await fetch(`/api/local/audits/${encodeURIComponent(button.dataset.auditId)}`);
       if (!latestResponse.ok) throw new Error('Evidence refresh incomplete');
-      renderMasterAudit(await latestResponse.json(), document.getElementById('localRepoResult'));
+      const latest = await latestResponse.json();
+      renderMasterAudit(latest, document.getElementById('localRepoResult'));
       host = document.getElementById('localBrowserEvidence');
       if (host) host.innerHTML = `<p id="localBrowserStatus" class="status ${result.status === 'Completed' ? 'unknown' : 'failed'}">${escapeHtml(result.status)} fixture journey recorded above</p><p class="tiny muted">Full fixture evidence is in the Browser journey card above (server-owned record).</p>`;
-    } catch (error) { host.textContent = `Incomplete: ${error.message}`; }
-    finally { button.disabled = false; if (masterButton) masterButton.disabled = false; }
+    } catch (error) {
+      if (host) host.innerHTML = `<p class="status failed">Incomplete: ${escapeHtml(String(error && error.message ? error.message : error))}</p>`;
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Run fixture browser journey';
+      if (masterButton) masterButton.disabled = false;
+    }
   }
 
   async function verifyLocalRepair(auditId, buttonEl) {
-    const host=document.getElementById('localRepairResult');
-    const input=document.getElementById('localRepairPatch');
-    buttonEl.disabled=true;
+    const host = document.getElementById('localRepairResult');
+    const input = document.getElementById('localRepairPatch');
+    buttonEl.disabled = true;
+    buttonEl.textContent = 'Verifying…';
     try {
-      const patch=JSON.parse(input?.value || '{}');
-      const response=await fetch(`/api/local/audits/${encodeURIComponent(auditId)}/repair`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({patch})});
-      const result=await response.json();
-      if(!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      host.innerHTML=`<p class="status ${result.verdict==='VerifiedRepair'?'verified':result.verdict==='RejectedRepair'?'failed':'unknown'}">${escapeHtml(result.verdict)}</p><p class="tiny muted">Before exit ${escapeHtml(String(result.before?.exitCode))} · After exit ${escapeHtml(String(result.after?.exitCode))} · Original unchanged: ${escapeHtml(String(result.originalUnchanged))}</p>`;
-      const latest=await fetch(`/api/local/audits/${encodeURIComponent(auditId)}`);
-      if(!latest.ok) throw new Error('Repair evidence refresh incomplete');
-      renderMasterAudit(await latest.json(),document.getElementById('localRepoResult'));
-    } catch(error) {
-      host.innerHTML=`<p class="status failed">Incomplete: ${escapeHtml(error?.message || error)}</p>`;
-    } finally { buttonEl.disabled=false; }
+      const patch = JSON.parse((input && input.value) || '{}');
+      const response = await fetch(`/api/local/audits/${encodeURIComponent(auditId)}/repair`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ patch }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      if (host) host.innerHTML = `<p class="status ${result.verdict === 'VerifiedRepair' ? 'verified' : result.verdict === 'RejectedRepair' ? 'failed' : 'unknown'}">${escapeHtml(result.verdict)}</p><p class="tiny muted">Before exit ${escapeHtml(String(result.before && result.before.exitCode))} · After exit ${escapeHtml(String(result.after && result.after.exitCode))} · Original unchanged: ${escapeHtml(String(result.originalUnchanged))}</p>`;
+      const latest = await fetch(`/api/local/audits/${encodeURIComponent(auditId)}`);
+      if (!latest.ok) throw new Error('Repair evidence refresh incomplete');
+      const run = await latest.json();
+      renderMasterAudit(run, document.getElementById('localRepoResult'));
+      announce(`Repair verdict ${result.verdict}.`);
+    } catch (error) {
+      if (host) host.innerHTML = `<p class="status failed">Incomplete: ${escapeHtml(String(error && error.message ? error.message : error))}</p>`;
+    } finally {
+      buttonEl.disabled = false;
+      buttonEl.textContent = 'Verify repair';
+    }
+  }
+
+  let repairHuman = { auditId: '', token: '', approvalId: '', expiresAt: '' };
+  let repairApprovalGeneration = 0;
+
+  // Clearing the human state also empties the form: the token leaves the
+  // field, the review is unchecked again and the publish action is locked.
+  function clearRepairHuman() {
+    repairHuman = { auditId: '', token: '', approvalId: '', expiresAt: '' };
+    repairApprovalGeneration = (typeof repairApprovalGeneration === 'number' ? repairApprovalGeneration : 0) + 1;
+    if (typeof document === 'undefined') return;
+    const tokenInput = document.getElementById('localApprovalToken');
+    if (tokenInput && typeof tokenInput.value === 'string') tokenInput.value = '';
+    const reviewed = document.getElementById('localApprovalReviewed');
+    if (reviewed) reviewed.checked = false;
+    const publish = document.getElementById('localCreatePr');
+    if (publish) publish.disabled = true;
+  }
+
+  function repairApprovalError(status) {
+    if (status === 401) return 'The server rejected the token (401).';
+    if (status === 403) return 'The server refused this token (403). A human token is required for the approval.';
+    if (status === 409) return 'The server refused the request (409). The repair is not in a state that can be approved.';
+    if (status === 429) return 'The server is busy (429).';
+    if (status === 503) return 'The service is unavailable (503).';
+    return status ? `The server refused this request (HTTP ${status}).` : 'The request did not reach the server.';
+  }
+
+  async function approveLocalRepair(auditId, button) {
+    const tokenInput = document.getElementById('localApprovalToken');
+    const reviewed = document.getElementById('localApprovalReviewed');
+    const state = document.getElementById('localApprovalState');
+    const token = tokenInput && typeof tokenInput.value === 'string' ? tokenInput.value.trim() : '';
+    if (!token) {
+      if (state) state.innerHTML = '<p class="status failed">A human token is required before the repair can be approved.</p>';
+      return;
+    }
+    if (!reviewed || reviewed.checked !== true) {
+      if (state) state.innerHTML = '<p class="status failed">Confirm that you reviewed the immutable proof and the patch.</p>';
+      return;
+    }
+    // the token leaves the field as soon as it has been read
+    if (tokenInput && typeof tokenInput.value === 'string') tokenInput.value = '';
+    const generation = repairApprovalGeneration;
+    button.disabled = true;
+    button.textContent = 'Approving…';
+    try {
+      const response = await fetch(`/api/local/audits/${encodeURIComponent(auditId)}/approval`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'authorization': `Bearer ${token}` },
+        body: '{}',
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        clearRepairHuman();
+        if (state) state.innerHTML = `<p class="status failed">${escapeHtml(repairApprovalError(response.status))}</p>`;
+        return;
+      }
+      if (body.approved !== true || !body.approvalId) {
+        clearRepairHuman();
+        if (state) state.innerHTML = '<p class="status failed">The server did not record an approval, so the pull request stays locked.</p>';
+        return;
+      }
+      // a re-render or a route change while the request was in flight
+      // invalidated this approval: a detached card must not be unlocked
+      if (generation !== repairApprovalGeneration) return;
+      repairHuman = { auditId, token, approvalId: String(body.approvalId), expiresAt: body.expiresAt ? String(body.expiresAt) : '' };
+      const publish = document.getElementById('localCreatePr');
+      if (publish) publish.disabled = false;
+      if (state) state.innerHTML = '<p class="status verified">Approved</p><p class="evidence-note">The publish action is unlocked. The approval is single use: a stale approval is rejected and the repair has to be approved again.</p>';
+      announce('Repair approved.');
+    } catch (error) {
+      clearRepairHuman();
+      if (state) state.innerHTML = `<p class="status failed">${escapeHtml(repairApprovalError(0))} ${escapeHtml(String(error && error.message ? error.message : error))}</p>`;
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Approve repair';
+    }
   }
 
   async function createLocalPullRequest(auditId, buttonEl) {
-    const host=document.getElementById('localPrResult');
-    buttonEl.disabled=true;
+    const host = document.getElementById('localPrResult');
+    const approval = repairHuman;
+    if (!approval.approvalId || approval.auditId !== auditId) {
+      if (host) host.innerHTML = '<p class="status failed">The repair is not approved. Approve the repair first, then open the pull request.</p>';
+      return;
+    }
+    buttonEl.disabled = true;
+    buttonEl.textContent = 'Creating PR…';
     try {
-      const response=await fetch(`/api/local/audits/${encodeURIComponent(auditId)}/pr`,{method:'POST'});
-      const result=await response.json();
-      if(!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-      const url=result.pullRequest?.url;
-      host.innerHTML=url?`<p class="status verified">PR created</p><a href="${escapeHtml(url)}" target="_blank" rel="noopener">Open pull request</a>`:'<p class="status verified">PR created</p>';
-    } catch(error) {
-      host.innerHTML=`<p class="status failed">Incomplete: ${escapeHtml(error?.message || error)}</p>`;
-      buttonEl.disabled=false;
+      const response = await fetch(`/api/local/audits/${encodeURIComponent(auditId)}/pr`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'authorization': `Bearer ${approval.token}` },
+        body: JSON.stringify({ approvalId: approval.approvalId }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        clearRepairHuman();
+        if (host) host.innerHTML = `<p class="status failed">${escapeHtml(repairApprovalError(response.status))}</p>`;
+        buttonEl.disabled = false;
+        buttonEl.textContent = 'Create PR';
+        return;
+      }
+      const url = result.pullRequest && result.pullRequest.url;
+      if (host) host.innerHTML = url
+        ? `<p class="status verified">PR created</p><a href="${escapeHtml(url)}" target="_blank" rel="noopener">Open pull request</a>`
+        : '<p class="status verified">PR created</p>';
+      clearRepairHuman();
+      announce('Pull request created.');
+    } catch (error) {
+      clearRepairHuman();
+      if (host) host.innerHTML = `<p class="status failed">Incomplete: ${escapeHtml(String(error && error.message ? error.message : error))}</p>`;
+      buttonEl.disabled = false;
+      buttonEl.textContent = 'Create PR';
     }
   }
 
-  async function cleanupLocalRepository(id, buttonEl) {
-    buttonEl.disabled = true;
+  /* ---------- pull request verification screen ---------- */
+
+  function renderPrVerificationScreen() {
+    return `${appHeader()}
+      <div class="page">
+        <div class="page-head">
+          <h1 id="prVerificationTitle" tabindex="-1">Pull request verification</h1>
+          <p class="lede">Verify one pull request against the base and head it records, then read what the job actually ran.</p>
+        </div>
+        <form id="prVerificationForm" class="card pad form" aria-describedby="prVerificationHelp" novalidate>
+          <div class="field-row">
+            <div class="field">
+              <label class="label" for="prRepository">Repository</label>
+              <input id="prRepository" name="repository" class="input" type="text" autocomplete="off" spellcheck="false" placeholder="owner/repository" required aria-describedby="prRepositoryHelp" />
+              <p id="prRepositoryHelp" class="help">owner/repository</p>
+            </div>
+            <div class="field">
+              <label class="label" for="prPullRequest">Pull request number</label>
+              <input id="prPullRequest" name="pullRequest" class="input" type="text" inputmode="numeric" autocomplete="off" placeholder="1" required aria-describedby="prPullRequestHelp" />
+              <p id="prPullRequestHelp" class="help">A positive whole number.</p>
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" for="prHeadSha">Expected head commit</label>
+            <input id="prHeadSha" name="expectedHeadSha" class="input mono" type="text" autocomplete="off" spellcheck="false" placeholder="40 hexadecimal characters" required aria-describedby="prHeadShaHelp" />
+            <p id="prHeadShaHelp" class="help">Exactly 40 hexadecimal characters.</p>
+          </div>
+          <div class="field">
+            <label class="label" for="prToken">Bearer token</label>
+            <input id="prToken" name="token" class="input" type="password" autocomplete="off" required aria-describedby="prTokenHelp" />
+            <p id="prTokenHelp" class="help">Sent as an Authorization header. Kept in memory for this session only.</p>
+          </div>
+          <p class="form-limits">It verifies a pull request. It creates none and merges nothing.</p>
+          <div class="actions">
+            <button id="startPrVerification" class="btn primary" type="submit">Verify pull request</button>
+            <span class="form-note">One job per start.</span>
+          </div>
+        </form>
+        <div id="prVerificationResult" class="result-host section" role="region" aria-label="Verification job">
+          <div class="empty-state">
+            <p class="empty-title">No verification job yet</p>
+            <p class="empty-note">Start one to see the phase, the exact base and head the job tested, the checks it covered, the cleanup and the verdict. Nothing is shown that the job did not record.</p>
+          </div>
+        </div>
+        <div class="scope-grid">
+          <section class="card pad scope">
+            <h2>This job records</h2>
+            <ul class="scope-list">
+              <li>The phase the job reached, from Queued to Finished</li>
+              <li>The exact base and head commits the checks ran against</li>
+              <li>The checks that ran, and the ones that did not</li>
+              <li>The cleanup facts and the limitations it hit</li>
+              <li>One verdict, with the failure reason when there is one</li>
+            </ul>
+          </section>
+          <section class="card pad scope">
+            <h2>This screen does not</h2>
+            <ul class="scope-list neg">
+              <li>Create a pull request or merge one</li>
+              <li>Report a check the job did not run</li>
+              <li>Accept live AWS analysis: the controller reports it as not accepted</li>
+              <li>Keep the token anywhere but this session's memory</li>
+            </ul>
+          </section>
+        </div>
+      </div>`;
+  }
+
+  const PR_ACTIVE_PHASES = ['Queued', 'Resolving', 'Planning', 'Executing', 'Cleaning'];
+  const PR_FINISHED_PHASE = 'Finished';
+  let prToken = '';
+  let prJobId = '';
+  let prJob = null;
+  let prCapabilities = null;
+  let prPollTimer = null;
+  let prIdempotency = null;
+
+  function prFieldValue(id) {
+    const element = document.getElementById(id);
+    return element && typeof element.value === 'string' ? element.value.trim() : '';
+  }
+
+  function prIdempotencyKey() {
+    let random = '';
     try {
-      const response = await fetch(`/api/local/repositories/${encodeURIComponent(id)}/cleanup`, { method: 'POST' });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-      const resultEl = document.getElementById('localRepoResult');
-      resultEl.querySelector('#localCloneStatus').textContent = 'Temporary clone cleaned up';
-      resultEl.querySelector('#localCloneStatus').className = 'status unknown';
-      resultEl.querySelector('#localWorkspacePath')?.remove();
-      buttonEl.remove();
-      const form = document.getElementById('localRepositoryForm');
-      if (form) {
-        delete form.dataset.repositoryId;
-        const startButton = form.querySelector('#startLocalAudit');
-        startButton.disabled = false;
-        startButton.textContent = 'Start local check';
+      if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') random = crypto.randomUUID();
+      else if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+        const bytes = new Uint8Array(16);
+        crypto.getRandomValues(bytes);
+        random = Array.from(bytes, byte => byte.toString(16)).join('');
       }
     } catch (error) {
-      buttonEl.disabled = false;
-      showToast(`Cleanup failed: ${String(error?.message || error)}`);
+      random = '';
+    }
+    if (!random) random = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    return `prv-${random}`.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 128);
+  }
+
+  function prValidate() {
+    const repository = prFieldValue('prRepository');
+    const pullRequest = prFieldValue('prPullRequest');
+    const expectedHeadSha = prFieldValue('prHeadSha');
+    const token = prFieldValue('prToken');
+    const errors = [];
+    if (!/^[^/\s]+\/[^/\s]+$/.test(repository)) errors.push({ field: 'prRepository', message: 'Enter the repository as owner/repository.' });
+    if (!/^[1-9][0-9]*$/.test(pullRequest)) errors.push({ field: 'prPullRequest', message: 'Enter the pull request number as a positive whole number.' });
+    if (!/^[0-9a-fA-F]{40}$/.test(expectedHeadSha)) errors.push({ field: 'prHeadSha', message: 'Enter the expected head commit as exactly 40 hexadecimal characters.' });
+    if (!token) errors.push({ field: 'prToken', message: 'Enter the bearer token for this job.' });
+    return { errors, payload: { repository, pullRequest: Number(pullRequest), expectedHeadSha } };
+  }
+
+  function prPhase(job) {
+    const phase = job && (job.phase || job.status);
+    return phase ? String(phase) : 'Not reported';
+  }
+
+  function prJobIsActive(job) {
+    return PR_ACTIVE_PHASES.includes(prPhase(job));
+  }
+
+  function prVerdictTone(verdict) {
+    const value = String(verdict || '').toLowerCase();
+    if (value === 'verified') return 'verified';
+    if (value === 'incomplete' || value === 'failed') return 'failed';
+    return 'unknown';
+  }
+
+  function prText(value) {
+    if (value === undefined || value === null || value === '') return 'Not reported';
+    if (Array.isArray(value)) return value.length ? value.map(item => (typeof item === 'object' ? JSON.stringify(item) : String(item))).join(', ') : 'None reported';
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+  }
+
+  function prVerdictOf(job) {
+    if (job && job.verdict !== undefined && job.verdict !== null) return job.verdict;
+    if (job && job.result && job.result.verdict !== undefined && job.result.verdict !== null) return job.result.verdict;
+    return undefined;
+  }
+
+  function prObservations(job) {
+    const result = job && job.result;
+    return result && Array.isArray(result.observations) ? result.observations : [];
+  }
+
+  // The commit a revision was actually run against. An expected head is never
+  // reported as tested: only an observation that ran counts.
+  function prTestedCommit(job, revision) {
+    const observations = prObservations(job);
+    const rows = observations.filter(row => row && row.revision === revision && row.executed === true);
+    if (!rows.length) return 'Not tested';
+    const shas = [...new Set(rows.map(row => row.commitSha).filter(Boolean))];
+    return shas.length ? shas.join(', ') : 'Not reported';
+  }
+
+  function prObservationRows(job) {
+    const observations = prObservations(job);
+    if (!observations.length) return '<p class="evidence-note">No observation was recorded.</p>';
+    return `<ul class="observation-list">${observations.map(row => {
+      const artifactRefs = Array.isArray(row.artifactRefs) ? row.artifactRefs : [];
+      const missing = row.executed !== true || !artifactRefs.length;
+      return `<li class="observation">
+        <div class="observation-head">
+          <span class="observation-check mono">${escapeHtml(row.checkId || 'Not reported')}</span>
+          <span class="status ${prVerdictTone(row.status)}">${escapeHtml(row.status || 'Not reported')}</span>
+        </div>
+        <p class="evidence-note">revision: ${escapeHtml(row.revision || 'Not reported')} · commit <code class="wrap-anywhere">${escapeHtml(row.commitSha || 'Not reported')}</code></p>
+        <p class="evidence-note">executed: ${row.executed === true ? 'yes' : 'no'} · exit code: ${row.exitCode === null || row.exitCode === undefined ? 'Not reported' : escapeHtml(String(row.exitCode))}</p>
+        <p class="evidence-note">artifacts: ${artifactRefs.length ? escapeHtml(artifactRefs.join(', ')) : 'None recorded'}</p>
+        <p class="evidence-note mono wrap-anywhere">command digest ${escapeHtml(row.commandDigest || 'Not reported')} · test content ${escapeHtml(row.testContentSha256 || 'Not reported')}</p>
+        ${missing ? '<p class="evidence-note">No evidence was recorded for this check.</p>' : ''}
+      </li>`;
+    }).join('')}</ul>`;
+  }
+
+  function prPlanChecks(title, checks) {
+    const list = Array.isArray(checks) ? checks : [];
+    if (!list.length) return `<p class="evidence-sub">${escapeHtml(title)}</p><p class="evidence-note">None planned</p>`;
+    return `<p class="evidence-sub">${escapeHtml(title)} (${list.length})</p>
+      <ul class="artifact-list">${list.map(check => `<li>
+        <span class="artifact-name mono">${escapeHtml(check.checkId || 'Not reported')}</span>
+        <span class="evidence-note">${escapeHtml(check.origin || 'Not reported')} · artifact ${escapeHtml(check.artifactRef || 'Not reported')} · content ${escapeHtml(check.contentSha256 || 'Not reported')}</span>
+      </li>`).join('')}</ul>`;
+  }
+
+  function prLimitationsBlock(job) {
+    const jobLimitations = Array.isArray(job && job.limitations) ? job.limitations : [];
+    const resultLimitations = job && job.result && Array.isArray(job.result.limitations) ? job.result.limitations : [];
+    const rows = (items, label) => (items.length
+      ? `<p class="evidence-sub">${escapeHtml(label)} (${items.length})</p><ul class="artifact-list">${items.map(item => `<li><span class="artifact-name">${escapeHtml(String(item))}</span></li>`).join('')}</ul>`
+      : `<p class="evidence-sub">${escapeHtml(label)}</p><p class="evidence-note">None reported</p>`);
+    return `<section class="card pad section evidence-card"><h4>Limitations</h4>
+      ${rows(jobLimitations, 'Job limitations')}
+      ${rows(resultLimitations, 'Result limitations')}
+    </section>`;
+  }
+
+  function prCandidateBlock(job) {
+    const candidate = job && job.candidate ? job.candidate : (job && job.result ? job.result.candidate : null);
+    if (!candidate) return `<section class="card pad section evidence-card"><h4>Candidate revision</h4><p class="evidence-note">Not reported</p></section>`;
+    const changedFiles = Array.isArray(candidate.changedFiles) ? candidate.changedFiles : [];
+    return `<section class="card pad section evidence-card"><h4>Candidate revision</h4>
+      ${factGrid([
+        fact('repository', candidate.repository),
+        fact('pull request', candidate.pullRequest),
+        fact('head repository', candidate.headRepository),
+        fact('resolved base', candidate.baseSha, undefined, true),
+        fact('resolved head', candidate.headSha, undefined, true),
+        fact('merge base', candidate.mergeBaseSha, undefined, true),
+        fact('diff digest', candidate.diffDigest, undefined, true),
+      ])}
+      <p class="evidence-sub">Changed files (${changedFiles.length})</p>
+      ${changedFiles.length ? `<ul class="artifact-list">${changedFiles.map(file => `<li><span class="artifact-name mono">${escapeHtml(String(file))}</span></li>`).join('')}</ul>` : '<p class="evidence-note">None reported</p>'}
+    </section>`;
+  }
+
+  function prPlanBlock(job) {
+    const plan = job && job.plan ? job.plan : (job && job.result ? job.result.plan : null);
+    if (!plan) return `<section class="card pad section evidence-card"><h4>Check plan</h4><p class="evidence-note">Not reported</p></section>`;
+    return `<section class="card pad section evidence-card"><h4>Check plan</h4>
+      ${factGrid([
+        fact('policy version', plan.policyVersion),
+        fact('profile', plan.profileId),
+        fact('profile digest', plan.profileDigest, undefined, true),
+        fact('plan digest', plan.planDigest, undefined, true),
+      ])}
+      ${prPlanChecks('Required checks', plan.requiredChecks)}
+      ${prPlanChecks('Generated tests', plan.generatedTests)}
+    </section>`;
+  }
+
+  function prCleanupBlock(job) {
+    const result = job && job.result;
+    if (!result) return `<section class="card pad section evidence-card"><h4>Cleanup</h4><p class="evidence-note">Not reported</p></section>`;
+    return `<section class="card pad section evidence-card"><h4>Cleanup and evidence</h4>
+      ${factGrid([
+        fact('cleanup complete', result.cleanupComplete === true ? 'yes' : result.cleanupComplete === false ? 'no' : 'Not reported'),
+        fact('superseded', result.superseded === true ? 'yes' : result.superseded === false ? 'no' : 'Not reported'),
+        fact('evidence manifest', result.evidenceManifestSha256, undefined, true),
+      ])}
+    </section>`;
+  }
+
+  function renderPrJob(job, host) {
+    prJob = job;
+    const phase = prPhase(job);
+    const verdict = prVerdictOf(job);
+    const failure = job && job.failure ? job.failure : null;
+    const request = job && job.request ? job.request : null;
+    const tone = prJobIsActive(job) ? 'running' : phase === PR_FINISHED_PHASE ? 'unknown' : 'failed';
+    host.innerHTML = `<section class="card pad result-root" data-job-id="${escapeHtml((job && job.id) || '')}">
+      <div class="result-head">
+        <div class="result-head-text">
+          <h2 class="result-title">Pull request verification</h2>
+          <p class="result-lede">${escapeHtml(prJobHeadline(job, phase, verdict, failure))}</p>
+        </div>
+        <p class="status ${tone}" id="prVerificationPhase">${escapeHtml(phase)}</p>
+      </div>
+      <section class="card pad section evidence-card" id="prVerificationFacts">
+        <h4>Job</h4>
+        ${factGrid([
+          fact('job id', (job && job.id) || '', undefined, true),
+          fact('phase', phase),
+          fact('verdict', prText(verdict)),
+        ])}
+        ${request ? factGrid([
+          fact('repository', request.repository),
+          fact('pull request', request.pullRequest),
+          fact('expected head', request.expectedHeadSha, undefined, true),
+        ]) : ''}
+        ${prFailureBlock(failure)}
+      </section>
+      ${prCandidateBlock(job)}
+      ${prPlanBlock(job)}
+      <section class="card pad section evidence-card" id="prVerificationObservations">
+        <h4>Observations</h4>
+        ${factGrid([
+          fact('tested base commit', prTestedCommit(job, 'base'), undefined, true),
+          fact('tested head commit', prTestedCommit(job, 'head'), undefined, true),
+        ])}
+        ${prObservationRows(job)}
+      </section>
+      ${prCleanupBlock(job)}
+      ${prLimitationsBlock(job)}
+      <p class="tiny muted">These are the fields the controller recorded. The resolved base and head are the candidate the controller resolved. A tested commit is one an observation actually ran: neither the request nor the candidate identity proves that a check ran.</p>
+      <div class="actions">
+        <button class="btn sm" type="button" data-action="cancel-pr-job" data-job-id="${escapeHtml((job && job.id) || '')}"${prJobIsActive(job) ? '' : ' disabled'}>Cancel job</button>
+        <button class="btn sm" type="button" data-action="load-pr-evidence" data-job-id="${escapeHtml((job && job.id) || '')}">Load evidence</button>
+      </div>
+      <div id="prVerificationEvidence" role="status" aria-live="polite"></div>
+    </section>${prCapabilities ? prCapabilitiesBlock(prCapabilities) : ''}`;
+  }
+
+  function prJobHeadline(job, phase, verdict, failure) {
+    if (prJobIsActive(job)) return `The job is ${phase}. It is still running.`;
+    if (failure && (failure.code || failure.message)) return `The job ${phase} with a failure. The code and the message are below.`;
+    if (verdict !== undefined && verdict !== null && verdict !== '') return `The job ${phase}. Verdict: ${String(verdict)}.`;
+    return `The job ${phase}. It recorded no verdict.`;
+  }
+
+  function prFailureBlock(failure) {
+    if (!failure) return '';
+    const code = failure.code ? String(failure.code) : 'Not reported';
+    const message = failure.message ? String(failure.message) : 'Not reported';
+    return `<div class="failure-block">
+      <p class="evidence-sub">Failure</p>
+      <p class="evidence-note mono wrap-anywhere">${escapeHtml(code)}</p>
+      <p class="evidence-note wrap-anywhere">${escapeHtml(message)}</p>
+    </div>`;
+  }
+
+  function prCapabilitiesBlock(capabilities) {
+    const data = capabilities || {};
+    return `<section class="card pad section evidence-card" id="prVerificationCapabilities">
+      <h4>Controller runtime</h4>
+      ${factGrid([
+        fact('execution configured', data.executionConfigured === true ? 'yes' : data.executionConfigured === false ? 'no' : 'Not reported'),
+        fact('publication configured', data.publicationConfigured === true ? 'yes' : data.publicationConfigured === false ? 'no' : 'Not reported'),
+        fact('live AWS accepted', data.liveAwsAccepted === true ? 'yes' : data.liveAwsAccepted === false ? 'no' : 'Not reported'),
+      ])}
+    </section>`;
+  }
+
+  function prErrorBlock(status, body, host) {
+    const reasons = {
+      401: 'The server rejected the token (401).',
+      403: 'The server refused this request (403). The token may not cover this job.',
+      429: 'The server is busy (429).',
+      503: 'The verification service is unavailable (503).',
+    };
+    const reason = reasons[status] || (status ? `The server refused this request (HTTP ${status}).` : 'The request did not reach the server.');
+    const detail = body && (body.error || body.message) ? String(body.error || body.message) : '';
+    host.innerHTML = `<section class="card pad error-block" role="alert" tabindex="-1" id="prVerificationError">
+      <p class="error-title">The verification did not start</p>
+      <p class="error-text">${escapeHtml(reason)}</p>
+      ${detail ? `<p class="evidence-note wrap-anywhere">${escapeHtml(detail)}</p>` : ''}
+      <p class="evidence-note">Your input is still in the form. Fix what the server named and start the job again.</p>
+    </section>`;
+    const error = document.getElementById('prVerificationError');
+    if (error && typeof error.focus === 'function') error.focus();
+  }
+
+  function prValidationErrorBlock(errors, host) {
+    host.innerHTML = `<section class="card pad error-block" role="alert" tabindex="-1" id="prVerificationError">
+      <p class="error-title">The form needs a fix</p>
+      <ul class="artifact-list">${errors.map(item => `<li><span class="artifact-name">${escapeHtml(item.message)}</span></li>`).join('')}</ul>
+    </section>`;
+    const error = document.getElementById('prVerificationError');
+    if (error && typeof error.focus === 'function') error.focus();
+    const first = document.getElementById(errors[0].field);
+    if (first && typeof first.focus === 'function') first.focus();
+  }
+
+  async function startPrVerification(form) {
+    const button = document.getElementById('startPrVerification');
+    const host = document.getElementById('prVerificationResult');
+    const { errors, payload } = prValidate();
+    if (errors.length) {
+      prValidationErrorBlock(errors, host);
+      return;
+    }
+    prToken = prFieldValue('prToken');
+    const signature = JSON.stringify(payload);
+    if (!prIdempotency || prIdempotency.signature !== signature) prIdempotency = { signature, key: prIdempotencyKey() };
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.textContent = 'Starting job…';
+    host.innerHTML = '<section class="card pad result-root"><p class="busy-row"><span class="spinner-inline" aria-hidden="true"></span>Starting the verification job…</p></section>';
+    try {
+      const response = await fetch('/api/local/pr-verifications', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'authorization': `Bearer ${prToken}`, 'idempotency-key': prIdempotency.key },
+        body: JSON.stringify(payload),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        prErrorBlock(response.status, body, host);
+        return;
+      }
+      const job = (body && body.job) || {};
+      prJobId = job.id ? String(job.id) : '';
+      prCapabilities = null;
+      renderPrJob(job, host);
+      startPrPolling();
+      loadPrCapabilities(host);
+    } catch (error) {
+      prErrorBlock(0, { error: String(error && error.message ? error.message : error) }, host);
+    } finally {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      button.textContent = 'Verify pull request';
     }
   }
 
-  const renderers = { landing: renderLocalLanding };
+  function stopPrPolling() {
+    if (prPollTimer) {
+      clearInterval(prPollTimer);
+      prPollTimer = null;
+    }
+  }
+
+  function startPrPolling() {
+    stopPrPolling();
+    if (!prJobId) return;
+    prPollTimer = setInterval(async () => {
+      if (!prJobId) {
+        stopPrPolling();
+        return;
+      }
+      const host = document.getElementById('prVerificationResult');
+      try {
+        const response = await fetch(`/api/local/pr-verifications/${encodeURIComponent(prJobId)}`, {
+          headers: { 'authorization': `Bearer ${prToken}` },
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          if (host) prErrorBlock(response.status, body, host);
+          stopPrPolling();
+          return;
+        }
+        const job = (body && body.job) || body || {};
+        if (host) renderPrJob(job, host);
+        if (!prJobIsActive(job)) {
+          stopPrPolling();
+          prIdempotency = null;
+        }
+      } catch (error) {
+        if (host) prErrorBlock(0, { error: String(error && error.message ? error.message : error) }, host);
+        stopPrPolling();
+      }
+    }, 1500);
+  }
+
+  async function loadPrCapabilities(host) {
+    if (!host) return;
+    try {
+      const response = await fetch('/api/local/pr-verifications/capabilities', {
+        headers: { 'authorization': `Bearer ${prToken}` },
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) return;
+      prCapabilities = body;
+      if (prJob) renderPrJob(prJob, host);
+    } catch (error) {
+      // the runtime card is an extra, the job result stays the source of truth
+    }
+  }
+
+  async function cancelPrJob(button) {
+    if (!prJobId) return;
+    const host = document.getElementById('prVerificationResult');
+    button.disabled = true;
+    try {
+      const response = await fetch(`/api/local/pr-verifications/${encodeURIComponent(prJobId)}/cancel`, {
+        method: 'POST',
+        headers: { 'authorization': `Bearer ${prToken}` },
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (host) prErrorBlock(response.status, body, host);
+        button.disabled = false;
+        return;
+      }
+      stopPrPolling();
+      if (host) renderPrJob((body && body.job) || {}, host);
+    } catch (error) {
+      if (host) prErrorBlock(0, { error: String(error && error.message ? error.message : error) }, host);
+      button.disabled = false;
+    }
+  }
+
+  async function loadPrEvidence(button) {
+    if (!prJobId) return;
+    const host = document.getElementById('prVerificationEvidence');
+    button.disabled = true;
+    if (host) host.innerHTML = '<p class="busy-row"><span class="spinner-inline" aria-hidden="true"></span>Loading evidence…</p>';
+    try {
+      const response = await fetch(`/api/local/pr-verifications/${encodeURIComponent(prJobId)}/evidence`, {
+        headers: { 'authorization': `Bearer ${prToken}` },
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (host) host.innerHTML = `<p class="status failed">Incomplete: ${escapeHtml(String((body && body.error) || `HTTP ${response.status}`))}</p>`;
+        return;
+      }
+      const evidence = body || {};
+      const status = evidence.status ? String(evidence.status) : 'Not reported';
+      const verdict = evidence.verdict !== undefined && evidence.verdict !== null ? evidence.verdict : undefined;
+      const limitations = Array.isArray(evidence.limitations) ? evidence.limitations : [];
+      const parts = [];
+      parts.push(`<div class="observation-head"><span class="evidence-sub">Evidence status</span><span class="status ${status === 'Available' ? 'verified' : status === 'Unavailable' ? 'failed' : 'unknown'}">${escapeHtml(status)}</span></div>`);
+      if (status === 'Unavailable') parts.push('<p class="evidence-note">The job finished without a recorded result, so there is no evidence bundle to read.</p>');
+      if (status === 'Pending') parts.push('<p class="evidence-note">The job has not produced a result yet.</p>');
+      if (verdict !== undefined) parts.push(`<p class="evidence-note">Verdict: ${escapeHtml(prText(verdict))}</p>`);
+      if (limitations.length) parts.push(`<p class="evidence-sub">Limitations (${limitations.length})</p><ul class="artifact-list">${limitations.map(item => `<li><span class="artifact-name">${escapeHtml(String(item))}</span></li>`).join('')}</ul>`);
+      if (evidence.candidate) parts.push(`<p class="evidence-sub">Candidate</p>${factGrid([fact('candidate base', evidence.candidate.baseSha, undefined, true), fact('candidate head', evidence.candidate.headSha, undefined, true), fact('merge base', evidence.candidate.mergeBaseSha, undefined, true)])}`);
+      if (evidence.plan) parts.push(`<p class="evidence-sub">Plan</p>${factGrid([fact('profile', evidence.plan.profileId), fact('plan digest', evidence.plan.planDigest, undefined, true)])}`);
+      if (evidence.result) {
+        const observations = Array.isArray(evidence.result.observations) ? evidence.result.observations : [];
+        parts.push(`<p class="evidence-sub">Result</p>${factGrid([
+          fact('verdict', prText(evidence.result.verdict)),
+          fact('observations', observations.length),
+          fact('cleanup complete', evidence.result.cleanupComplete === true ? 'yes' : evidence.result.cleanupComplete === false ? 'no' : 'Not reported'),
+          fact('evidence manifest', evidence.result.evidenceManifestSha256, undefined, true),
+        ])}`);
+      }
+      if (host) host.innerHTML = `<div class="evidence-card">${parts.join('') || '<p class="evidence-note">The evidence endpoint returned no fields.</p>'}</div>`;
+    } catch (error) {
+      if (host) host.innerHTML = `<p class="status failed">Incomplete: ${escapeHtml(String(error && error.message ? error.message : error))}</p>`;
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  /* ---------- routing ---------- */
+
+  function screenFromHash(hash) {
+    const name = String(hash || '').replace(/^#\/?/, '').trim();
+    return Object.prototype.hasOwnProperty.call(SCREENS, name) ? name : 'landing';
+  }
 
   function navigate(screen, push = true) {
-    if (screen !== 'landing') return;
+    if (!Object.prototype.hasOwnProperty.call(SCREENS, screen)) return;
+    if (screen !== 'pr-verification') stopPrPolling();
+    clearRepairHuman();
     state.screen = screen;
     if (push && location.hash !== `#/${screen}`) location.hash = `#/${screen}`;
     render();
+    const title = document.getElementById(`${screen === 'landing' ? 'localAuditTitle' : screen === 'deep-audit' ? 'deepAuditTitle' : 'prVerificationTitle'}`);
+    if (title && typeof title.focus === 'function') title.focus();
     window.scrollTo({ top: 0, behavior: 'auto' });
   }
 
@@ -1000,12 +1841,10 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
   }
 
   function render() {
-    const renderer = renderers[state.screen] || renderers.landing;
-    app.innerHTML = renderer();
-    app.classList.remove('route-enter');
-    void app.offsetWidth;
-    app.classList.add('route-enter');
-    document.title = 'Local repository check — VERIFAI';
+    const screen = SCREENS[state.screen] || SCREENS.landing;
+    app.innerHTML = screen.render();
+    document.title = screen.docTitle;
+    if (state.screen !== 'pr-verification') stopPrPolling();
   }
 
   document.addEventListener('submit', (event) => {
@@ -1013,44 +1852,70 @@ h3 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; margin-bottom: 
     if (repositoryForm) {
       event.preventDefault();
       startLocalRepositoryCheck(repositoryForm);
+      return;
+    }
+    const deepForm = event.target.closest('#deepAuditForm');
+    if (deepForm) {
+      event.preventDefault();
+      startDeepAudit(deepForm);
+      return;
+    }
+    const prForm = event.target.closest('#prVerificationForm');
+    if (prForm) {
+      event.preventDefault();
+      startPrVerification(prForm);
     }
   });
 
   document.addEventListener('click', (event) => {
     const fixtureBrowser = event.target.closest('[data-action="run-fixture-browser"]');
     if (fixtureBrowser) { event.preventDefault(); runFixtureBrowser(fixtureBrowser); return; }
+    const approveRepair = event.target.closest('[data-action="approve-local-repair"]');
+    if (approveRepair) { event.preventDefault(); approveLocalRepair(approveRepair.dataset.auditId, approveRepair); return; }
     const createPr = event.target.closest('[data-action="create-local-pr"]');
-    if (createPr) {
-      event.preventDefault();
-      createLocalPullRequest(createPr.dataset.auditId, createPr);
-      return;
-    }
+    if (createPr) { event.preventDefault(); createLocalPullRequest(createPr.dataset.auditId, createPr); return; }
     const repairAudit = event.target.closest('[data-action="repair-local-audit"]');
-    if (repairAudit) {
+    if (repairAudit) { event.preventDefault(); verifyLocalRepair(repairAudit.dataset.auditId, repairAudit); return; }
+    const steer = event.target.closest('[data-action="steer-deep-audit"]');
+    if (steer) { event.preventDefault(); steerDeepAudit(steer.dataset.runId, steer); return; }
+    const cancelPr = event.target.closest('[data-action="cancel-pr-job"]');
+    if (cancelPr) { event.preventDefault(); cancelPrJob(cancelPr); return; }
+    const prEvidence = event.target.closest('[data-action="load-pr-evidence"]');
+    if (prEvidence) { event.preventDefault(); loadPrEvidence(prEvidence); return; }
+    const retryLocal = event.target.closest('[data-action="retry-local-audit"]');
+    if (retryLocal) {
       event.preventDefault();
-      verifyLocalRepair(repairAudit.dataset.auditId, repairAudit);
+      const form = document.getElementById('localRepositoryForm');
+      if (form) startLocalRepositoryCheck(form);
       return;
     }
-    const cleanupRepository = event.target.closest('[data-action="cleanup-local-repository"]');
-    if (cleanupRepository) {
-      cleanupLocalRepository(cleanupRepository.dataset.repositoryId, cleanupRepository);
+    const retryDeep = event.target.closest('[data-action="retry-deep-audit"]');
+    if (retryDeep) {
+      event.preventDefault();
+      const form = document.getElementById('deepAuditForm');
+      if (form) startDeepAudit(form);
       return;
     }
     const nav = event.target.closest('[data-nav]');
     if (nav) {
       event.preventDefault();
       navigate(nav.dataset.nav);
-      return;
     }
   });
 
-  let headerScrollQueued=false;
-  window.addEventListener('scroll',()=>{if(headerScrollQueued)return;headerScrollQueued=true;requestAnimationFrame(()=>{document.querySelector('.app-header')?.classList.toggle('scrolled',window.scrollY>10);headerScrollQueued=false})},{passive:true});
+  window.addEventListener('hashchange', () => {
+    const next = screenFromHash(location.hash);
+    if (next !== state.screen) {
+      state.screen = next;
+      render();
+    }
+  });
 
-  window.VERIFAI = { navigate, render, state };
+  window.VERIFAI = { navigate, render, state, screens: SCREENS };
+  state.screen = screenFromHash(location.hash);
   render();
 })();
-</script>
+  </script>
 
 </body>
 </html>

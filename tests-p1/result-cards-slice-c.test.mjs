@@ -221,7 +221,7 @@ test('fixture browser action refreshes server-owned evidence and restores contro
       assert.match(browserHost.innerHTML, /fixture journey recorded above/);
       assert.doesNotMatch(browserHost.innerHTML, /unit observation/);
     } else {
-      assert.equal(browserHost.textContent, 'Incomplete: Evidence refresh incomplete');
+      assert.match(browserHost.innerHTML, /Incomplete: Evidence refresh incomplete/);
     }
   }
 });

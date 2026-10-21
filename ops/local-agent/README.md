@@ -14,6 +14,8 @@ Start with [`START-HERE.md`](START-HERE.md).
 | [`scripts/preflight.sh`](scripts/preflight.sh) | read-only machine/repo report (LA1) |
 | [`scripts/check-docker.sh`](scripts/check-docker.sh) | read-only, label-scoped Docker inspection (LA1) |
 | [`tests/kit-safety.test.mjs`](tests/kit-safety.test.mjs) | safety harness; run with `npm run ops:test` (LA1) |
+| [`tests/request-safety.test.mjs`](tests/request-safety.test.mjs) | behavioral HTTP safety tests for the local web/API slice: malformed routing decodes reject 400 and survive, loopback-only Host/Origin, JSON-only writes, web-to-API proxy compatibility (run with `npm run ops:test`); uses [`tests/request-safety-child.mjs`](tests/request-safety-child.mjs) with an offline repository adapter. Ref #81 |
+| [`tests/human-approval-routes.test.mjs`](tests/human-approval-routes.test.mjs) | behavioral HTTP tests for scoped bearer principals + human single-use approval + publication (run with `npm run ops:test`); uses [`tests/human-approval-child.mjs`](tests/human-approval-child.mjs) with offline stores and a recording transport. Ref #81 |
 | [`ENVIRONMENT.md`](ENVIRONMENT.md) | variable categories + AWS Bedrock credential rules (LA2) |
 | [`env/local.env.example`](env/local.env.example) | placeholders only (LA2) |
 | [`scripts/doctor.sh`](scripts/doctor.sh) | staged readiness: `--stage M1\|M2` (LA2) |

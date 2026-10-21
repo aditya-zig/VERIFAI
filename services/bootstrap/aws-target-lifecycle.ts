@@ -90,7 +90,19 @@ function shell(value: string): string {
 }
 
 export function buildArbitraryRepoBuildspec(request: AwsTargetRequest, config: AwsTargetLifecycleConfig): string {
-  const dockerfile = request.dockerfile?.trim() || 'Dockerfile';
+  const dockerfile = request.dockerfile === undefined ? 'Dockerfile' : request.dockerfile;
+  if (typeof dockerfile !== 'string' || dockerfile.length > 256
+    || !dockerfile.split('/').every(part => /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(part) && part !== '.' && part !== '..')) {
+    throw new AwsTargetLifecycleError('build', 'Dockerfile path must be a bounded repository-relative path with safe components');
+  }
+  const pathParts = dockerfile.split('/');
+  const noSymlinks = pathParts.map((_, index) => `test ! -L ${shell(pathParts.slice(0, index + 1).join('/'))}`);
+  const guard = [
+    `git ls-files --error-unmatch -- ${shell(dockerfile)} >/dev/null 2>&1`,
+    `test -f ${shell(dockerfile)}`,
+    ...noSymlinks,
+  ].join(' && ');
+  const unsupported = `VERIFIAI_UNSUPPORTED: Dockerfile not found or not a tracked regular file at ${dockerfile}`;
   const imageUri = `${config.ecrRegistry}/${config.ecrRepository}:${request.imageTag}`;
   return [
     'version: 0.2',
@@ -103,8 +115,8 @@ export function buildArbitraryRepoBuildspec(request: AwsTargetRequest, config: A
     '      - rm -rf /tmp/verifiai-target && mkdir -p /tmp/verifiai-target',
     `      - git clone --depth 1 --branch ${shell(request.branch)} ${shell(request.repoUrl)} /tmp/verifiai-target`,
     `      - cd /tmp/verifiai-target && git fetch --depth 1 origin ${shell(request.commitSha)} && git checkout ${shell(request.commitSha)}`,
-    `      - test -f /tmp/verifiai-target/${dockerfile} || (echo "VERIFIAI_UNSUPPORTED: Dockerfile not found at ${dockerfile}" >&2; exit 42)`,
-    `      - docker build -f /tmp/verifiai-target/${dockerfile} -t ${shell(imageUri)} /tmp/verifiai-target`,
+    `      - ${JSON.stringify(`${guard} || (printf '%s\\n' ${shell(unsupported)} >&2; exit 42)`)}`,
+    `      - docker build -f ${shell(`/tmp/verifiai-target/${dockerfile}`)} -t ${shell(imageUri)} /tmp/verifiai-target`,
     `      - docker push ${shell(imageUri)}`,
     'artifacts:',
     '  files: []',

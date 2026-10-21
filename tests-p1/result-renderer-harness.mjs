@@ -1,9 +1,16 @@
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
+// Every helper the master renderer calls, so a refactor cannot silently drift
+// away from what the tests exercise.
 export const RESULT_HELPERS = [
-  'escapeHtml', 'resultTone', 'factTone', 'resultBadge', 'chip', 'monoChip',
+  'escapeHtml', 'announce', 'resultTone', 'factTone', 'resultBadge', 'chip', 'monoChip',
   'fact', 'factGrid', 'evidenceCard', 'sandboxDisplay', 'hashChip',
+  'stageRows', 'localStageRows', 'localAuditHeadline',
+  'localResultHead', 'localSummaryBlock', 'localFindingBlock', 'localExecutionBlock',
+  'localStagesBlock', 'localSpecialistBlock', 'localBrowserBlock', 'localRepairBlock',
+  'localProofBlock', 'localCleanupBlock', 'localFixtureActionBlock',
+  'clearRepairHuman',
 ];
 
 const PAGE_URL = new URL('../apps/web/index.html', import.meta.url);

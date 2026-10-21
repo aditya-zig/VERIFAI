@@ -180,15 +180,35 @@ export class RepositoryImportService {
 }
 
 export class FetchGitHubTransport implements GitHubTransport {
+  constructor(private readonly options: { timeoutMs?: number } = {}) {}
+
   async request<T>(method: string, path: string, body?: unknown, token?: string): Promise<T> {
+    const timeoutMs = this.options.timeoutMs;
+    if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
+      throw new Error('GitHub request timeout must be a positive number of milliseconds');
+    }
     const oauth = path === '/login/oauth/access_token';
     const url = oauth ? `https://github.com${path}` : `https://api.github.com${path}`;
     const headers: Record<string, string> = { accept: oauth ? 'application/json' : 'application/vnd.github+json', 'user-agent': 'VERIFAI' };
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (token) headers.authorization = `Bearer ${token}`;
-    const response = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
-    const payload = await response.json() as any;
-    if (!response.ok) throw new Error(`GitHub request failed (${response.status}): ${payload?.message || payload?.error || 'unknown error'}`);
-    return payload as T;
+    const controller = timeoutMs === undefined ? undefined : new AbortController();
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+    try {
+      const response = await fetch(url, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+      const payload = await response.json() as any;
+      if (!response.ok) throw new Error(`GitHub request failed (${response.status}): ${payload?.message || payload?.error || 'unknown error'}`);
+      return payload as T;
+    } catch (error) {
+      if (controller?.signal.aborted) throw new Error(`GitHub request timed out after ${timeoutMs}ms`);
+      throw error;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 }

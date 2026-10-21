@@ -413,6 +413,7 @@ Deep Audit:
 
 ## Documentation
 
+- [Read-only PR candidate inspection](docs/pr-candidate-resolution.md)
 - [AgentCore worker runtime](docs/agentcore-worker.md)
 - [Shared contracts](docs/contracts.md)
 - [Demo recording path](docs/demo-recording.md)

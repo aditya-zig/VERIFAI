@@ -4,7 +4,6 @@ import type {
   CheckObservation,
   CheckPlan,
   PrVerdict,
-  PrVerificationRequest,
   PrVerificationResult,
   TestDefinition,
 } from '../../packages/contracts/src/index.js';
@@ -30,6 +29,11 @@ import type {
  *   a matching, executed, passing observation on the candidate head. Anything
  *   less is rejected or published as failure/action_required, never success.
  * - The evidence manifest must be present and cleanup must be complete.
+ *
+ * The controller owns full verification and publication wiring. This module
+ * is the bounded writer behind it: it performs no verification, reads no
+ * branch protection and claims no enforcement. Wired publication happens
+ * only through an explicitly configured adapter and an operator action.
  */
 
 export const PR_CHECKS_LIMITS = Object.freeze({
@@ -94,11 +98,6 @@ export interface PrChecksPublicationRecord {
   updatedAt: string;
 }
 
-export interface PrChecksPublicationStore {
-  save(record: PrChecksPublicationRecord): Promise<void> | void;
-  get(key: string): Promise<PrChecksPublicationRecord | undefined> | PrChecksPublicationRecord | undefined;
-}
-
 /**
  * In-process store for retries inside one server lifetime. Durable stores
  * (files, databases) implement the same interface for restart reconciliation.
@@ -133,27 +132,25 @@ export function prChecksConclusion(verdict: PrVerdict): Exclude<PrChecksConclusi
   }
 }
 
-export interface PrChecksPublishConfig {
-  /** Trusted server token. The caller reads it from environment configuration. */
-  token: string;
-  /** Trusted principal identity recorded in the publication store only. */
-  principal: string;
+export interface PrChecksPublicationJob {
+  /** Repository as owner/name. */
+  repository: string;
+  pullRequest: number;
   /**
-   * Publication must be invoked with results produced by the server-side
-   * runtime verifier. This literal rejects calling the module directly with
-   * an authoritative result that arrived from a client.
+   * The exact head SHA the verification result was produced for. Publication
+   * binds to it and refuses to write when the live head or base moved.
    */
-  resultSource: 'server-verifier';
+  expectedHeadSha: string;
   /**
-   * This module does not read repository branch protection settings. The
-   * caller must explicitly confirm that protection enforces the VERIFAI
-   * check (or consciously accept the assumption) before any write happens.
+   * Trusted, server-produced result compatible with CandidateRevision plus
+   * PrVerificationResult. It must never be filled from client input.
    */
-  assumeStrictBranchProtection: boolean;
+  result: PrVerificationResult;
 }
 
-export interface PrChecksPublishOptions {
-  signal?: AbortSignal;
+export interface PrChecksPublicationStore {
+  save(record: PrChecksPublicationRecord): Promise<void> | void;
+  get(key: string): Promise<PrChecksPublicationRecord | undefined> | PrChecksPublicationRecord | undefined;
 }
 
 export type PrChecksSupersedeReason = 'HEAD_MOVED' | 'BASE_MOVED' | 'POST_WRITE_VERIFY_FAILED';
@@ -228,26 +225,7 @@ function sanitizeUntrustedText(value: unknown, maxLength: number): { text: strin
   return { text: `${cleaned.slice(0, maxLength)}[trimmed]`, truncated: true };
 }
 
-function validateRequestShape(value: unknown): void {
-  const request = isRecord(value) ? value : fail('INVALID_PUBLICATION_INPUT', 'publication request must be an object', 400);
-  const parts = typeof request.repository === 'string' ? request.repository.split('/') : [];
-  const validRepository =
-    parts.length === 2 &&
-    ownerPattern.test(parts[0]) &&
-    repositoryNamePattern.test(parts[1]) &&
-    parts[1] !== '.' &&
-    parts[1] !== '..';
-  if (!validRepository) fail('INVALID_PUBLICATION_INPUT', 'repository must be owner/name', 400);
-  if (typeof request.pullRequest !== 'number' || !Number.isSafeInteger(request.pullRequest) || request.pullRequest <= 0) {
-    fail('INVALID_PUBLICATION_INPUT', 'pullRequest must be a positive integer', 400);
-  }
-  if (typeof request.expectedHeadSha !== 'string' || !shaPattern.test(request.expectedHeadSha)) {
-    fail('INVALID_PUBLICATION_INPUT', 'expectedHeadSha must be a 40-character hexadecimal commit SHA', 400);
-  }
-}
-
-function validateConfig(config: unknown): void {
-  const value = isRecord(config) ? config : fail('INVALID_PUBLICATION_INPUT', 'publication config must be an object', 400);
+function validateTrustFields(value: Record<string, unknown>): void {
   if (typeof value.token !== 'string' || value.token.length === 0 || value.token.length > 255) {
     fail('INVALID_PUBLICATION_INPUT', 'a non-empty trusted token is required', 400);
   }
@@ -263,10 +241,35 @@ function validateConfig(config: unknown): void {
   if (!value.assumeStrictBranchProtection) {
     fail(
       'BRANCH_PROTECTION_ASSUMPTION_REQUIRED',
-      'publication does not verify branch protection; confirm the strict protection assumption explicitly',
+      'publication does not verify branch protection or required-check enforcement; acknowledgment is required before any write',
       409,
     );
   }
+}
+
+function validateJob(value: unknown): PrChecksPublicationJob {
+  const job = isRecord(value) ? value : fail('INVALID_PUBLICATION_INPUT', 'job must be an object', 400);
+  const parts = typeof job.repository === 'string' ? job.repository.split('/') : [];
+  const validRepository =
+    parts.length === 2 &&
+    ownerPattern.test(parts[0]) &&
+    repositoryNamePattern.test(parts[1]) &&
+    parts[1] !== '.' &&
+    parts[1] !== '..';
+  if (!validRepository) fail('INVALID_PUBLICATION_INPUT', 'job.repository must be owner/name', 400);
+  if (typeof job.pullRequest !== 'number' || !Number.isSafeInteger(job.pullRequest) || job.pullRequest <= 0) {
+    fail('INVALID_PUBLICATION_INPUT', 'job.pullRequest must be a positive integer', 400);
+  }
+  if (typeof job.expectedHeadSha !== 'string' || !shaPattern.test(job.expectedHeadSha)) {
+    fail('INVALID_PUBLICATION_INPUT', 'job.expectedHeadSha must be a 40-character hexadecimal commit SHA', 400);
+  }
+  const result = validateResultPayload(job.result);
+  return {
+    repository: job.repository as string,
+    pullRequest: job.pullRequest as number,
+    expectedHeadSha: job.expectedHeadSha as string,
+    result,
+  };
 }
 
 function validateTestDefinition(value: unknown, label: string): void {
@@ -383,23 +386,23 @@ function assertVerifiedSuccessIsJustified(
   }
 }
 
-function assertResultMatchesRequest(
+function assertResultMatchesJob(
   candidate: CandidateRevision,
-  request: PrVerificationRequest,
+  job: PrChecksPublicationJob,
 ): void {
-  if (candidate.repository.toLowerCase() !== request.repository.toLowerCase()) {
+  if (candidate.repository.toLowerCase() !== job.repository.toLowerCase()) {
     fail('RESULT_REPOSITORY_MISMATCH', 'the result candidate is bound to a different repository', 409);
   }
-  if (candidate.pullRequest !== request.pullRequest) {
+  if (candidate.pullRequest !== job.pullRequest) {
     fail('RESULT_PULL_REQUEST_MISMATCH', 'the result candidate is bound to a different pull request', 409);
   }
-  if (candidate.headSha.toLowerCase() !== request.expectedHeadSha.toLowerCase()) {
+  if (candidate.headSha.toLowerCase() !== job.expectedHeadSha.toLowerCase()) {
     fail('RESULT_HEAD_MISMATCH', 'the result candidate head does not match the expected head SHA', 409);
   }
   if (typeof candidate.headRepository !== 'string') {
     fail('RESULT_MALFORMED', 'candidate.headRepository must be a string', 400);
   }
-  if (candidate.headRepository.toLowerCase() !== request.repository.toLowerCase()) {
+  if (candidate.headRepository.toLowerCase() !== job.repository.toLowerCase()) {
     fail('FORK_PULL_REQUEST_UNSUPPORTED', 'fork candidates cannot publish checks', 403);
   }
 }
@@ -636,29 +639,31 @@ async function findExistingCommentId(
 }
 
 /**
- * Publish one head-bound runtime check and one bounded evidence comment.
+ * Publish one head-bound runtime check and one bounded evidence comment for
+ * a verification job.
  *
- * Argument order: result, request, transport, config, store. The module is
- * server-only; the caller must read the token from environment configuration
- * and must not pass a result that originated from an unauthenticated client.
+ * The caller is the server-side controller behind an explicitly configured
+ * GitHub App adapter. The token must be read from environment configuration
+ * and job.result must come from the runtime verifier, never from a client.
  */
-export async function publishPrRuntimeCheck(
-  result: unknown,
-  request: unknown,
-  transport: GitHubTransport,
-  config: unknown,
-  store: PrChecksPublicationStore,
-  options: PrChecksPublishOptions = {},
-): Promise<PrChecksPublicationResult> {
-  validateConfig(config);
-  validateRequestShape(request);
-  const publishConfig = config as Required<PrChecksPublishConfig>;
-  const publishRequest = request as PrVerificationRequest;
-  const signal = options.signal;
+export async function publishPrResult(input: unknown): Promise<PrChecksPublicationResult> {
+  const value = isRecord(input) ? input : fail('INVALID_PUBLICATION_INPUT', 'publication input must be an object', 400);
+  validateTrustFields(value);
+  const transport = value.transport as GitHubTransport | undefined;
+  if (!transport || typeof transport.request !== 'function') {
+    fail('INVALID_PUBLICATION_INPUT', 'an injected GitHubTransport with a request method is required', 400);
+  }
+  const store = (isRecord(value.store)
+    && typeof (value.store as unknown as PrChecksPublicationStore).save === 'function'
+    && typeof (value.store as unknown as PrChecksPublicationStore).get === 'function')
+    ? value.store as unknown as PrChecksPublicationStore
+    : fail('INVALID_PUBLICATION_INPUT', 'an injected publication store with save and get is required', 400);
+  const signal = (value as { signal?: AbortSignal }).signal;
 
-  const candidateResult = validateResultPayload(result);
+  const job = validateJob(value.job);
+  const candidateResult = job.result;
   const candidate = candidateResult.candidate;
-  assertResultMatchesRequest(candidate, publishRequest);
+  assertResultMatchesJob(candidate, job);
 
   if (!digestPattern.test(candidateResult.evidenceManifestSha256)) {
     fail('EVIDENCE_MANIFEST_MISSING', 'the result has no valid evidence manifest digest', 422);
@@ -673,18 +678,18 @@ export async function publishPrRuntimeCheck(
     assertVerifiedSuccessIsJustified(candidateResult, candidate);
   }
 
-  const repository = publishRequest.repository.toLowerCase();
-  const headSha = publishRequest.expectedHeadSha.toLowerCase();
+  const repository = job.repository.toLowerCase();
+  const headSha = job.expectedHeadSha.toLowerCase();
   const conclusion = prChecksConclusion(candidateResult.verdict);
-  const externalId = externalIdFor(repository, publishRequest.pullRequest, headSha);
-  const key = prChecksPublicationKey(repository, publishRequest.pullRequest, headSha);
+  const externalId = externalIdFor(repository, job.pullRequest, headSha);
+  const key = prChecksPublicationKey(repository, job.pullRequest, headSha);
 
   const liveBefore = readLiveSnapshot(
-    await githubRequest<unknown>(transport, 'GET', `/repos/${repository}/pulls/${publishRequest.pullRequest}`, undefined, publishConfig.token, signal),
+    await githubRequest<unknown>(transport, 'GET', `/repos/${repository}/pulls/${job.pullRequest}`, undefined, value.token as string, signal),
     repository,
   );
   assertLivePullIsPublishable(liveBefore);
-  const supersedeBefore = detectSupersession(liveBefore, publishRequest, candidate);
+  const supersedeBefore = detectSupersession(liveBefore, job, candidate);
   if (supersedeBefore) {
     const record = await store.get(key);
     return {
@@ -696,20 +701,20 @@ export async function publishPrRuntimeCheck(
       commentId: record?.commentId ?? null,
       externalId,
       repository,
-      pullRequest: publishRequest.pullRequest,
+      pullRequest: job.pullRequest,
       reason: supersedeBefore.reason,
       details: supersedeBefore.details,
     };
   }
 
-  const summary = buildCheckSummary(candidateResult, repository, publishRequest.pullRequest, headSha);
+  const summary = buildCheckSummary(candidateResult, repository, job.pullRequest, headSha);
 
   const recorded = await store.get(key);
   let checkRunId: number | null = null;
   if (recorded?.checkRunId) {
     checkRunId = recorded.checkRunId;
   } else {
-    checkRunId = await findExistingCheckRunId(transport, repository, headSha, externalId, publishConfig.token, signal);
+    checkRunId = await findExistingCheckRunId(transport, repository, headSha, externalId, value.token as string, signal);
   }
 
   if (checkRunId !== null) {
@@ -724,7 +729,7 @@ export async function publishPrRuntimeCheck(
         external_id: externalId,
         output: { title: checkName, summary },
       },
-      publishConfig.token,
+      value.token as string,
       signal,
     );
     readCheckRunId(updated);
@@ -741,7 +746,7 @@ export async function publishPrRuntimeCheck(
         external_id: externalId,
         output: { title: checkName, summary },
       },
-      publishConfig.token,
+      value.token as string,
       signal,
     );
     checkRunId = readCheckRunId(created);
@@ -750,26 +755,26 @@ export async function publishPrRuntimeCheck(
   await persistRecord(store, {
     key,
     repository,
-    pullRequest: publishRequest.pullRequest,
+    pullRequest: job.pullRequest,
     headSha,
     checkRunId,
     commentId: recorded?.commentId ?? null,
     externalId,
-    principal: publishConfig.principal,
+    principal: value.principal as string,
   });
 
   let commentId: number | null = recorded?.commentId ?? null;
   if (commentId === null) {
-    commentId = await findExistingCommentId(transport, repository, publishRequest.pullRequest, headSha, publishConfig.token, signal);
+    commentId = await findExistingCommentId(transport, repository, job.pullRequest, headSha, value.token as string, signal);
   }
-  const commentBody = buildCommentBody(candidateResult, repository, publishRequest.pullRequest, headSha, null);
+  const commentBody = buildCommentBody(candidateResult, repository, job.pullRequest, headSha, null);
   if (commentId !== null) {
     const updated = await githubRequest<unknown>(
       transport,
       'PATCH',
       `/repos/${repository}/issues/comments/${commentId}`,
       { body: commentBody },
-      publishConfig.token,
+      value.token as string,
       signal,
     );
     commentId = readCommentId(updated);
@@ -777,9 +782,9 @@ export async function publishPrRuntimeCheck(
     const created = await githubRequest<unknown>(
       transport,
       'POST',
-      `/repos/${repository}/issues/${publishRequest.pullRequest}/comments`,
+      `/repos/${repository}/issues/${job.pullRequest}/comments`,
       { body: commentBody },
-      publishConfig.token,
+      value.token as string,
       signal,
     );
     commentId = readCommentId(created);
@@ -788,19 +793,19 @@ export async function publishPrRuntimeCheck(
   await persistRecord(store, {
     key,
     repository,
-    pullRequest: publishRequest.pullRequest,
+    pullRequest: job.pullRequest,
     headSha,
     checkRunId,
     commentId,
     externalId,
-    principal: publishConfig.principal,
+    principal: value.principal as string,
   });
 
   const liveAfterList = await readLiveAfterWrite(
     transport,
     repository,
-    publishRequest.pullRequest,
-    publishConfig.token,
+    job.pullRequest,
+    value.token as string,
     signal,
   );
   if (liveAfterList.status === 'error') {
@@ -813,12 +818,12 @@ export async function publishPrRuntimeCheck(
       commentId,
       externalId,
       repository,
-      pullRequest: publishRequest.pullRequest,
+      pullRequest: job.pullRequest,
       reason: 'POST_WRITE_VERIFY_FAILED',
       details: 'the writes committed, but the final head/base currency check could not be read; a retry is safe and idempotent',
     };
   }
-  const supersedeAfter = detectSupersession(liveAfterList.snapshot!, publishRequest, candidate);
+  const supersedeAfter = detectSupersession(liveAfterList.snapshot!, job, candidate);
   if (supersedeAfter) {
     if (conclusion === 'success') {
       await githubRequest<unknown>(
@@ -832,27 +837,27 @@ export async function publishPrRuntimeCheck(
           external_id: externalId,
           output: { title: checkName, summary: supersededSummary(headSha, supersedeAfter.reason) },
         },
-        publishConfig.token,
+        value.token as string,
         signal,
       );
-      const supersededBody = buildCommentBody(candidateResult, repository, publishRequest.pullRequest, headSha, 'SUPERSEDED: the pull request advanced after publication; this proof is no longer current.');
+      const supersededBody = buildCommentBody(candidateResult, repository, job.pullRequest, headSha, 'SUPERSEDED: the pull request advanced after publication; this proof is no longer current.');
       await githubRequest<unknown>(
         transport,
         'PATCH',
         `/repos/${repository}/issues/comments/${commentId}`,
         { body: supersededBody },
-        publishConfig.token,
+        value.token as string,
         signal,
       );
       await persistRecord(store, {
         key,
         repository,
-        pullRequest: publishRequest.pullRequest,
+        pullRequest: job.pullRequest,
         headSha,
         checkRunId,
         commentId,
         externalId,
-        principal: publishConfig.principal,
+        principal: value.principal as string,
       });
     }
     return {
@@ -864,7 +869,7 @@ export async function publishPrRuntimeCheck(
       commentId,
       externalId,
       repository,
-      pullRequest: publishRequest.pullRequest,
+      pullRequest: job.pullRequest,
       reason: supersedeAfter.reason,
       details: supersedeAfter.details,
     };
@@ -879,7 +884,7 @@ export async function publishPrRuntimeCheck(
     commentId,
     externalId,
     repository,
-    pullRequest: publishRequest.pullRequest,
+    pullRequest: job.pullRequest,
   };
 }
 
@@ -900,10 +905,10 @@ async function readLiveAfterWrite(
 
 function detectSupersession(
   live: LivePullSnapshot,
-  publishRequest: PrVerificationRequest,
+  job: PrChecksPublicationJob,
   candidate: CandidateRevision,
 ): { reason: PrChecksSupersedeReason; details: string } | null {
-  if (live.headSha !== publishRequest.expectedHeadSha.toLowerCase()) {
+  if (live.headSha !== job.expectedHeadSha.toLowerCase()) {
     return { reason: 'HEAD_MOVED', details: `live head ${live.headSha} no longer matches the expected head` };
   }
   if (live.baseSha !== candidate.baseSha.toLowerCase()) {

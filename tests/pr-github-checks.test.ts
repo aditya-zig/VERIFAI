@@ -15,9 +15,10 @@ import {
   PrChecksPublicationError,
   prChecksConclusion,
   prChecksPublicationKey,
-  publishPrRuntimeCheck,
+  publishPrResult,
   type PrChecksPublicationErrorCode,
   type PrChecksPublicationRecord,
+  type PrChecksPublicationStore,
 } from '../services/pr-verification/github-checks.js';
 
 const BASE_SHA = '1'.repeat(40);
@@ -252,6 +253,33 @@ function readExternalIdSafe(body: unknown): string | undefined {
   return typeof externalId === 'string' ? externalId : undefined;
 }
 
+function jobFor(value: PrVerificationResult, req: PrVerificationRequest) {
+  return {
+    repository: req.repository,
+    pullRequest: req.pullRequest,
+    expectedHeadSha: req.expectedHeadSha,
+    result: value,
+  };
+}
+
+function publishInput(
+  value: PrVerificationResult,
+  req: PrVerificationRequest,
+  transport: GitHubTransport,
+  overrides: { token?: string; principal?: string; resultSource?: unknown; assumeStrictBranchProtection?: boolean },
+  store: PrChecksPublicationStore,
+) {
+  return {
+    job: jobFor(value, req),
+    transport,
+    store,
+    token: overrides.token ?? TOKEN,
+    principal: overrides.principal ?? PRINCIPAL,
+    resultSource: overrides.resultSource ?? 'server-verifier',
+    assumeStrictBranchProtection: overrides.assumeStrictBranchProtection ?? true,
+  };
+}
+
 function rejectedCode(error: unknown): PrChecksPublicationErrorCode | undefined {
   return error instanceof PrChecksPublicationError ? error.code : undefined;
 }
@@ -272,7 +300,7 @@ test('publishes the head check and one evidence comment for a fully justified Ve
   const fake = new PublishingFake();
   const store = new MemoryPrChecksPublicationStore();
 
-  const outcome = await publishPrRuntimeCheck(result(), request(), fake, config(), store);
+  const outcome = await publishPrResult(publishInput(result(), request(), fake, config(), store));
 
   assert.equal(outcome.outcome, 'published');
   assert.equal(outcome.verdict, 'Verified');
@@ -316,12 +344,12 @@ test('publishes the head check and one evidence comment for a fully justified Ve
 
 test('binds the publication to the exact expected head SHA before and after writes', async () => {
   const staleHead = new PublishingFake({ metadata: [metadata({ headSha: NEXT_SHA }), metadata(), metadata(), metadata()] });
-  const first = await publishPrRuntimeCheck(result(), request(), staleHead, config(), new MemoryPrChecksPublicationStore());
+  const first = await publishPrResult(publishInput(result(), request(), staleHead, config(), new MemoryPrChecksPublicationStore()));
   assert.equal(first.outcome, 'superseded');
   assert.equal(staleHead.writes.length, 0, 'a moved head must not be published');
 
   const staleBase = new PublishingFake({ metadata: [metadata({ baseSha: NEXT_SHA }), metadata(), metadata(), metadata()] });
-  const second = await publishPrRuntimeCheck(result(), request(), staleBase, config(), new MemoryPrChecksPublicationStore());
+  const second = await publishPrResult(publishInput(result(), request(), staleBase, config(), new MemoryPrChecksPublicationStore()));
   assert.equal(second.outcome, 'superseded');
   assert.equal(staleBase.writes.length, 0, 'a moved base must not be published');
 });
@@ -330,7 +358,7 @@ test('downgrades a just-written success check when the head moves after creation
   const changedAfter = new PublishingFake();
   changedAfter.metadataQueue[1] = metadata({ headSha: NEXT_SHA, baseSha: NEXT_SHA });
 
-  const outcome = await publishPrRuntimeCheck(result(), request(), changedAfter, config(), new MemoryPrChecksPublicationStore());
+  const outcome = await publishPrResult(publishInput(result(), request(), changedAfter, config(), new MemoryPrChecksPublicationStore()));
 
   assert.equal(outcome.outcome, 'superseded');
   const patch = changedAfter.writes.find((item) => item.method === 'PATCH' && item.path.startsWith(`/repos/${REPOSITORY}/check-runs/`));
@@ -346,16 +374,14 @@ test('failed publications do not downgrade live failure conclusions when the hea
   const fake = new PublishingFake();
   fake.metadataQueue[1] = metadata({ headSha: NEXT_SHA });
 
-  const outcome = await publishPrRuntimeCheck(
-    result({
-      verdict: 'Failed',
-      observations: [observation({ status: 'Failed', exitCode: 1 })],
-      limitations: ['unit-suite failed after repair'],
-    }),
-    request(),
-    fake,
-    config(),
-    new MemoryPrChecksPublicationStore(),
+  const outcome = await publishPrResult(
+    publishInput(
+      result({ verdict: 'Failed', observations: [observation({ status: 'Failed', exitCode: 1 })], limitations: ['unit-suite failed after repair'] }),
+      request(),
+      fake,
+      config(),
+      new MemoryPrChecksPublicationStore(),
+    ),
   );
 
   assert.equal(outcome.conclusion, 'failure');
@@ -368,8 +394,8 @@ test('retries update the recorded check run and comment without duplicating them
   const fake = new PublishingFake();
   const store = new MemoryPrChecksPublicationStore();
 
-  const first = await publishPrRuntimeCheck(result(), request(), fake, config(), store);
-  const second = await publishPrRuntimeCheck(result(), request(), fake, config(), store);
+  const first = await publishPrResult(publishInput(result(), request(), fake, config(), store));
+  const second = await publishPrResult(publishInput(result(), request(), fake, config(), store));
 
   assert.equal(first.checkRunId, second.checkRunId);
   assert.equal(first.commentId, second.commentId);
@@ -389,7 +415,7 @@ test('a restarted process reconciles an unrecorded check run and comment by exte
   const existingComment: ExistingComment = { id: 888, body: `${COMMENT_MARKER}\nolder evidence` };
   const fake = new PublishingFake({ existingCheckRuns: [existingCheck], existingComments: [existingComment] });
 
-  const outcome = await publishPrRuntimeCheck(result(), request(), fake, config(), new MemoryPrChecksPublicationStore());
+  const outcome = await publishPrResult(publishInput(result(), request(), fake, config(), new MemoryPrChecksPublicationStore()));
 
   assert.equal(outcome.checkRunId, 777);
   assert.equal(outcome.commentId, 888);
@@ -402,7 +428,7 @@ test('reconciled ids persist so later retries still update in place', async () =
   const fake = new PublishingFake({ existingCheckRuns: [existingCheck], existingComments: [existingComment] });
   const store = new MemoryPrChecksPublicationStore();
 
-  await publishPrRuntimeCheck(result(), request(), fake, config(), store);
+  await publishPrResult(publishInput(result(), request(), fake, config(), store));
   const record = await store.get(prChecksPublicationKey(REPOSITORY, PULL_REQUEST, HEAD_SHA));
   assert.ok(record);
   assert.equal((record as PrChecksPublicationRecord).checkRunId, 777);
@@ -421,7 +447,7 @@ test('rejects results bound to a different candidate, repository or head without
   for (const item of cases) {
     const fake = new PublishingFake();
     await assert.rejects(
-      () => publishPrRuntimeCheck(item.value, item.request ?? request(), fake, config(), new MemoryPrChecksPublicationStore()),
+      () => publishPrResult(publishInput(item.value, item.request ?? request(), fake, config(), new MemoryPrChecksPublicationStore())),
       (error: unknown) => {
         assert.equal(rejectedCode(error), item.code, item.name);
         return true;
@@ -444,7 +470,7 @@ test('rejects absent evidence manifests, incomplete cleanup and violated result 
     const fake = new PublishingFake();
     const value = item.name === 'missing manifest' ? { ...result(), evidenceManifestSha256: '' } : item.value;
     await assert.rejects(
-      () => publishPrRuntimeCheck(value, request(), fake, config(), new MemoryPrChecksPublicationStore()),
+      () => publishPrResult(publishInput(value, request(), fake, config(), new MemoryPrChecksPublicationStore())),
       (error: unknown) => {
         assert.equal(rejectedCode(error), item.code, item.name);
         return true;
@@ -457,16 +483,14 @@ test('rejects absent evidence manifests, incomplete cleanup and violated result 
 
 test('accepts failure and action_required publications keyed by verdict mapping', async () => {
   const failed = new PublishingFake();
-  const failedOutcome = await publishPrRuntimeCheck(
-    result({
-      verdict: 'Failed',
-      observations: [observation({ status: 'Failed', exitCode: 1 })],
-      limitations: ['unit-suite failed'],
-    }),
-    request(),
-    failed,
-    config(),
-    new MemoryPrChecksPublicationStore(),
+  const failedOutcome = await publishPrResult(
+    publishInput(
+      result({ verdict: 'Failed', observations: [observation({ status: 'Failed', exitCode: 1 })], limitations: ['unit-suite failed'] }),
+      request(),
+      failed,
+      config(),
+      new MemoryPrChecksPublicationStore(),
+    ),
   );
 
   assert.equal(failedOutcome.conclusion, 'failure');
@@ -475,17 +499,14 @@ test('accepts failure and action_required publications keyed by verdict mapping'
   assert.equal((failedCheck!.body as { conclusion: string }).conclusion, 'failure');
 
   const unknown = new PublishingFake();
-  const unknownOutcome = await publishPrRuntimeCheck(
-    result({
-      verdict: 'Unknown',
-      observations: [],
-      plan: plan({ requiredChecks: [], generatedTests: [] }),
-      limitations: ['no check executed'],
-    }),
-    request(),
-    unknown,
-    config(),
-    new MemoryPrChecksPublicationStore(),
+  const unknownOutcome = await publishPrResult(
+    publishInput(
+      result({ verdict: 'Unknown', observations: [], plan: plan({ requiredChecks: [], generatedTests: [] }), limitations: ['no check executed'] }),
+      request(),
+      unknown,
+      config(),
+      new MemoryPrChecksPublicationStore(),
+    ),
   );
 
   assert.equal(unknownOutcome.conclusion, 'action_required');
@@ -522,7 +543,7 @@ test('rejected unjustified Verified successes are never published as success', a
   for (const item of cases) {
     const fake = new PublishingFake();
     await assert.rejects(
-      () => publishPrRuntimeCheck(item.value, request(), fake, config(), new MemoryPrChecksPublicationStore()),
+      () => publishPrResult(publishInput(item.value, request(), fake, config(), new MemoryPrChecksPublicationStore())),
       (error: unknown) => {
         assert.equal(rejectedCode(error), 'UNVERIFIED_SUCCESS_REJECTED', item.name);
         return true;
@@ -537,7 +558,7 @@ test('publication requires the explicit strict branch protection assumption', as
   const fake = new PublishingFake();
   const unsafe = { ...config(), assumeStrictBranchProtection: false };
   await assert.rejects(
-    () => publishPrRuntimeCheck(result(), request(), fake, unsafe, new MemoryPrChecksPublicationStore()),
+    () => publishPrResult(publishInput(result(), request(), fake, unsafe, new MemoryPrChecksPublicationStore())),
     (error: unknown) => {
       assert.equal(rejectedCode(error), 'BRANCH_PROTECTION_ASSUMPTION_REQUIRED');
       return true;
@@ -557,7 +578,7 @@ test('closed, draft or forked live PR metadata is rejected before any write', as
   for (const item of cases) {
     const fake = new PublishingFake({ metadata: [item.value, item.value, item.value] });
     await assert.rejects(
-      () => publishPrRuntimeCheck(result(), request(), fake, config(), new MemoryPrChecksPublicationStore()),
+      () => publishPrResult(publishInput(result(), request(), fake, config(), new MemoryPrChecksPublicationStore())),
       (error: unknown) => {
         assert.equal(rejectedCode(error), item.code, item.name);
         return true;
@@ -578,16 +599,14 @@ test('untrusted verifier text is bounded, code-fenced and cannot inject markup o
   ];
   const store = new MemoryPrChecksPublicationStore();
 
-  const outcome = await publishPrRuntimeCheck(
-    result({
-      verdict: 'Failed',
-      observations: [observation({ status: 'Failed', exitCode: 1 })],
-      limitations: hostile,
-    }),
-    request(),
-    fake,
-    config(),
-    store,
+  const outcome = await publishPrResult(
+    publishInput(
+      result({ verdict: 'Failed', observations: [observation({ status: 'Failed', exitCode: 1 })], limitations: hostile }),
+      request(),
+      fake,
+      config(),
+      store,
+    ),
   );
 
   const checkPost = fake.writes.find((item) => item.path === `/repos/${REPOSITORY}/check-runs`);
@@ -613,18 +632,23 @@ test('untrusted verifier text is bounded, code-fenced and cannot inject markup o
   assert.equal((record as PrChecksPublicationRecord).principal, PRINCIPAL);
 });
 
-test('publication cannot be configured without a trusted token and explicit server-verifier source', async () => {
+test('publication cannot run without trusted config and injected wiring', async () => {
   const fake = new PublishingFake();
-  const cases: Array<{ name: string; value: Parameters<typeof publishPrRuntimeCheck>[3] }> = [
-    { name: 'empty token', value: { ...config(), token: '' } },
-    { name: 'untrusted source', value: { ...config(), resultSource: 'client' as never } },
-    { name: 'hostile principal', value: { ...config(), principal: 'bad principal\n' } },
+  const base = () => publishInput(result(), request(), fake, config(), new MemoryPrChecksPublicationStore());
+  const cases: Array<{ name: string; value: unknown; code: PrChecksPublicationErrorCode }> = [
+    { name: 'empty token', value: { ...base(), token: '' }, code: 'INVALID_PUBLICATION_INPUT' },
+    { name: 'untrusted source', value: { ...base(), resultSource: 'client' }, code: 'INVALID_PUBLICATION_INPUT' },
+    { name: 'hostile principal', value: { ...base(), principal: 'bad principal\n' }, code: 'INVALID_PUBLICATION_INPUT' },
+    { name: 'missing job', value: { transport: fake, ...config(), store: new MemoryPrChecksPublicationStore() }, code: 'INVALID_PUBLICATION_INPUT' },
+    { name: 'job without transport', value: { job: jobFor(result(), request()), ...config(), store: new MemoryPrChecksPublicationStore() }, code: 'INVALID_PUBLICATION_INPUT' },
+    { name: 'job without store', value: { job: jobFor(result(), request()), transport: fake, ...config() }, code: 'INVALID_PUBLICATION_INPUT' },
+    { name: 'malformed job', value: { ...base(), job: null }, code: 'INVALID_PUBLICATION_INPUT' },
   ];
   for (const item of cases) {
     await assert.rejects(
-      () => publishPrRuntimeCheck(result(), request(), fake, item.value, new MemoryPrChecksPublicationStore()),
+      () => publishPrResult(item.value),
       (error: unknown) => {
-        assert.equal(rejectedCode(error), 'INVALID_PUBLICATION_INPUT', item.name);
+        assert.equal(rejectedCode(error), item.code, item.name);
         return true;
       },
       item.name,

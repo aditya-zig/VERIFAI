@@ -322,3 +322,66 @@ export function assertAgentWorkerLaunchBrief(value: unknown): asserts value is A
   const errors = validateAgentWorkerLaunchBrief(value);
   if (errors.length) throw new Error(`Invalid agent worker launch brief: ${errors.join('; ')}`);
 }
+
+/**
+ * PR runtime verification contracts. Resolution pins candidate identity only;
+ * these types do not assert that any check has run.
+ */
+export type PrVerdict = 'Verified' | 'Failed' | 'Incomplete' | 'Unknown';
+export type PrJobPhase = 'Queued' | 'Resolving' | 'Planning' | 'Executing' | 'Cleaning' | 'Finished';
+
+export interface CandidateRevision {
+  repository: string;
+  pullRequest: number;
+  headRepository: string;
+  baseSha: string;
+  headSha: string;
+  mergeBaseSha: string;
+  changedFiles: string[];
+  diffDigest: string;
+}
+
+export interface PrVerificationRequest {
+  repository: string;
+  pullRequest: number;
+  expectedHeadSha: string;
+}
+
+export interface TestDefinition {
+  checkId: string;
+  artifactRef: string;
+  contentSha256: string;
+  origin: 'approved' | 'generated';
+}
+
+export interface CheckPlan {
+  policyVersion: string;
+  profileId: string;
+  profileDigest: string;
+  requiredChecks: TestDefinition[];
+  generatedTests: TestDefinition[];
+  planDigest: string;
+}
+
+export interface CheckObservation {
+  checkId: string;
+  revision: 'base' | 'head';
+  commitSha: string;
+  status: PrVerdict;
+  executed: boolean;
+  exitCode: number | null;
+  artifactRefs: string[];
+  commandDigest: string;
+  testContentSha256: string;
+}
+
+export interface PrVerificationResult {
+  candidate: CandidateRevision;
+  plan: CheckPlan;
+  observations: CheckObservation[];
+  verdict: PrVerdict;
+  limitations: string[];
+  evidenceManifestSha256: string;
+  cleanupComplete: boolean;
+  superseded: boolean;
+}

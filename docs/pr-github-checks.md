@@ -8,7 +8,7 @@ Tracking issue: [#86 GitHub Check publication slice](https://github.com/aditya-z
 
 - It does not create repair pull requests, approve anything, or merge. Humans approve merges.
 - It does not run verification. The parent owns verification and publication; the job's result must come from the server-side runtime verifier, never from client input. `resultSource: "server-verifier"` makes that contract explicit.
-- It does not verify or claim branch protection or required-check enforcement, live or otherwise. The `assumeStrictBranchProtection: true` input only records that the caller acknowledges no enforcement is established here; nothing anywhere treats a published check as enforcement. Without the explicit flag nothing is written.
+- It does not verify or claim branch protection or required-check enforcement, live or otherwise. The `assumeStrictBranchProtection: true` input is advisory only, never verified against repository settings, and never surfaces as an enforcement fact; it records that the caller acknowledges no enforcement is established here. Without the explicit flag nothing is written. The parent's HTTP route must not expose the flag or accept a resultSource from clients; both are server-side wiring.
 
 ## Input shape
 
@@ -40,7 +40,8 @@ The result is `{ outcome: "published" | "superseded", verdict, conclusion, headS
 5. Write the check run. New heads create a run with `external_id: verifai-runtime:<repo>#<pr>@<headSha>`; retries update the recorded run in place.
 6. Write one evidence comment keyed by an invisible HTML marker. Retries update the same comment.
 7. Persist the repository, pull request, head, check id, comment id, external id and principal through the injected `PrChecksPublicationStore` after each write, so a restarted process can reconcile an external id it did not record.
-8. Re-fetch PR metadata after the writes. If the head or base moved during publication, a check that was just published as `success` is rewritten to `neutral` with a superseded summary, and the comment is rewritten with a superseded notice. The call returns `outcome: "superseded"`.
+8. Re-fetch PR metadata after the writes. If the head or base moved during publication, a check that was just published as `success` is rewritten to `action_required` with a superseded summary (`neutral` is deliberately avoided: GitHub can count a neutral check as passing a required check), and the comment is rewritten with a superseded notice. The call returns `outcome: "superseded"`.
+9. If the post-write re-read fails, a just-published success is downgraded to `action_required` with a currency-unconfirmed summary when possible. The call returns `outcome: "unconfirmed"` with `reason: "POST_WRITE_VERIFY_FAILED"` and `repair: { attempted, succeeded }`; current success is never returned. Conclusions other than success stay published and are reported with the same reason, since they make no current-success claim.
 
 ## Verdict mapping
 
@@ -55,7 +56,7 @@ The result is `{ outcome: "published" | "superseded", verdict, conclusion, headS
 
 ## Idempotence and reconciliation
 
-Retries in the lifetime of one store update the recorded check run and comment through PATCH, so no duplicates appear per head SHA. If the process restarted before persisting ids, the module scans the check runs at the head SHA for its external id and the issue comments for its invisible marker, then updates the existing entries. A store record never contains the token.
+Retries in the lifetime of one store update the recorded check run and comment through PATCH, so no duplicates appear per head SHA. If the process restarted before persisting ids, the module scans both reconciliation lists (check runs by external id, issue comments by the invisible marker) in bounded pages of `PR_CHECKS_LIMITS.reconciliationPageSize` (100) up to `maxReconciliationPages` (5) before any write happens. A page shorter than the page size proves the end of the list; a match on any page is reused in place. If the page bound is exhausted without a match and without a short page, the scan is inconclusive and publication rejects with `RECONCILIATION_INCONCLUSIVE` (409) before creating any record, so a retry can rescan instead of duplicating. A store record never contains the token.
 
 ## Text safety
 
@@ -64,7 +65,7 @@ Published text is bounded: `PR_CHECKS_LIMITS` caps the summary, the comment, the
 ## Remaining gaps
 
 - Branch protection and required-check enforcement are assumptions only. No code path claims enforcement is live; an operator who flips the flag without configuring protection still leaves the branch mergeable. Enforcement wiring is a separate operator action outside this module.
-- Comment reconciliation matches the invisible marker with a bounded 100-entry scan; a pull request with more than 100 comments where our comment fell into a later page will reconcile to a fresh comment instead of the original one.
-- The post-write currency check tolerates a failed re-read by returning `outcome: "published"` with `reason: "POST_WRITE_VERIFY_FAILED"`; callers should treat that as "current-ness unconfirmed" and retry, which is safe.
+- Comment and check-run reconciliation scans up to 5 full pages per call. A pull request with more comments than the scan bound ends inconclusive and rejects; the operator can raise the bound in code after confirming the list depth, rather than silently creating a fresh duplicate.
+- A post-write re-read failure with a successful downgrade still leaves the comment showing the original verdict; the check run is the gate and the comment is advisory. Callers should treat `outcome: "unconfirmed"` as "not current" and retry, which is safe.
 - No controller wiring yet: nothing calls this module. The controller slice must own reading the token from environment configuration and must apply storage and access checks before invoking it.
 - Publication of failure/action_required conclusions still requires complete cleanup and a valid evidence manifest; a verifier that cannot clean a candidate leaves no trace on GitHub, by design.

@@ -49,8 +49,14 @@ export const PR_CHECKS_LIMITS = Object.freeze({
   maxObservations: 64,
   /** Maximum planned tests accepted per plan list. */
   maxPlannedTests: 64,
-  /** Maximum reconciliation scan depth for check runs and comments. */
-  maxReconciliationScan: 100,
+  /** Reconciliation page size (per_page) for check-run and comment scans. */
+  reconciliationPageSize: 100,
+  /**
+   * Reconciliation page bound. If a scan reaches this many full pages
+   * without a match and without a short page proving the end of the list,
+   * the scan is inconclusive and publication refuses to create duplicates.
+   */
+  maxReconciliationPages: 5,
 });
 
 export type PrChecksPublicationErrorCode =
@@ -69,6 +75,7 @@ export type PrChecksPublicationErrorCode =
   | 'PULL_REQUEST_DRAFT'
   | 'FORK_PULL_REQUEST_UNSUPPORTED'
   | 'PRIVATE_REPOSITORY_UNSUPPORTED'
+  | 'RECONCILIATION_INCONCLUSIVE'
   | 'OUTPUT_OVERFLOW'
   | 'MALFORMED_GITHUB_RESPONSE'
   | 'MISSING_COMMIT_SHA'
@@ -155,8 +162,22 @@ export interface PrChecksPublicationStore {
 
 export type PrChecksSupersedeReason = 'HEAD_MOVED' | 'BASE_MOVED' | 'POST_WRITE_VERIFY_FAILED';
 
+export interface PrChecksPublicationRepair {
+  /** True when a safety downgrade of a just-published success was attempted. */
+  attempted: boolean;
+  /** True only when the downgrade write itself succeeded. */
+  succeeded: boolean;
+}
+
 export interface PrChecksPublicationResult {
-  outcome: 'published' | 'superseded';
+  /**
+   * 'published' means writes committed and the post-write re-read confirmed
+   * the head/base still match, or the conclusion made no success claim.
+   * 'superseded' means the pull request moved and no proof stays current.
+   * 'unconfirmed' means the writes or a result may exist but current success
+   * is never returned; see repair.
+   */
+  outcome: 'published' | 'superseded' | 'unconfirmed';
   verdict: PrVerdict;
   conclusion: Exclude<PrChecksConclusion, 'neutral'>;
   headSha: string;
@@ -166,6 +187,8 @@ export interface PrChecksPublicationResult {
   repository: string;
   pullRequest: number;
   reason?: PrChecksSupersedeReason;
+  /** Present when a post-write failure forced a downgrade attempt. */
+  repair?: PrChecksPublicationRepair;
   details?: string;
 }
 
@@ -588,25 +611,34 @@ async function findExistingCheckRunId(
   token: string,
   signal: AbortSignal | undefined,
 ): Promise<number | null> {
-  const list = await githubRequest<unknown>(
-    transport,
-    'GET',
-    `/repos/${repository.toLowerCase()}/commits/${headSha}/check-runs?per_page=${PR_CHECKS_LIMITS.maxReconciliationScan}`,
-    undefined,
-    token,
-    signal,
-  );
-  const body = readRecord(list, 'check-run list');
-  const runs = body.check_runs;
-  if (!Array.isArray(runs)) fail('MALFORMED_GITHUB_RESPONSE', 'check-run list must contain check_runs', 502);
-  for (const item of runs.slice(0, PR_CHECKS_LIMITS.maxReconciliationScan)) {
-    const run = isRecord(item) ? item : fail('MALFORMED_GITHUB_RESPONSE', 'check-run entry must be an object', 502);
-    if (run.external_id === externalId) {
-      const id = run.id;
-      if (typeof id === 'number' && Number.isSafeInteger(id) && id > 0) return id;
+  const pageSize = PR_CHECKS_LIMITS.reconciliationPageSize;
+  for (let page = 1; page <= PR_CHECKS_LIMITS.maxReconciliationPages; page += 1) {
+    const list = await githubRequest<unknown>(
+      transport,
+      'GET',
+      `/repos/${repository.toLowerCase()}/commits/${headSha}/check-runs?per_page=${pageSize}&page=${page}`,
+      undefined,
+      token,
+      signal,
+    );
+    const body = readRecord(list, 'check-run list');
+    const runs = body.check_runs;
+    if (!Array.isArray(runs)) fail('MALFORMED_GITHUB_RESPONSE', 'check-run list must contain check_runs', 502);
+    for (const item of runs) {
+      const run = isRecord(item) ? item : fail('MALFORMED_GITHUB_RESPONSE', 'check-run entry must be an object', 502);
+      if (run.external_id === externalId) {
+        const id = run.id;
+        if (typeof id === 'number' && Number.isSafeInteger(id) && id > 0) return id;
+        fail('MALFORMED_GITHUB_RESPONSE', 'a matching check run returned no usable id', 502);
+      }
     }
+    if (runs.length < pageSize) return null;
   }
-  return null;
+  fail(
+    'RECONCILIATION_INCONCLUSIVE',
+    'check-run reconciliation exhausted its page bound without proving absence; refusing to create a duplicate',
+    409,
+  );
 }
 
 async function findExistingCommentId(
@@ -617,25 +649,34 @@ async function findExistingCommentId(
   token: string,
   signal: AbortSignal | undefined,
 ): Promise<number | null> {
-  const list = await githubRequest<unknown>(
-    transport,
-    'GET',
-    `/repos/${repository.toLowerCase()}/issues/${pullRequest}/comments?per_page=${PR_CHECKS_LIMITS.maxReconciliationScan}`,
-    undefined,
-    token,
-    signal,
-  );
-  if (!Array.isArray(list)) fail('MALFORMED_GITHUB_RESPONSE', 'comment list must be an array', 502);
+  const pageSize = PR_CHECKS_LIMITS.reconciliationPageSize;
   const marker = commentMarker(repository, pullRequest, headSha);
-  for (const item of list.slice(0, PR_CHECKS_LIMITS.maxReconciliationScan)) {
-    const comment = isRecord(item) ? item : fail('MALFORMED_GITHUB_RESPONSE', 'comment entry must be an object', 502);
-    const body = comment.body;
-    if (typeof body === 'string' && body.startsWith(marker)) {
-      const id = comment.id;
-      if (typeof id === 'number' && Number.isSafeInteger(id) && id > 0) return id;
+  for (let page = 1; page <= PR_CHECKS_LIMITS.maxReconciliationPages; page += 1) {
+    const list = await githubRequest<unknown>(
+      transport,
+      'GET',
+      `/repos/${repository.toLowerCase()}/issues/${pullRequest}/comments?per_page=${pageSize}&page=${page}`,
+      undefined,
+      token,
+      signal,
+    );
+    if (!Array.isArray(list)) fail('MALFORMED_GITHUB_RESPONSE', 'comment list must be an array', 502);
+    for (const item of list) {
+      const comment = isRecord(item) ? item : fail('MALFORMED_GITHUB_RESPONSE', 'comment entry must be an object', 502);
+      const body = comment.body;
+      if (typeof body === 'string' && body.startsWith(marker)) {
+        const id = comment.id;
+        if (typeof id === 'number' && Number.isSafeInteger(id) && id > 0) return id;
+        fail('MALFORMED_GITHUB_RESPONSE', 'a matching comment returned no usable id', 502);
+      }
     }
+    if (list.length < pageSize) return null;
   }
-  return null;
+  fail(
+    'RECONCILIATION_INCONCLUSIVE',
+    'comment reconciliation exhausted its page bound without proving absence; refusing to create a duplicate',
+    409,
+  );
 }
 
 /**
@@ -710,11 +751,13 @@ export async function publishPrResult(input: unknown): Promise<PrChecksPublicati
   const summary = buildCheckSummary(candidateResult, repository, job.pullRequest, headSha);
 
   const recorded = await store.get(key);
-  let checkRunId: number | null = null;
-  if (recorded?.checkRunId) {
-    checkRunId = recorded.checkRunId;
-  } else {
+  let checkRunId: number | null = recorded?.checkRunId ?? null;
+  if (checkRunId === null) {
     checkRunId = await findExistingCheckRunId(transport, repository, headSha, externalId, value.token as string, signal);
+  }
+  let commentId: number | null = recorded?.commentId ?? null;
+  if (commentId === null) {
+    commentId = await findExistingCommentId(transport, repository, job.pullRequest, headSha, value.token as string, signal);
   }
 
   if (checkRunId !== null) {
@@ -763,10 +806,6 @@ export async function publishPrResult(input: unknown): Promise<PrChecksPublicati
     principal: value.principal as string,
   });
 
-  let commentId: number | null = recorded?.commentId ?? null;
-  if (commentId === null) {
-    commentId = await findExistingCommentId(transport, repository, job.pullRequest, headSha, value.token as string, signal);
-  }
   const commentBody = buildCommentBody(candidateResult, repository, job.pullRequest, headSha, null);
   if (commentId !== null) {
     const updated = await githubRequest<unknown>(
@@ -809,6 +848,54 @@ export async function publishPrResult(input: unknown): Promise<PrChecksPublicati
     signal,
   );
   if (liveAfterList.status === 'error') {
+    if (conclusion === 'success') {
+      const details = 'the writes committed, but the final head/base currency re-read failed; the success conclusion is not returned as current and was downgraded';
+      try {
+        await githubRequest<unknown>(
+          transport,
+          'PATCH',
+          `/repos/${repository}/check-runs/${checkRunId}`,
+          {
+            name: checkName,
+            status: 'completed',
+            conclusion: 'action_required',
+            external_id: externalId,
+            output: { title: checkName, summary: unconfirmedSummary(headSha) },
+          },
+          value.token as string,
+          signal,
+        );
+        return {
+          outcome: 'unconfirmed',
+          verdict: candidateResult.verdict,
+          conclusion,
+          headSha,
+          checkRunId,
+          commentId,
+          externalId,
+          repository,
+          pullRequest: job.pullRequest,
+          reason: 'POST_WRITE_VERIFY_FAILED',
+          repair: { attempted: true, succeeded: true },
+          details,
+        };
+      } catch {
+        return {
+          outcome: 'unconfirmed',
+          verdict: candidateResult.verdict,
+          conclusion,
+          headSha,
+          checkRunId,
+          commentId,
+          externalId,
+          repository,
+          pullRequest: job.pullRequest,
+          reason: 'POST_WRITE_VERIFY_FAILED',
+          repair: { attempted: true, succeeded: false },
+          details: 'the writes committed, but currentness could not be confirmed and the safety downgrade failed; reconcile the stored ids manually and never treat the check as a current success',
+        };
+      }
+    }
     return {
       outcome: 'published',
       verdict: candidateResult.verdict,
@@ -820,7 +907,7 @@ export async function publishPrResult(input: unknown): Promise<PrChecksPublicati
       repository,
       pullRequest: job.pullRequest,
       reason: 'POST_WRITE_VERIFY_FAILED',
-      details: 'the writes committed, but the final head/base currency check could not be read; a retry is safe and idempotent',
+      details: 'the writes committed; a failure or action_required conclusion makes no current-success claim, but a retry is safe and idempotent',
     };
   }
   const supersedeAfter = detectSupersession(liveAfterList.snapshot!, job, candidate);
@@ -833,7 +920,7 @@ export async function publishPrResult(input: unknown): Promise<PrChecksPublicati
         {
           name: checkName,
           status: 'completed',
-          conclusion: 'neutral',
+          conclusion: 'action_required',
           external_id: externalId,
           output: { title: checkName, summary: supersededSummary(headSha, supersedeAfter.reason) },
         },
@@ -915,6 +1002,14 @@ function detectSupersession(
     return { reason: 'BASE_MOVED', details: `live base ${live.baseSha} no longer matches the candidate base ${candidate.baseSha}` };
   }
   return null;
+}
+
+function unconfirmedSummary(headSha: string): string {
+  return [
+    'VERIFAI runtime verification (currency unconfirmed)',
+    `The check at head ${headSha} was published, but the final currency re-read failed.`,
+    'The success conclusion is downgraded to action_required until a fresh publication or re-run confirms the head is current.',
+  ].join('\n');
 }
 
 function supersededSummary(headSha: string, reason: PrChecksSupersedeReason): string {

@@ -172,19 +172,27 @@ class PublishingFake implements GitHubTransport {
   readonly metadataQueue: PullMetadata[];
   readonly existingCheckRuns: ExistingCheckRun[];
   readonly existingComments: ExistingComment[];
+  readonly failPullReadAt: number;
+  readonly failCheckRunPatch: boolean;
   readonly createdCheckRuns: ExistingCheckRun[] = [];
   readonly createdComments: ExistingComment[] = [];
   checkRunCounter = 5000;
   commentCounter = 9000;
+  pullGetCount = 0;
 
   constructor(options: {
     metadata?: PullMetadata[];
     existingCheckRuns?: ExistingCheckRun[];
     existingComments?: ExistingComment[];
+    /** 1-based occurrence of a pulls GET that throws, without consuming queue metadata. */
+    failPullReadAt?: number;
+    failCheckRunPatch?: boolean;
   } = {}) {
     this.metadataQueue = options.metadata ?? [metadata(), metadata(), metadata()];
     this.existingCheckRuns = options.existingCheckRuns ?? [];
     this.existingComments = options.existingComments ?? [];
+    this.failPullReadAt = options.failPullReadAt ?? 0;
+    this.failCheckRunPatch = options.failCheckRunPatch ?? false;
   }
 
   async request<T>(method: string, path: string, body?: unknown, token?: string): Promise<T> {
@@ -192,15 +200,30 @@ class PublishingFake implements GitHubTransport {
     if (method !== 'GET') this.writes.push({ method, path, body });
     const pullPath = `/repos/${REPOSITORY}/pulls/${PULL_REQUEST}`;
     if (method === 'GET' && path === pullPath) {
+      this.pullGetCount += 1;
+      if (this.failPullReadAt === this.pullGetCount) throw new Error('metadata re-read failed');
       const next = this.metadataQueue.shift();
       if (!next) throw new Error('no PR metadata queued');
       return structuredClone(next) as T;
     }
-    if (method === 'GET' && path === `/repos/${REPOSITORY}/commits/${HEAD_SHA}/check-runs?per_page=100`) {
-      return structuredClone({ total_count: this.existingCheckRuns.length, check_runs: this.existingCheckRuns }) as T;
+    const checkList = path.match(
+      new RegExp(`^/repos/${REPOSITORY}/commits/${HEAD_SHA}/check-runs\\?per_page=100&page=(\\d+)$`),
+    );
+    if (method === 'GET' && checkList) {
+      const page = Number(checkList[1]);
+      if (page < 1 || page > 10) throw new Error(`unexpected check-run page ${page}`);
+      const start = (page - 1) * 100;
+      const slice = this.existingCheckRuns.slice(start, start + 100);
+      return structuredClone({ total_count: this.existingCheckRuns.length, check_runs: slice }) as T;
     }
-    if (method === 'GET' && path === `/repos/${REPOSITORY}/issues/${PULL_REQUEST}/comments?per_page=100`) {
-      return structuredClone(this.existingComments) as T;
+    const commentList = path.match(
+      new RegExp(`^/repos/${REPOSITORY}/issues/${PULL_REQUEST}/comments\\?per_page=100&page=(\\d+)$`),
+    );
+    if (method === 'GET' && commentList) {
+      const page = Number(commentList[1]);
+      if (page < 1 || page > 10) throw new Error(`unexpected comment page ${page}`);
+      const start = (page - 1) * 100;
+      return structuredClone(this.existingComments.slice(start, start + 100)) as T;
     }
     if (method === 'POST' && path === `/repos/${REPOSITORY}/check-runs`) {
       const created = { id: ++this.checkRunCounter, external_id: readExternalId(body), head_sha: HEAD_SHA, name: readName(body) };
@@ -209,6 +232,7 @@ class PublishingFake implements GitHubTransport {
     }
     const patchCheck = path.match(new RegExp(`^/repos/${REPOSITORY}/check-runs/(\\d+)$`));
     if (method === 'PATCH' && patchCheck) {
+      if (this.failCheckRunPatch) throw new Error('check patch failed');
       const found = [...this.existingCheckRuns, ...this.createdCheckRuns].find((item) => item.id === Number(patchCheck[1]));
       if (!found) throw new Error(`unknown check run ${patchCheck[1]}`);
       if (readExternalIdSafe(body)) found.external_id = readExternalIdSafe(body) as string;
@@ -284,8 +308,6 @@ function rejectedCode(error: unknown): PrChecksPublicationErrorCode | undefined 
   return error instanceof PrChecksPublicationError ? error.code : undefined;
 }
 
-const CHECK_RUN_LIST_PATH = `/repos/${REPOSITORY}/commits/${HEAD_SHA}/check-runs?per_page=100`;
-const COMMENT_LIST_PATH = `/repos/${REPOSITORY}/issues/${PULL_REQUEST}/comments?per_page=100`;
 const externalId = `verifai-runtime:${REPOSITORY}#${PULL_REQUEST}@${HEAD_SHA}`;
 const COMMENT_MARKER = `<!-- verifai-runtime-comment ${REPOSITORY} #${PULL_REQUEST} @${HEAD_SHA} -->`;
 
@@ -364,7 +386,7 @@ test('downgrades a just-written success check when the head moves after creation
   const patch = changedAfter.writes.find((item) => item.method === 'PATCH' && item.path.startsWith(`/repos/${REPOSITORY}/check-runs/`));
   assert.ok(patch, 'the success check must be rewritten');
   const downgrade = patch!;
-  assert.equal((downgrade.body as { conclusion: string }).conclusion, 'neutral');
+  assert.equal((downgrade.body as { conclusion: string }).conclusion, 'action_required', 'neutral reads as a passing required check, so downgrades must read as action required');
   const downgradeSummary = (downgrade.body as { output: { summary: string } }).output.summary;
   assert.equal(downgradeSummary.length > 0, true);
   assert.match(downgradeSummary, /superseded/i);
@@ -391,7 +413,7 @@ test('failed publications do not downgrade live failure conclusions when the hea
 });
 
 test('retries update the recorded check run and comment without duplicating them', async () => {
-  const fake = new PublishingFake();
+  const fake = new PublishingFake({ metadata: [metadata(), metadata(), metadata(), metadata()] });
   const store = new MemoryPrChecksPublicationStore();
 
   const first = await publishPrResult(publishInput(result(), request(), fake, config(), store));
@@ -433,6 +455,109 @@ test('reconciled ids persist so later retries still update in place', async () =
   assert.ok(record);
   assert.equal((record as PrChecksPublicationRecord).checkRunId, 777);
   assert.equal((record as PrChecksPublicationRecord).commentId, 888);
+});
+
+
+function clutterCheckRuns(count: number, startIndex = 1000): ExistingCheckRun[] {
+  return Array.from({ length: count }, (_, index) => ({
+    id: startIndex + index,
+    external_id: `other-job:${index}`,
+    head_sha: HEAD_SHA,
+    name: 'other check',
+  }));
+}
+
+function clutterComments(count: number): ExistingComment[] {
+  return Array.from({ length: count }, (_, index) => ({ id: 10_000 + index, body: `<!-- other-comment ${index} -->\nunrelated text` }));
+}
+
+test('reconciles a matching check run and comment found on page 2 of their lists', async () => {
+  const stored: ExistingCheckRun = { id: 777, external_id: externalId, head_sha: HEAD_SHA, name: 'VERIFAI runtime verification' };
+  const marked: ExistingComment = { id: 888, body: `${COMMENT_MARKER}\nolder evidence` };
+  const fake = new PublishingFake({
+    existingCheckRuns: [...clutterCheckRuns(100), stored, ...clutterCheckRuns(150)],
+    existingComments: [...clutterComments(100), marked, ...clutterComments(30)],
+  });
+
+  const outcome = await publishPrResult(publishInput(result(), request(), fake, config(), new MemoryPrChecksPublicationStore()));
+
+  assert.equal(outcome.checkRunId, 777);
+  assert.equal(outcome.commentId, 888);
+  assert.equal(fake.writes.filter((item) => item.method === 'POST').length, 0, 'page 2+ matches must update, not duplicate');
+  assert.ok(fake.calls.some((call) => call.path.includes('check-runs?per_page=100&page=2')), 'the scan must reach page 2');
+  const commentScanPages = fake.calls
+    .filter((call) => call.path.includes(`/issues/${PULL_REQUEST}/comments?per_page=100`))
+    .map((call) => Number(call.path.match(/page=(\d+)$/)?.[1]));
+  assert.ok(commentScanPages.includes(2), 'the comment scan must reach page 2');
+  const patchReads = fake.writes.filter((item) => item.method === 'PATCH');
+  assert.equal(patchReads.length, 2, 'both reconciled entries are updated in place');
+});
+
+test('an exhausted reconciliation bound rejects instead of creating a duplicate check run', async () => {
+  const fake = new PublishingFake({ existingCheckRuns: clutterCheckRuns(5 * 100) });
+
+  await assert.rejects(
+    () => publishPrResult(publishInput(result(), request(), fake, config(), new MemoryPrChecksPublicationStore())),
+    (error: unknown) => {
+      assert.equal(rejectedCode(error), 'RECONCILIATION_INCONCLUSIVE');
+      return true;
+    },
+  );
+  assert.equal(fake.writes.filter((item) => item.method === 'POST').length, 0, 'an inconclusive scan must not create duplicates');
+});
+
+test('an exhausted comment bound rejects instead of creating a duplicate comment', async () => {
+  const fake = new PublishingFake({ existingComments: clutterComments(5 * 100) });
+
+  await assert.rejects(
+    () => publishPrResult(publishInput(result(), request(), fake, config(), new MemoryPrChecksPublicationStore())),
+    (error: unknown) => {
+      assert.equal(rejectedCode(error), 'RECONCILIATION_INCONCLUSIVE');
+      return true;
+    },
+  );
+  assert.equal(fake.writes.filter((item) => item.method === 'POST').length, 0, 'an inconclusive scan must not create duplicates');
+});
+
+test('a failed post-write currency re-read downgrades a just-successful check to action_required and reports the repair', async () => {
+  const fake = new PublishingFake({ failPullReadAt: 2 });
+
+  const outcome = await publishPrResult(publishInput(result(), request(), fake, config(), new MemoryPrChecksPublicationStore()));
+
+  assert.equal(outcome.outcome, 'unconfirmed', 'current success must never be returned when currency cannot be confirmed');
+  assert.equal(outcome.reason, 'POST_WRITE_VERIFY_FAILED');
+  assert.deepEqual(outcome.repair, { attempted: true, succeeded: true });
+  const patch = fake.writes.find((item) => item.method === 'PATCH' && item.path.includes('/check-runs/'));
+  assert.ok(patch, 'the just-published success must be downgraded');
+  assert.equal((patch!.body as { conclusion: string }).conclusion, 'action_required');
+  assert.match((patch!.body as { output: { summary: string } }).output.summary, /unconfirmed/i);
+});
+
+test('a failed downgrade is reported as unconfirmed, never as a current success', async () => {
+  const fake = new PublishingFake({ failPullReadAt: 2, failCheckRunPatch: true });
+
+  const outcome = await publishPrResult(publishInput(result(), request(), fake, config(), new MemoryPrChecksPublicationStore()));
+
+  assert.equal(outcome.outcome, 'unconfirmed');
+  assert.deepEqual(outcome.repair, { attempted: true, succeeded: false });
+});
+
+test('failure conclusions under a failed re-read are published without downgrade claims', async () => {
+  const fake = new PublishingFake({ failPullReadAt: 2 });
+
+  const outcome = await publishPrResult(
+    publishInput(
+      result({ verdict: 'Failed', observations: [observation({ status: 'Failed', exitCode: 1 })], limitations: ['unit-suite failed'] }),
+      request(),
+      fake,
+      config(),
+      new MemoryPrChecksPublicationStore(),
+    ),
+  );
+
+  assert.equal(outcome.outcome, 'published');
+  assert.equal(outcome.reason, 'POST_WRITE_VERIFY_FAILED');
+  assert.equal(outcome.repair, undefined, 'failure conclusions are not success claims and need no downgrade');
 });
 
 test('rejects results bound to a different candidate, repository or head without any GitHub write', async () => {

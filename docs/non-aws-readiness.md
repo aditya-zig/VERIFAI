@@ -7,9 +7,9 @@ checkout carries no code changes of its own.
 
 Live checks against GitHub on 2026-10-21: latest `main` CI run in `VERIFAI CI`,
 id 37222440775, success, 2026-10-04. The only open PR is #80
-(`docs/pr-runtime-verification-plan`, a different docs worker's PR). One
-verification lane exists for never: `AgentCore live acceptance` on
-`workflow_dispatch` and it needs repository secrets, so it stays out of scope.
+(`docs/pr-runtime-verification-plan`, a different docs worker's PR). The
+`AgentCore live acceptance` workflow is limited to `workflow_dispatch` with
+repository secrets and stays outside everything below.
 
 Shadowing everything below: this is a runbook, not a claims list. The final
 subsection marks what this checkout actually executed. Everything else is
@@ -59,9 +59,14 @@ returns Incomplete.
 
 Observed here, unchanged by tests: this checkout ran the preflight only. It
 reported Node v24.20.0, npm 11.19.0, 7250 MB total and 1698 MB available RAM,
-3 GB free disk, Docker CLI installed with the daemon running, no AWS
-environment names present, and port 4173 occupied by an unowned UI preview
-process from a sibling checkout that this task must not touch.
+Docker CLI installed with the daemon running, no AWS environment names
+present, and port 4173 occupied by an unowned UI preview process from a
+sibling checkout that this task must not touch. The disk line needs its own
+caveat: preflight prints free space at the checkout root, and this checkout
+is a scratch copy on a tmpfs `/tmp` tree, so it reported 3.3 GiB free on that
+filesystem. Host disk-backed storage has 63 GiB free under `/home`. The
+20 GiB sandbox build threshold is measured at the checkout root, so real
+builds must run from a disk-backed checkout path.
 
 ## Automated checks, what exists and what it proves
 
@@ -91,9 +96,12 @@ prove live Bedrock access (`ops/local-agent/VERIFY.md`).
   endpoint is required for analysis. A run with neither stops at Incomplete and
   cleans up the clone; that behavior is defined in source, not exercised here.
 - Docker is used only for the selected command. A check run needs the built
-  `verifai-local-audit:m4` image and at least 20 GiB free disk for the build.
-  This machine observed 3 GB free, so the image build was excluded here and
-  the executed check stage stays unverified locally.
+  `verifai-local-audit:m4` image, and `build-sandbox.sh` refuses to build when
+  the checkout root has under 20 GiB free. This scratch checkout sits on a
+  tmpfs `/tmp` tree, 3.3 GiB free at its root, so no image was built here and
+  the executed check stage stays unverified locally. That is a path property
+  of the scratch copy, not a machine limit; a disk-backed checkout under
+  `/home` with 63 GiB free satisfies the threshold.
 - The browser journey drives an installed Chrome against a local fixture. On
   this machine Chrome exists at `/usr/bin/google-chrome-stable`. The journey
   tests the fixture, never the cloned application, and repair replay is
@@ -133,31 +141,49 @@ no web or API server start, no model call, no `npm run check`, no demo flow,
 no `verify:agentcore` or `verify:local-worker`, no JSON evidence writes.
 The parent session owns test execution; other workers own pending changes.
 
-## What remains for a real PR application verification loop
+## What remains for an application PR verification loop
 
-1. A checkout with dependencies installed and free ports. Preflight and
-   `doctor.sh --stage M1` first.
-2. Bedrock configuration names plus an authorized credential chain, then
-   `doctor.sh --stage M2` presence check.
-3. The sandbox image build when disk allows at least 20 GiB, or a borrowed
-   existing tagged image.
-4. Manual audit through the UI on the tested target
-   `https://github.com/octocat/Hello-World`: one bounded README or exact
-   `node --version` / `node --check` check. Arbitrary npm hooks, dependency
-   execution, full app runs, and security verdicts remain out of policy.
-5. The master loop: ten sequential browser-driven runs of
-   `tests-e2e/local-audit.test.mjs` with `VERIFIAI_MASTER_URL`,
-   `VERIFIAI_MASTER_RUNS`, `VERIFIAI_MASTER_LOG`, and
-   `VERIFIAI_MASTER_SCREENSHOT` set. A failed run stops the loop.
-6. The repair path if and only if a real check fails: repair, same-command
-   replay, VerifiedRepair under `docs/factory-gates.md`, proof snapshot, then
-   the explicit PR action with the two secret names above. Humans merge; no
-   auto-merge path exists.
-7. UI work landing from separate branches, including the audit and deep audit
-   experience changes in flight, must add the fixture UI gates
-   (`tests-p1/local-ui-gates.test.mjs`, `tests-p1/local-result-ui.test.mjs`)
-   to their runs and a manual browser pass per `VERIFY.md`: tests alone do not
-   satisfy UI acceptance.
+The loop that exists today is the documented bounded local audit: clone, one
+Bedrock-backed review, one bounded command, finding, cleanup, and the repair
+path to VerifiedRepair. Its procedure stays in `docs/local-mvp.md`. That is a
+repository-scoped audit. A verification loop for a real application PR does
+not exist on main. The still-missing pieces, each against current source:
+
+1. Exact PR intake integration. The audit target is a repository URL and its
+   checkout. A PR loop must resolve the exact PR instead: base and head
+   commit references, the changed-file set, and a head checkout. No route or
+   service on main resolves an exact PR today.
+2. Trusted base and head application execution with independent tests.
+   Verifying a real change means running the application at base and head in
+   the trusted bounded sandbox and collecting independent regression
+   coverage. What exists is one bounded server-selected command replayed
+   unchanged across repair; `docs/factory-gates.md` names that same-command
+   replay and states it is not independent coverage.
+3. Durable controller, jobs, and recovery. Run state is bounded in-memory
+   history with workspace and sandbox recovery after restarts. PR
+   verification that outlives a process needs durable jobs, a restart-safe
+   controller, and event history. `docs/factory-gates.md` lists the durable
+   controller, event history, and complete factory intake among the open
+   pieces of #23 through #35, with reliable master acceptance (#11) and live
+   AWS acceptance (#18) still pending.
+4. Authenticated caller and human approval. The explicit PR action in
+   `services/local-pr-service.mjs` gates creation behind VerifiedRepair, a
+   proof manifest, and the two secret names in the limits above. There is no
+   authenticated caller identity and no durable human approval step around
+   PR creation. Human merge approval stays a rule, with no merge automation.
+5. Head-bound GitHub Check and agent lifecycle interfaces. Verification
+   output must attach to the PR's head commit as a GitHub Check, with
+   interfaces to start a verification agent, read its status, and cancel it.
+   The current server exposes none of these interfaces.
+6. The repair and PR candidate inspector is being delivered separately.
+   Recorded here as a pending resolution only: this document does not
+   describe or exercise it, and nothing about it is claimed as present.
+
+In-flight frontend branches carry the audit and deep-audit experience work.
+This runbook assumes none of those changes until they merge, and once landed
+they still need the fixture UI gates (`tests-p1/local-ui-gates.test.mjs`,
+`tests-p1/local-result-ui.test.mjs`) plus a manual browser pass
+(`ops/local-agent/VERIFY.md`).
 
 ## Explicit AWS acceptance exclusions
 

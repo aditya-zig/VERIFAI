@@ -21,7 +21,7 @@ Keep credentials in the backend's protected, ignored `.env.local` or launching
 environment. Never put credentials in tracked files, URLs or command arguments.
 
 - `VERIFIAI_LOCAL_PRINCIPALS_JSON` configures scoped human and agent principals.
-  See the request-safety documentation for the schema and minimum token length.
+  See `services/request-principal.mjs` for the schema and minimum token length.
 - `VERIFIAI_PR_STATE_DIR` optionally selects private persistent job storage.
   The default is `data/pr-verification` under this project.
 - `VERIFIAI_PR_PROFILE_PATH` selects a backend-owned approved check profile.

@@ -414,6 +414,11 @@ Deep Audit:
 ## Documentation
 
 - [Read-only PR candidate inspection](docs/pr-candidate-resolution.md)
+- [PR verification jobs](docs/pr-jobs.md)
+- [Trusted PR check policy](docs/pr-check-policy.md)
+- [PR GitHub Check publication](docs/pr-github-checks.md)
+- [PR verification HTTP interface](docs/pr-http-api.md)
+- [Repository clone bounds](docs/repository-bounds.md)
 - [AgentCore worker runtime](docs/agentcore-worker.md)
 - [Shared contracts](docs/contracts.md)
 - [Demo recording path](docs/demo-recording.md)

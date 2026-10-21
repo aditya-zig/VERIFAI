@@ -1,8 +1,8 @@
 # PR verification jobs
 
-Tracking issue: [#85 durable pull request verification job state](https://github.com/aditya-zig/VERIFAI/issues/85). The route handler in `services/pr-verification/http.mjs` is owned by the parent session and is not part of this slice.
+Tracking issue: [#85 durable pull request verification job state](https://github.com/aditya-zig/VERIFAI/issues/85).
 
-Status: durable job state, controller and recovery. No execution, no GitHub writes, no verdict is asserted by this slice.
+Status: durable job state, controller, recovery, HTTP interface and GitHub Check publication foundation. No default execution adapter is configured, so a job without one ends as `Incomplete`.
 
 This is the non-AWS job foundation for pull request verification. It adds the state a server route needs: a job that survives a restart, a controller that admits one job at a time, and a recovery pass that closes the jobs a dead process left behind.
 
@@ -132,7 +132,7 @@ The store keeps one JSON file per job under `<directory>/jobs/<id>.json`, one lo
 
 The store keeps a mutation lock of its own (`store-mutation`) so the compare-and-swap stays honest between processes. The controller takes a second lock (`controller`) while it drives a job, so only one controller writes the queue at a time. The controller lock is stolen when its owner process is gone, so a crash does not block the queue forever.
 
-Check publication takes a third lock per job (`publish-<job>`), so two publishers cannot write the same pull request at once. It is stolen the same way: a publisher that died holding it does not block the job forever, and a lock held by a live publisher is never taken. A refused publication writes nothing to GitHub.
+Check publication takes a third lock per job (`publish-<sha256 of the job id>`), so two publishers cannot write the same pull request at once. It is stolen the same way: a publisher that died holding it does not block the job forever, and a lock held by a live publisher is never taken. A refused publication writes nothing to GitHub.
 
 Blockers are the reason new work is refused. A blocker records a job, a reason and the resource identifiers that could not be proven safe.
 
@@ -295,8 +295,8 @@ Every error carries `code` and `status`. A server route can map them directly.
 ## Gaps
 
 - There is no runner service. `tick()`, `run(id)` and `waitForIdle()` are the hooks a runner uses.
-- The resolver, planner and executor are interfaces. The GitHub candidate resolver in `candidate.ts` can back the resolver adapter, but that wiring is not part of this slice.
-- The verdict policy is not part of this slice. Without an injected evaluator a job can only end as `Incomplete` or `Failed`.
+- The resolver, planner and executor are interfaces. `runtime.mjs` now wires the GitHub candidate resolver from `candidate.ts` as the resolver adapter; planner and evaluator are wired only when an approved profile is configured, and the executor remains optional.
+- The verdict policy is implemented by `verdict.ts` and is wired through `runtime.mjs` when an approved profile is configured. Without it a job can only end as `Incomplete` or `Failed`.
 - The resource adapter describes allocation, inspection and release. No resource service exists yet, so the default path allocates nothing.
 - There is no job history. The record keeps the latest state only; a phase log would be a separate change.
 - The single job limit is global for the store directory, not per repository or per owner.

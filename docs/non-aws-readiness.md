@@ -139,6 +139,10 @@ The parent session owns test execution; other workers own pending changes.
 
 ## What remains for an application PR verification loop
 
+Baseline snapshot of main `b88775d` only; the PR integration branch now delivers
+parts of this loop. See `docs/non-aws-integration.md` and the PR verification
+docs it references for the current scope.
+
 The loop that exists today is the documented bounded local audit: clone, one
 Bedrock-backed review, one bounded command, finding, cleanup, and the repair
 path to VerifiedRepair. Its procedure stays in `docs/local-mvp.md`. That is a

@@ -436,9 +436,9 @@ export function candidateDiffDigest(files: readonly ChangedFileIdentity[]): stri
 /**
  * Resolve an immutable, public, same-repository pull request candidate.
  *
- * This function only pins identity and changed-file bytes. It does not run
- * checks, publish evidence or produce a PrVerdict. Callers must re-check the
- * head and base after execution and before publication.
+ * This function only pins revision identity and reported patch context. It
+ * does not run checks, publish evidence or produce a PrVerdict. Callers must
+ * re-check the head and base after execution and before publication.
  */
 export async function resolveCandidate(
   input: PrVerificationRequest,

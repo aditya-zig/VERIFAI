@@ -18,6 +18,13 @@ import {
 } from './store.js';
 
 /**
+ * The principal and the job record are re-exported here so a route only has
+ * to import one module. They stay defined in `store.ts`; the shared contract
+ * package is not touched.
+ */
+export type { PrJob, PrJobResourceIntent, PrJobStoreLock, RequestPrincipal } from './store.js';
+
+/**
  * Controller for pull request verification jobs.
  *
  * The controller owns admission, authorization, phase transitions and the

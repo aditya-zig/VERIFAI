@@ -331,6 +331,14 @@ test('a job without an execution adapter finishes as incomplete and never as ver
     assert.equal(finished.result?.verdict, 'Incomplete');
     assert.deepEqual(finished.result?.observations, []);
     assert.equal(finished.failure?.code, 'EXECUTOR_UNAVAILABLE');
+    // The job has to disclose that nothing was executed.
+    assert.ok(
+      finished.limitations.some((item) => item.includes('no execution adapter is configured')),
+      `expected a disclosure in ${JSON.stringify(finished.limitations)}`,
+    );
+    assert.ok(
+      (finished.result?.limitations ?? []).some((item) => item.includes('no execution adapter is configured')),
+    );
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }

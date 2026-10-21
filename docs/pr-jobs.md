@@ -1,5 +1,7 @@
 # PR verification jobs
 
+Tracking issue: [#85 durable pull request verification job state](https://github.com/aditya-zig/VERIFAI/issues/85). The route handler in `services/pr-verification/http.mjs` is owned by the parent session and is not part of this slice.
+
 Status: durable job state, controller and recovery. No execution, no GitHub writes, no verdict is asserted by this slice.
 
 This is the non-AWS job foundation for pull request verification. It adds the state a server route needs: a job that survives a restart, a controller that admits one job at a time, and a recovery pass that closes the jobs a dead process left behind.
@@ -39,7 +41,7 @@ const controller = new PrVerificationController({
 | `store` | `PrJobStore` | yes | The durable store. The controller never creates one for you, so the route owns the directory and its permissions. |
 | `resolver` | `PrJobResolver` | no | Turns a verification request into a candidate revision. Without one the job ends as `Incomplete` with `RESOLVER_UNAVAILABLE`. |
 | `planner` | `PrJobPlanner` | no | Turns a candidate into a check plan. Without one the job ends as `Incomplete` with `PLANNER_UNAVAILABLE`. |
-| `executor` | `PrJobExecutor` | no | Runs the planned checks. Without one the job ends as `Incomplete` with `EXECUTOR_UNAVAILABLE`. It is never `Verified`. |
+| `executor` | `PrJobExecutor` | no | Runs the planned checks. Without one the job ends as `Incomplete` with `EXECUTOR_UNAVAILABLE` and the limitation "no execution adapter is configured, so no check was executed". It is never `Verified`. |
 | `resources` | `PrResourceAdapter` | no | Allocates, inspects and releases the resources of a job. Without one nothing is allocated and nothing is released. |
 | `evaluator` | `PrJobEvaluator` | no | The verdict policy. Without one no job can become `Verified`. See the policy seam below. |
 | `lockName` | `string` | no | Name of the single writer lock. Defaults to `controller`. |
@@ -227,6 +229,16 @@ Recovery looks at every job that has not reached `Finished`.
 - A later recovery run inspects the blocked resources again. When the adapter can prove they are gone or that it owns them and the release succeeds, the blocker is cleared and new work starts again.
 
 The outcome is `{ jobs, released, unresolved, blockers, blocked }`.
+
+The route owns the adapters, so it holds the same resource adapter it gave to the controller and passes it here:
+
+```js
+import { recoverInterruptedJobs } from './recovery.js';
+
+await recoverInterruptedJobs({ store, resources, queuedJobs: 'keep' });
+```
+
+`recovery.ts` does not import the controller, so the route can wire both without a cycle.
 
 ## Errors
 

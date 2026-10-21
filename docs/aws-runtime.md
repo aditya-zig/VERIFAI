@@ -46,6 +46,9 @@ model/region configuration enables the CI provider lane. Run only with authorize
 credentials and budget. `npm run verify:agentcore` exercises an already-deployed
 runtime and verifies status/report/teardown events. It is not full product parity.
 
+For the separate candidate-build path, see the
+[Dockerfile path contract and offline evidence](evidence/dockerfile-path-safety.md).
+
 AWS deployment and full model-backed local/AgentCore acceptance remain pending
 until real account access, model entitlement, runtime ARN and cleanup evidence are
 available. No resources or spending are claimed by this migration PR.

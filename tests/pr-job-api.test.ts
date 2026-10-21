@@ -120,6 +120,19 @@ test('the same idempotency key returns the same job', async () => {
   }
 });
 
+test('idempotency replay cannot bypass a revoked repository scope', async () => {
+  const { controller, directory } = await makeController();
+  try {
+    await controller.start(input, principal, 'key-revoked');
+    await assert.rejects(
+      () => controller.start(input, { ...principal, repositories: [] }, 'key-revoked'),
+      (error: unknown) => isControllerError(error, 'REPOSITORY_NOT_AUTHORIZED', 403),
+    );
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('the same idempotency key with a different payload is refused', async () => {
   const { controller, directory } = await makeController();
   try {

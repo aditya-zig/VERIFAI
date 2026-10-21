@@ -93,3 +93,18 @@ test('finished jobs and their exact revision survive a new local runtime', async
   assert.equal(persisted.verdict, 'Incomplete');
   assert.equal(second.calls(), 0);
 });
+
+test('a second runtime cannot recover a job while its controller is still active', async t => {
+  const directory = await mkdtemp('/tmp/opencode/pr-runtime-');
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const { PrJobStore } = await import('../dist/services/pr-verification/store.js');
+  const store = new PrJobStore({ directory });
+  await store.init();
+  const lock = await store.acquireLock('controller');
+  try {
+    const second = await serve(t, directory);
+    const response = await fetch(`${second.base}/unknown-job`, { headers: { authorization: 'Bearer controlled-token' } });
+    assert.notEqual(response.status, 200);
+    assert.ok(await store.readLock('controller'));
+  } finally { await store.releaseLock(lock); }
+});

@@ -1040,6 +1040,7 @@ export class PrVerificationController {
   ): Promise<PrJob> {
     const key = assertIdempotencyKey(idempotencyKey);
     const ownerId = assertPrincipal(principal);
+    assertRepositoryAccess(principal, input.repository);
     const requestKey = buildIdempotentRequestKey(ownerId, key);
     const existing = await this.#controller.store.findByRequestKey(requestKey);
     if (existing) {

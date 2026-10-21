@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 
 /**
  * Trusted PR check profile.
@@ -17,6 +18,8 @@ export const PROFILE_LIMITS = Object.freeze({
   maxCommandCharacters: 300,
   maxScriptBytes: 65_536,
   maxTimeoutMs: 600_000,
+  defaultProfileFileBytes: 1_048_576,
+  maxProfileFileBytes: 4_194_304,
 });
 
 export class ProfileValidationError extends Error {
@@ -210,4 +213,59 @@ export function computeProfileDigest(input: PrCheckProfileInput | PrCheckProfile
 export function defineApprovedProfile(input: PrCheckProfileInput): PrCheckProfile {
   const value = normalized(input);
   return Object.freeze({ ...value, profileDigest: computeProfileDigest(value) });
+}
+
+export interface LoadApprovedProfileOptions {
+  /** Hard bound for the profile file. Default 1 MiB, maximum 4 MiB. */
+  readonly maxBytes?: number;
+}
+
+/**
+ * Load and validate the approved profile from an absolute file path.
+ *
+ * Parsing is offline: no environment overrides, no remote fetch, no model or
+ * AWS call. Invalid JSON, a non-file path, an oversized file or invalid policy
+ * data all fail with ProfileValidationError.
+ */
+export async function loadApprovedProfile(
+  path: string,
+  options: LoadApprovedProfileOptions = {},
+): Promise<PrCheckProfile> {
+  if (typeof path !== 'string' || !path.startsWith('/') || path === '/') {
+    fail('profile path must be an absolute file path');
+  }
+  if (options === null || typeof options !== 'object') {
+    fail('profile load options must be an object');
+  }
+  const maxBytes = options.maxBytes ?? PROFILE_LIMITS.defaultProfileFileBytes;
+  if (
+    typeof maxBytes !== 'number' ||
+    !Number.isSafeInteger(maxBytes) ||
+    maxBytes <= 0 ||
+    maxBytes > PROFILE_LIMITS.maxProfileFileBytes
+  ) {
+    fail(`maxBytes must be an integer between 1 and ${PROFILE_LIMITS.maxProfileFileBytes}`);
+  }
+
+  const fs: any = await import('node:fs/promises');
+  let info: any;
+  try {
+    info = await fs.lstat(path);
+  } catch {
+    fail('profile file cannot be read');
+  }
+  if (!info.isFile()) fail('profile path must be a regular file');
+  if (info.size > maxBytes) fail(`profile file exceeds ${maxBytes} bytes`);
+
+  const raw = (await readFile(path, 'utf8')) as string;
+  if (Buffer.byteLength(raw, 'utf8') > maxBytes) fail(`profile file exceeds ${maxBytes} bytes`);
+  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    fail('profile file is not valid JSON');
+  }
+  return defineApprovedProfile(parsed as PrCheckProfileInput);
 }

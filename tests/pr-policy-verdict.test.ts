@@ -10,7 +10,7 @@ import type {
   TestDefinition,
 } from '../packages/contracts/src/index.js';
 import { computeProfileDigest, defineApprovedProfile, sha256Hex, type PrCheckProfile } from '../services/pr-verification/profile.js';
-import { TestArtifactStore, artifactFilePath } from '../services/pr-verification/evidence.js';
+import { TestArtifactStore, EvidenceWriter, artifactFilePath, evidenceFilePath } from '../services/pr-verification/evidence.js';
 import {
   computePlanDigest,
   generatedTestCommand,
@@ -61,16 +61,20 @@ interface Fixture {
   commands: Map<string, string>;
 }
 
-async function fixture(): Promise<Fixture> {
+async function fixture(options: { model?: boolean } = {}): Promise<Fixture> {
   const root = join(ROOT, randomUUID());
   await mkdir(root, { recursive: true });
   const planned = await planChecks({
     profile: PROFILE,
     candidate: CANDIDATE,
     artifactStore: new TestArtifactStore(root),
-    model: {
-      propose: async () => ({ generatedTests: [{ checkId: 'generated-edge', script: 'edge case\n' }] }),
-    },
+    ...(options.model === false
+      ? {}
+      : {
+          model: {
+            propose: async () => ({ generatedTests: [{ checkId: 'generated-edge', script: 'edge case\n' }] }),
+          },
+        }),
   });
   const definitions = new Map<string, TestDefinition>();
   const commands = new Map<string, string>();
@@ -113,15 +117,18 @@ function observation(
 }
 
 function passingObservations(fixtureValue: Fixture): CheckObservation[] {
-  return [
+  const observations = [
     observation(fixtureValue, 'unit', 'base', 'Verified', 0),
     observation(fixtureValue, 'unit', 'head', 'Verified', 0),
     observation(fixtureValue, 'types', 'base', 'Verified', 0),
     observation(fixtureValue, 'types', 'head', 'Verified', 0),
     observation(fixtureValue, 'smoke', 'base', 'Verified', 0),
     observation(fixtureValue, 'smoke', 'head', 'Verified', 0),
-    observation(fixtureValue, 'generated-edge', 'head', 'Verified', 0),
   ];
+  if (fixtureValue.definitions.has('generated-edge')) {
+    observations.push(observation(fixtureValue, 'generated-edge', 'head', 'Verified', 0));
+  }
+  return observations;
 }
 
 async function evaluate(
@@ -145,8 +152,11 @@ function reasonCodes(evaluation: CandidateEvaluation): string[] {
   return evaluation.reasons.map((reason) => reason.code);
 }
 
-async function withFixture(run: (fixtureValue: Fixture) => Promise<void>): Promise<void> {
-  const fixtureValue = await fixture();
+async function withFixture(
+  run: (fixtureValue: Fixture) => Promise<void>,
+  options: { model?: boolean } = {},
+): Promise<void> {
+  const fixtureValue = await fixture(options);
   try {
     await run(fixtureValue);
   } finally {
@@ -408,4 +418,72 @@ test('the evidence manifest is deterministic and changes with records', async ()
     });
     assert.notEqual(digestThree, digestOne);
   });
+});
+
+test('evidence record references are rehashed when an EvidenceWriter is supplied', async () => {
+  await withFixture(async (fixtureValue) => {
+    const writer = new EvidenceWriter(fixtureValue.root);
+    const stored = await writer.write({
+      checkId: 'unit',
+      revision: 'head',
+      status: 'Verified',
+      exitCode: 0,
+    });
+    const observations = passingObservations(fixtureValue);
+    observations[1] = observation(fixtureValue, 'unit', 'head', 'Verified', 0, {
+      artifactRefs: [stored.evidenceRef],
+    });
+
+    const evaluation = await evaluate(fixtureValue, observations, { evidenceStore: writer });
+    assert.equal(evaluation.result.verdict, 'Verified');
+  });
+});
+
+test('tampered or missing evidence records are incomplete when verification is enabled', async () => {
+  await withFixture(async (fixtureValue) => {
+    const writer = new EvidenceWriter(fixtureValue.root);
+    const stored = await writer.write({ checkId: 'unit', revision: 'head', status: 'Verified', exitCode: 0 });
+
+    const tamperedObservations = passingObservations(fixtureValue);
+    tamperedObservations[1] = observation(fixtureValue, 'unit', 'head', 'Verified', 0, {
+      artifactRefs: [stored.evidenceRef],
+    });
+    await writeFile(evidenceFilePath(fixtureValue.root, stored.contentSha256), '{"status":"Failed"}', 'utf8');
+    const tampered = await evaluate(fixtureValue, tamperedObservations, { evidenceStore: writer });
+    assert.equal(tampered.result.verdict, 'Incomplete');
+    assert.ok(reasonCodes(tampered).includes('incomplete.evidence'));
+
+    const missingRef = `evidence://records/${sha256Hex('never written')}`;
+    const missingObservations = passingObservations(fixtureValue);
+    missingObservations[1] = observation(fixtureValue, 'unit', 'head', 'Verified', 0, {
+      artifactRefs: [missingRef],
+    });
+
+    const unchecked = await evaluate(fixtureValue, missingObservations);
+    assert.equal(unchecked.result.verdict, 'Verified');
+
+    const checked = await evaluate(fixtureValue, missingObservations, { evidenceStore: writer });
+    assert.equal(checked.result.verdict, 'Incomplete');
+    assert.ok(reasonCodes(checked).includes('incomplete.evidence'));
+  });
+});
+
+test('a model-less fixed plan is inspectable but required generated coverage blocks success', async () => {
+  await withFixture(
+    async (fixtureValue) => {
+      assert.equal(fixtureValue.planned.modelCalls, 0);
+      assert.equal(fixtureValue.planned.plan.generatedTests.length, 0);
+      assert.ok(fixtureValue.planned.limitations.some((item) => item.includes('generated checks')));
+      assert.ok(fixtureValue.planned.limitations.some((item) => item.includes('unavailable')));
+
+      const observations = passingObservations(fixtureValue);
+      const optional = await evaluate(fixtureValue, observations);
+      assert.equal(optional.result.verdict, 'Verified');
+
+      const required = await evaluate(fixtureValue, observations, { requireGeneratedTests: true });
+      assert.equal(required.result.verdict, 'Incomplete');
+      assert.ok(required.reasons.some((reason) => reason.detail.includes('generated test coverage')));
+    },
+    { model: false },
+  );
 });

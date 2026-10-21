@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CandidateRevision } from '../packages/contracts/src/index.js';
 import {
@@ -10,6 +10,8 @@ import {
   computePlanDigest,
   generatedTestCommand,
   planChecks,
+  planCandidate,
+  validatePlan,
   type PlannerModelAdapter,
   type PlannerModelRequest,
 } from '../services/pr-verification/planner.js';
@@ -230,6 +232,170 @@ test('refuses a candidate from another repository before any model call', async 
     if (!(rejection instanceof PlanValidationError)) throw new Error(`unexpected rejection: ${String(rejection)}`);
     assert.match(rejection.message, /repository/);
     assert.equal(model.requests.length, 0);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('planCandidate accepts an artifact root and a zero generated-test budget', async () => {
+  const root = await freshRoot();
+  try {
+    const model = new ScriptedModel([{ generatedTests: [{ checkId: 'generated-edge', script: 'edge\n' }] }]);
+    const result = await planCandidate(PROFILE, CANDIDATE, {
+      artifactsRoot: root,
+      model,
+      maxGeneratedTests: 0,
+    });
+
+    assert.equal(model.requests.length, 0);
+    assert.equal(result.modelCalls, 0);
+    assert.equal(result.plan.generatedTests.length, 0);
+    assert.equal(result.plan.requiredChecks.length, 2);
+    for (const definition of result.plan.requiredChecks) {
+      assert.ok((await readFile(artifactFilePath(root, definition.contentSha256))).length > 0);
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('planCandidate requires exactly one artifact source', async () => {
+  const root = await freshRoot();
+  try {
+    await assert.rejects(
+      planCandidate(PROFILE, CANDIDATE, { model: new ScriptedModel([{ generatedTests: [] }]) }),
+      /exactly one of artifactStore or artifactsRoot/,
+    );
+    await assert.rejects(
+      planCandidate(PROFILE, CANDIDATE, {
+        model: new ScriptedModel([{ generatedTests: [] }]),
+        artifactStore: new TestArtifactStore(root),
+        artifactsRoot: root,
+      }),
+      /exactly one of artifactStore or artifactsRoot/,
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('planCandidate limits are capped by the server bounds', async () => {
+  const root = await freshRoot();
+  try {
+    const invalid = new ScriptedModel([{ generatedTests: [], tools: ['shell'] }]);
+    const result = await planCandidate(PROFILE, CANDIDATE, {
+      artifactsRoot: root,
+      model: invalid,
+      maxModelCalls: 1,
+    });
+    assert.equal(invalid.requests.length, 1);
+    assert.equal(result.modelCalls, 1);
+    assert.equal(result.plan.generatedTests.length, 0);
+
+    await assert.rejects(
+      planCandidate(PROFILE, CANDIDATE, { artifactsRoot: root, model: invalid, maxModelCalls: 3 }),
+      /maxModelCalls/,
+    );
+    await assert.rejects(
+      planCandidate(PROFILE, CANDIDATE, { artifactsRoot: root, model: invalid, maxGeneratedTests: 5 }),
+      /maxGeneratedTests/,
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('validatePlan accepts a freshly planned plan and its persisted bytes', async () => {
+  await withPlan([{ generatedTests: [{ checkId: 'generated-edge', script: 'edge\n' }] }], async (result, _model, root) => {
+    const validation = await validatePlan({
+      profile: PROFILE,
+      plan: result.plan,
+      artifactStore: new TestArtifactStore(root),
+    });
+    assert.deepEqual(validation, { ok: true, issues: [] });
+  });
+});
+
+test('validatePlan reports missing checks, tampered bytes and structural-only mode', async () => {
+  await withPlan([{ generatedTests: [] }], async (result, _model, root) => {
+    const store = new TestArtifactStore(root);
+
+    const structural = await validatePlan({ profile: PROFILE, plan: result.plan, verifyArtifacts: false });
+    assert.deepEqual(structural, { ok: true, issues: [] });
+
+    const noStore = await validatePlan({ profile: PROFILE, plan: result.plan });
+    assert.equal(noStore.ok, false);
+    assert.equal(noStore.issues[0]!.area, 'artifacts');
+    assert.equal(noStore.issues[0]!.code, 'artifacts.store');
+
+    const removed = structuredClone(result.plan);
+    removed.requiredChecks = removed.requiredChecks.filter((check) => check.checkId !== 'types');
+    removed.planDigest = computePlanDigest(removed);
+    const missing = await validatePlan({ profile: PROFILE, plan: removed, artifactStore: store });
+    assert.equal(missing.ok, false);
+    assert.ok(missing.issues.some((issue) => issue.area === 'plan' && issue.detail.includes('types')));
+
+    const definition = result.plan.requiredChecks[0]!;
+    await writeFile(artifactFilePath(root, definition.contentSha256), 'tampered bytes\n', 'utf8');
+    const tampered = await validatePlan({ profile: PROFILE, plan: result.plan, artifactStore: store });
+    assert.equal(tampered.ok, false);
+    assert.ok(tampered.issues.some((issue) => issue.area === 'artifacts'));
+  });
+});
+
+test('plans fixed approved checks with zero model calls when no adapter is configured', async () => {
+  const root = await freshRoot();
+  try {
+    const result = await planChecks({
+      profile: PROFILE,
+      candidate: CANDIDATE,
+      artifactStore: new TestArtifactStore(root),
+    });
+
+    assert.equal(result.modelCalls, 0);
+    assert.equal(result.plan.generatedTests.length, 0);
+    assert.equal(result.plan.requiredChecks.length, PROFILE.requiredChecks.length);
+    assert.equal(result.plan.planDigest, computePlanDigest(result.plan));
+    assert.equal(result.limitations.length, 1);
+    assert.match(result.limitations[0]!, /model adapter is not configured/);
+    assert.match(result.limitations[0]!, /generated checks/);
+    assert.match(result.limitations[0]!, /unavailable/);
+    assert.equal(
+      result.limitations[0]!.includes('proposed'),
+      false,
+      'a missing adapter must not claim the model proposed anything',
+    );
+
+    for (const definition of result.plan.requiredChecks) {
+      assert.deepEqual(
+        await readFile(artifactFilePath(root, definition.contentSha256)),
+        Buffer.from(PROFILE.requiredChecks.find((check) => check.checkId === definition.checkId)!.script),
+      );
+    }
+    assert.deepEqual(
+      await readFile(artifactFilePath(root, result.regression.contentSha256)),
+      Buffer.from(PROFILE.regressionCheck.script),
+    );
+
+    const validation = await planChecks({
+      profile: PROFILE,
+      candidate: CANDIDATE,
+      artifactStore: new TestArtifactStore(root),
+    });
+    assert.deepEqual(validation.plan, result.plan);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('planCandidate works without a model and reports planning as unavailable', async () => {
+  const root = await freshRoot();
+  try {
+    const result = await planCandidate(PROFILE, CANDIDATE, { artifactsRoot: root });
+    assert.equal(result.modelCalls, 0);
+    assert.equal(result.plan.generatedTests.length, 0);
+    assert.equal(result.plan.requiredChecks.length, 2);
+    assert.ok(result.limitations.some((item) => item.includes('model adapter is not configured')));
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

@@ -4,20 +4,10 @@ import type {
   CheckPlan,
   PrVerdict,
   PrVerificationResult,
-  TestDefinition,
 } from '../../packages/contracts/src/index.js';
-import { ARTIFACT_LIMITS, TestArtifactStore, artifactRefFor } from './evidence.js';
-import {
-  PLANNER_LIMITS,
-  computePlanDigest,
-  generatedTestCommand,
-} from './planner.js';
-import {
-  computeProfileDigest,
-  sha256Hex,
-  stableStringify,
-  type PrCheckProfile,
-} from './profile.js';
+import { ARTIFACT_LIMITS, TestArtifactStore, type EvidenceWriter } from './evidence.js';
+import { generatedTestCommand, validatePlan } from './planner.js';
+import { sha256Hex, stableStringify, type PrCheckProfile } from './profile.js';
 
 /**
  * Deterministic verdict evaluation over recorded check observations.
@@ -26,6 +16,8 @@ import {
  * base/head commit, approved command digest, planned test digest, real integer
  * exit code and at least one evidence reference. Missing facts are Incomplete,
  * flaky or undetermined facts are Unknown, and a model opinion is ignored.
+ *
+ * This is offline policy. It never runs a check, calls a model or reaches AWS.
  */
 export type EvaluationReasonCode =
   | 'incomplete.profile'
@@ -54,6 +46,16 @@ export interface CandidateEvaluationInput {
   readonly artifactStore: TestArtifactStore;
   readonly cleanupComplete: boolean;
   readonly superseded: boolean;
+  /**
+   * Optional store for `evidence://records/<sha256>` references. When present,
+   * those records are re-hashed. Other adapter-defined refs stay format checked.
+   */
+  readonly evidenceStore?: EvidenceWriter;
+  /**
+   * When true, an empty generated-test plan cannot reach Verified. Use this
+   * when generated coverage is a policy requirement, not optional preparation.
+   */
+  readonly requireGeneratedTests?: boolean;
   /** Opinion only. Kept in the input to prove it cannot change the verdict. */
   readonly modelOpinion?: PrVerdict;
 }
@@ -81,10 +83,9 @@ interface ExpectedCheck {
   readonly revisions: readonly ('base' | 'head')[];
 }
 
-const checkIdPattern = /^[a-z][a-z0-9-]{0,63}$/;
 const shaPattern = /^[0-9a-f]{40}$/;
-const digestPattern = /^[0-9a-f]{64}$/;
 const evidenceRefPattern = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/;
+const evidenceRecordPrefix = 'evidence://records/';
 const verdicts = new Set<PrVerdict>(['Verified', 'Failed', 'Incomplete', 'Unknown']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -129,15 +130,13 @@ export function computeEvidenceManifestSha256(input: EvidenceManifestInput): str
   );
 }
 
-function definitionFromProfile(checkId: string, script: string): TestDefinition {
-  const contentSha256 = sha256Hex(script);
-  return { checkId, artifactRef: artifactRefFor(contentSha256), contentSha256, origin: 'approved' };
-}
-
 /**
- * Decide whether a candidate may advance. This function reads persisted test
- * artifacts and recorded observations only; it never runs a check, calls a
- * model or contacts AWS.
+ * Decide whether a candidate may advance.
+ *
+ * Inputs are the resolved candidate, the planned checks, the approved profile,
+ * adapter observations and cleanup/supersession facts. Output is a
+ * PrVerificationResult plus structured reasons. Missing capability never
+ * becomes a pass.
  */
 export async function evaluateCandidate(input: CandidateEvaluationInput): Promise<CandidateEvaluation> {
   const candidate = structuredClone(input.candidate);
@@ -181,167 +180,70 @@ export async function evaluateCandidate(input: CandidateEvaluationInput): Promis
     return { result, reasons };
   };
 
-  // Profile and plan integrity. A plan that no longer matches the approved
-  // profile cannot be repaired by observation data.
-  let profileFailure = false;
-  try {
-    if (input.profile.profileDigest !== computeProfileDigest(input.profile)) {
-      add('incomplete.profile', 'profile digest does not match its contents');
-      profileFailure = true;
-    }
-  } catch {
-    add('incomplete.profile', 'profile could not be validated');
-    profileFailure = true;
+  if (!isRecord(input.profile)) {
+    add('incomplete.profile', 'approved profile is required');
+    return finish('Incomplete');
   }
   if (candidate.repository !== input.profile.repository) {
     add('incomplete.profile', `candidate repository ${String(candidate.repository)} is not approved`);
-    profileFailure = true;
+    return finish('Incomplete');
   }
   if (!shaPattern.test(candidate.baseSha) || !shaPattern.test(candidate.headSha)) {
     add('incomplete.profile', 'candidate base and head must be 40-character commit SHAs');
-    profileFailure = true;
+    return finish('Incomplete');
   }
-  const regression = input.profile.regressionCheck;
-  if (
-    !Array.isArray(input.profile.requiredChecks) ||
-    input.profile.requiredChecks.length === 0 ||
-    !isRecord(regression) ||
-    !checkIdPattern.test(String(regression.checkId)) ||
-    typeof regression.command !== 'string' ||
-    typeof regression.script !== 'string'
-  ) {
-    add('incomplete.profile', 'approved profile has no usable required or regression checks');
-    profileFailure = true;
-  } else if (input.profile.requiredChecks.some((check) => check.command === regression.command)) {
-    add('incomplete.profile', 'regression check repeats a required command; same-command replay is not independent');
-    profileFailure = true;
-  }
-  if (profileFailure) return finish('Incomplete');
 
-  let structuralFailure = false;
-  try {
-    if (
-      plan.profileId !== input.profile.profileId ||
-      plan.profileDigest !== input.profile.profileDigest ||
-      plan.policyVersion !== input.profile.policyVersion
-    ) {
-      add('incomplete.plan', 'plan profile identity does not match the approved profile');
-      structuralFailure = true;
+  // Profile, plan identity, required-check content, generated bounds and
+  // persisted test bytes are validated together before any record is trusted.
+  const validation = await validatePlan({
+    profile: input.profile,
+    plan,
+    artifactStore: input.artifactStore,
+    verifyArtifacts: true,
+  });
+  if (!validation.ok) {
+    for (const issue of validation.issues) {
+      const code: EvaluationReasonCode =
+        issue.area === 'profile'
+          ? 'incomplete.profile'
+          : issue.area === 'plan'
+            ? 'incomplete.plan'
+            : 'incomplete.artifacts';
+      add(code, issue.detail);
     }
-    if (plan.planDigest !== computePlanDigest(plan)) {
-      add('incomplete.plan', 'plan digest does not match its contents');
-      structuralFailure = true;
-    }
-  } catch {
-    add('incomplete.plan', 'plan could not be validated');
-    structuralFailure = true;
+    return finish('Incomplete');
+  }
+  if (input.requireGeneratedTests === true && plan.generatedTests.length === 0) {
+    add('incomplete.plan', 'generated test coverage is required but the plan contains none');
+    return finish('Incomplete');
   }
 
   const expected: ExpectedCheck[] = [];
-  const requiredDefinitions = new Map<string, TestDefinition>();
-  if (!structuralFailure) {
-    if (plan.requiredChecks.length !== input.profile.requiredChecks.length) {
-      add('incomplete.plan', 'plan does not contain exactly the approved required checks');
-      structuralFailure = true;
-    }
-    for (const check of input.profile.requiredChecks) {
-      const definition = plan.requiredChecks.find((item) => item.checkId === check.checkId);
-      if (!definition) {
-        add('incomplete.plan', `approved check ${check.checkId} is missing from the plan`);
-        structuralFailure = true;
-        continue;
-      }
-      if (requiredDefinitions.has(check.checkId)) {
-        add('incomplete.plan', `approved check ${check.checkId} appears twice in the plan`);
-        structuralFailure = true;
-        continue;
-      }
-      requiredDefinitions.set(check.checkId, definition);
-      const digest = sha256Hex(check.script);
-      if (
-        definition.origin !== 'approved' ||
-        definition.contentSha256 !== digest ||
-        definition.artifactRef !== artifactRefFor(digest)
-      ) {
-        add('incomplete.plan', `approved check ${check.checkId} was changed after approval`);
-        structuralFailure = true;
-        continue;
-      }
-      expected.push({
-        checkId: check.checkId,
-        kind: 'required',
-        command: check.command,
-        contentSha256: digest,
-        revisions: ['base', 'head'],
-      });
-    }
-
-    if (plan.generatedTests.length > PLANNER_LIMITS.maxGeneratedTests) {
-      add('incomplete.plan', `plan contains more than ${PLANNER_LIMITS.maxGeneratedTests} generated tests`);
-      structuralFailure = true;
-    }
-    const reserved = new Set<string>([
-      ...input.profile.requiredChecks.map((check) => check.checkId),
-      input.profile.regressionCheck.checkId,
-    ]);
-    const generatedIds = new Set<string>();
-    for (const definition of plan.generatedTests) {
-      if (
-        !checkIdPattern.test(definition.checkId) ||
-        reserved.has(definition.checkId) ||
-        generatedIds.has(definition.checkId) ||
-        definition.origin !== 'generated' ||
-        !digestPattern.test(definition.contentSha256) ||
-        definition.artifactRef !== artifactRefFor(definition.contentSha256)
-      ) {
-        add('incomplete.plan', `generated test ${String(definition.checkId)} is not a valid addition`);
-        structuralFailure = true;
-        continue;
-      }
-      generatedIds.add(definition.checkId);
-      expected.push({
-        checkId: definition.checkId,
-        kind: 'generated',
-        command: generatedTestCommand(definition),
-        contentSha256: definition.contentSha256,
-        revisions: ['head'],
-      });
-    }
-
-    const regressionDigest = sha256Hex(input.profile.regressionCheck.script);
+  for (const check of input.profile.requiredChecks) {
     expected.push({
-      checkId: input.profile.regressionCheck.checkId,
-      kind: 'regression',
-      command: input.profile.regressionCheck.command,
-      contentSha256: regressionDigest,
+      checkId: check.checkId,
+      kind: 'required',
+      command: check.command,
+      contentSha256: sha256Hex(check.script),
       revisions: ['base', 'head'],
     });
   }
-
-  if (structuralFailure) return finish('Incomplete');
-
-  // Re-hash every persisted artifact that the plan claims to use.
-  let artifactFailure = false;
-  for (const check of expected) {
-    const definition =
-      check.kind === 'regression'
-        ? definitionFromProfile(check.checkId, input.profile.regressionCheck.script)
-        : (requiredDefinitions.get(check.checkId) ??
-          plan.generatedTests.find((item) => item.checkId === check.checkId));
-    if (!definition) {
-      add('incomplete.artifacts', `test definition for ${check.checkId} is unavailable`);
-      artifactFailure = true;
-      continue;
-    }
-    try {
-      await input.artifactStore.verify(definition);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      add('incomplete.artifacts', `${check.checkId}: ${detail}`);
-      artifactFailure = true;
-    }
+  for (const definition of plan.generatedTests) {
+    expected.push({
+      checkId: definition.checkId,
+      kind: 'generated',
+      command: generatedTestCommand(definition),
+      contentSha256: definition.contentSha256,
+      revisions: ['head'],
+    });
   }
-  if (artifactFailure) return finish('Incomplete');
+  expected.push({
+    checkId: input.profile.regressionCheck.checkId,
+    kind: 'regression',
+    command: input.profile.regressionCheck.command,
+    contentSha256: sha256Hex(input.profile.regressionCheck.script),
+    revisions: ['base', 'head'],
+  });
 
   // Group observations. Shape errors are rejected before any verdict logic.
   const groups = new Map<string, CheckObservation[]>();
@@ -425,6 +327,13 @@ export async function evaluateCandidate(input: CandidateEvaluationInput): Promis
         add('incomplete.evidence', `${check.checkId} ${revision} has no usable evidence references`);
         continue;
       }
+      if (input.evidenceStore) {
+        const unreadable = await unreadableEvidence(input.evidenceStore, refs);
+        if (unreadable) {
+          add('incomplete.evidence', `${check.checkId} ${revision} evidence is unreadable: ${unreadable}`);
+          continue;
+        }
+      }
       if (observation.status === 'Incomplete') {
         add('incomplete.observation', `${check.checkId} ${revision} reported Incomplete`);
         continue;
@@ -490,4 +399,21 @@ export async function evaluateCandidate(input: CandidateEvaluationInput): Promis
         : 'Verified';
 
   return finish(verdict);
+}
+
+/**
+ * Re-hash `evidence://records/...` references when a writer/store is supplied.
+ * Returns a detail string for the first failure, or undefined when readable.
+ */
+async function unreadableEvidence(store: EvidenceWriter, refs: readonly string[]): Promise<string | undefined> {
+  for (const ref of refs) {
+    if (!ref.startsWith(evidenceRecordPrefix)) continue;
+    try {
+      await store.read(ref);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return `${ref}: ${detail}`;
+    }
+  }
+  return undefined;
 }

@@ -7,9 +7,11 @@ import type { TestDefinition } from '../packages/contracts/src/index.js';
 import {
   ARTIFACT_LIMITS,
   ArtifactError,
+  EvidenceWriter,
   TestArtifactStore,
   artifactFilePath,
   artifactRefFor,
+  evidenceFilePath,
 } from '../services/pr-verification/evidence.js';
 import { sha256Hex } from '../services/pr-verification/profile.js';
 
@@ -162,4 +164,64 @@ test('verifies a plan test definition against its content digest', async () => {
 test('requires an absolute private artifact root', () => {
   assert.throws(() => new TestArtifactStore('relative/path'), /absolute/);
   assert.throws(() => new TestArtifactStore(''), /absolute/);
+});
+
+test('EvidenceWriter persists caller records and rehashes them after restart', async () => {
+  const root = await freshRoot();
+  try {
+    const writer = new EvidenceWriter(root);
+    const record = { checkId: 'unit', revision: 'head', status: 'Verified', exitCode: 0 };
+    const stored = await writer.write(record);
+
+    assert.equal(stored.evidenceRef, `evidence://records/${stored.contentSha256}`);
+    assert.equal(stored.bytes, Buffer.byteLength(JSON.stringify(record)));
+
+    const path = evidenceFilePath(root, stored.contentSha256);
+    assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), record);
+    assert.equal((await fs.stat(path)).mode & 0o777, 0o600);
+    assert.equal((await fs.stat(join(root, 'records'))).mode & 0o777, 0o700);
+
+    const restarted = new EvidenceWriter(root);
+    const loaded = await restarted.read(stored.evidenceRef);
+    assert.deepEqual(loaded.record, record);
+    assert.equal(loaded.contentSha256, stored.contentSha256);
+    assert.deepEqual(Buffer.from(loaded.bytes), Buffer.from(await readFile(path)));
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test('EvidenceWriter rejects tampering, non-JSON values and invalid bounds', async () => {
+  const root = await freshRoot();
+  try {
+    const writer = new EvidenceWriter(root);
+    const stored = await writer.write({ ok: true });
+    await writeFile(evidenceFilePath(root, stored.contentSha256), '{"ok":false}', 'utf8');
+    assert.equal(await artifactError(() => writer.read(stored.evidenceRef)), 'TAMPERED');
+
+    assert.equal(await artifactError(() => writer.read(`evidence://records/${'a'.repeat(64)}`)), 'MISSING');
+
+    await assert.rejects(writer.write(undefined), (error: unknown) => {
+      return error instanceof ArtifactError && error.code === 'INVALID_SOURCE';
+    });
+    await assert.rejects(writer.write({ callback: () => 1 }), (error: unknown) => {
+      return error instanceof ArtifactError && error.code === 'INVALID_SOURCE';
+    });
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    await assert.rejects(writer.write(cyclic), (error: unknown) => {
+      return error instanceof ArtifactError && error.code === 'INVALID_SOURCE';
+    });
+    await assert.rejects(writer.write({ bad: Number.NaN }), (error: unknown) => {
+      return error instanceof ArtifactError && error.code === 'INVALID_SOURCE';
+    });
+
+    assert.throws(() => new EvidenceWriter(root, { maxRecordBytes: 0 }), /maxRecordBytes/);
+    assert.throws(() => new EvidenceWriter(root, { maxRecordBytes: 5 * 1024 * 1024 }), /maxRecordBytes/);
+
+    const small = new EvidenceWriter(root, { maxRecordBytes: 8 });
+    assert.equal(await artifactError(() => small.write({ long: '0123456789' })), 'TOO_LARGE');
+  } finally {
+    await cleanup(root);
+  }
 });
